@@ -1,26 +1,40 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Idea, Status } from '../types';
 import { DOMAIN_COLORS } from '../constants';
-import { ChevronDown, ChevronUp, Calendar, User, ExternalLink, Filter, Compass, Search } from 'lucide-react';
+import { ChevronDown, ChevronUp, Calendar, User, ExternalLink, Filter, Compass, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface IdeaTableProps {
   data: Idea[];
   onViewDetails: (idea: Idea) => void;
   onOpenExplore: () => void;
+  isGlobalFilterActive?: boolean;
 }
 
 type SortField = 'date' | 'status' | 'domain' | 'votes';
 type SortOrder = 'asc' | 'desc';
 
+const ITEMS_PER_PAGE = 15;
+
 const IdeaTable: React.FC<IdeaTableProps> = ({ 
   data, 
   onViewDetails,
-  onOpenExplore
+  onOpenExplore,
+  isGlobalFilterActive = false
 }) => {
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Reset page when data or search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [data, searchQuery]);
+
+  // Determine if we are in the "Latest 100" restricted view
+  // This is active when NO global filters are applied AND NO local search is active
+  const isRestrictedView = !isGlobalFilterActive && !searchQuery.trim();
 
   // 1. Filter Logic (Local Search)
   const filteredData = useMemo(() => {
@@ -36,7 +50,7 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
     );
   }, [data, searchQuery]);
 
-  // 2. Sort Logic (Applied on filtered data)
+  // 2. Sort Logic
   const sortedData = useMemo(() => {
     let result = [...filteredData];
 
@@ -62,6 +76,20 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
     return result;
   }, [filteredData, sortField, sortOrder]);
 
+  // 3. Display Logic (Restricted vs Paginated)
+  const displayData = useMemo(() => {
+    if (isRestrictedView) {
+      // In restricted view, just show top 100, no pagination
+      return sortedData.slice(0, 100);
+    }
+    
+    // In filtered/search view, apply pagination
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return sortedData.slice(start, start + ITEMS_PER_PAGE);
+  }, [sortedData, currentPage, isRestrictedView]);
+
+  const totalPages = Math.ceil(sortedData.length / ITEMS_PER_PAGE);
+
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
@@ -82,15 +110,19 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-visible flex flex-col">
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-visible flex flex-col min-h-[600px]">
       
       {/* Toolbar */}
       <div className="p-5 border-b border-slate-200 bg-slate-50/50">
          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-               <h3 className="text-lg font-semibold text-slate-800">Submissions List</h3>
+               <h3 className="text-lg font-semibold text-slate-800">
+                 {isRestrictedView ? 'Latest Submissions' : 'Filtered Results'}
+               </h3>
                <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded-full">
-                 Latest {Math.min(sortedData.length, 100)} items
+                 {isRestrictedView 
+                   ? `${Math.min(100, sortedData.length)} visible` 
+                   : `${sortedData.length} total`}
                </span>
             </div>
             
@@ -99,7 +131,7 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <input 
                   type="text" 
-                  placeholder="Search ideas..."
+                  placeholder="Search in list..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
@@ -108,17 +140,22 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
 
               <button 
                  onClick={onOpenExplore}
-                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border bg-white border-slate-200 text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 shadow-sm shrink-0"
+                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border shadow-sm shrink-0 ${
+                    isGlobalFilterActive 
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100' 
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700'
+                 }`}
               >
                  <Compass className="h-4 w-4" />
                  Explore & Filter
+                 {isGlobalFilterActive && <span className="flex h-2 w-2 rounded-full bg-emerald-500 ml-1"></span>}
               </button>
             </div>
          </div>
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto z-10">
+      <div className="overflow-x-auto z-10 flex-1">
         <table className="min-w-full divide-y divide-slate-200">
           <thead className="bg-slate-50">
             <tr>
@@ -145,7 +182,7 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-slate-200">
-            {sortedData.length === 0 ? (
+            {displayData.length === 0 ? (
               <tr>
                 <td colSpan={5} className="px-6 py-16 text-center">
                   <div className="flex flex-col items-center justify-center text-slate-400">
@@ -158,8 +195,7 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
                 </td>
               </tr>
             ) : (
-              // RESTRICT TO TOP 100 SUBMISSIONS
-              sortedData.slice(0, 100).map((idea) => (
+              displayData.map((idea) => (
                 <tr key={idea.id} className="hover:bg-slate-50 transition-colors group">
                   <td className="px-6 py-4">
                     <div className="flex flex-col">
@@ -206,21 +242,67 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
                 </tr>
               ))
             )}
-            {sortedData.length > 100 && (
-              <tr>
-                <td colSpan={5} className="px-6 py-4 text-center text-xs text-slate-400 bg-slate-50/50">
-                   End of latest 100 submissions view. Use 'Explore & Filter' to find specific items.
-                </td>
-              </tr>
-            )}
           </tbody>
         </table>
       </div>
       
-      {/* Footer removed as per requirement (Pagination removed) */}
-      <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 text-xs text-slate-400 text-center">
-        Displaying latest submissions only
-      </div>
+      {/* Pagination Footer - ONLY VISIBLE IF NOT IN RESTRICTED VIEW */}
+      {!isRestrictedView && sortedData.length > 0 && (
+        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+          <div className="text-sm text-slate-500">
+            Showing <span className="font-medium">{Math.min((currentPage - 1) * ITEMS_PER_PAGE + 1, sortedData.length)}</span> to <span className="font-medium">{Math.min(currentPage * ITEMS_PER_PAGE, sortedData.length)}</span> of <span className="font-medium">{sortedData.length}</span> results
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+              disabled={currentPage === 1}
+              className="p-2 border border-slate-300 rounded-md bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            
+            <div className="flex items-center gap-1">
+               {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                  if (totalPages > 5) return null;
+                  return (
+                    <button
+                        key={i + 1}
+                        onClick={() => setCurrentPage(i + 1)}
+                        className={`w-8 h-8 flex items-center justify-center rounded-md text-sm font-medium transition-colors ${
+                        currentPage === i + 1
+                            ? 'bg-indigo-600 text-white border border-indigo-600'
+                            : 'bg-white text-slate-600 border border-slate-300 hover:bg-slate-50'
+                        }`}
+                    >
+                        {i + 1}
+                    </button>
+                  );
+               })}
+               {totalPages > 5 && (
+                  <span className="text-sm font-medium px-2">
+                    Page {currentPage} of {totalPages}
+                  </span>
+               )}
+            </div>
+
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+              disabled={currentPage === totalPages}
+              className="p-2 border border-slate-300 rounded-md bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Footer for Restricted View */}
+      {isRestrictedView && (
+        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 text-center text-sm text-slate-400">
+           Showing latest 100 submissions. Use search or explore filters to find more.
+        </div>
+      )}
     </div>
   );
 };

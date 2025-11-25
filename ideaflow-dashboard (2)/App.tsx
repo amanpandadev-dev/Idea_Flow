@@ -11,11 +11,11 @@ import ForgotPasswordPage from './components/ForgotPasswordPage';
 import AssociateModal from './components/AssociateModal';
 import ExploreModal, { ExploreFilters } from './components/ExploreModal';
 import { INITIAL_DATA } from './constants';
-import { fetchIdeas, updateIdeaStatus, fetchAssociateDetails, fetchBusinessGroups } from './services';
-import { Idea, Status, Associate } from './types';
-import { Search, X, LayoutDashboard, FolderKanban, Sparkles, ArrowLeft, PieChart, Loader2, AlertCircle, Filter } from 'lucide-react';
+import { fetchIdeas, fetchAssociateDetails, fetchBusinessGroups } from './services';
+import { Idea, Associate } from './types';
+import { X, LayoutDashboard, FolderKanban, Loader2, Filter, BarChart3 } from 'lucide-react';
 
-type TabType = 'dashboard' | 'projects' | string;
+type TabType = 'dashboard' | 'filtered-analytics' | 'projects' | string;
 type AuthView = 'login' | 'register' | 'forgot-password';
 
 interface UserProfile {
@@ -36,7 +36,6 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
-  const [detailTabs, setDetailTabs] = useState<Idea[]>([]);
   const [usingMockData, setUsingMockData] = useState(false);
 
   // Global Explore Filter State
@@ -93,7 +92,6 @@ const App: React.FC = () => {
         if (ideasData.length === 0) {
            console.log("Database is empty or error, using mock data for demonstration.");
            setIdeas(INITIAL_DATA);
-           // Calculate BGs from mock data since API might return empty
            const mockBGs = new Set<string>();
            INITIAL_DATA.forEach(i => mockBGs.add(i.businessGroup));
            setAllBusinessGroups(Array.from(mockBGs).sort());
@@ -107,11 +105,11 @@ const App: React.FC = () => {
       } catch (err) {
         console.warn("Backend connection failed or DB error, falling back to mock data:", err);
         setIdeas(INITIAL_DATA);
-        // Calculate BGs from mock data
         const mockBGs = new Set<string>();
         INITIAL_DATA.forEach(i => mockBGs.add(i.businessGroup));
         setAllBusinessGroups(Array.from(mockBGs).sort());
         setUsingMockData(true);
+        setError(null);
       } finally {
         setLoading(false);
       }
@@ -120,31 +118,19 @@ const App: React.FC = () => {
     loadData();
   }, [isAuthenticated]);
 
-  // Derived filtered data based on Global Filters
+  // Derived State: Filtered Ideas based on Global Filters
   const filteredIdeas = useMemo(() => {
     return ideas.filter(idea => {
-      // Status filter removed from global filters as per requirement
-      const matchTheme = globalFilters.themes.length === 0 || globalFilters.themes.includes(idea.domain);
-      const matchBG = globalFilters.businessGroups.length === 0 || 
-        globalFilters.businessGroups.includes(idea.businessGroup) || 
-        globalFilters.businessGroups.includes(idea.associateBusinessGroup);
-      
-      // Technology match (if any selected tech is present in idea's tech stack)
-      const matchTech = globalFilters.technologies.length === 0 || 
+      const matchesTheme = globalFilters.themes.length === 0 || globalFilters.themes.includes(idea.domain);
+      const matchesBG = globalFilters.businessGroups.length === 0 || globalFilters.businessGroups.includes(idea.businessGroup);
+      const matchesTech = globalFilters.technologies.length === 0 || 
         idea.technologies.some(t => globalFilters.technologies.includes(t));
       
-      return matchTheme && matchBG && matchTech;
+      return matchesTheme && matchesBG && matchesTech;
     });
   }, [ideas, globalFilters]);
 
-  // Extract all unique technologies for the filter
-  const allTechnologies = useMemo(() => {
-    const techSet = new Set<string>();
-    ideas.forEach(idea => idea.technologies.forEach(t => techSet.add(t)));
-    return Array.from(techSet).sort();
-  }, [ideas]);
-
-  // Extract unique Themes (Domains) dynamically from data
+  // Calculate Available Filter Options from Actual Data
   const allThemes = useMemo(() => {
     const themeSet = new Set<string>();
     ideas.forEach(idea => {
@@ -153,74 +139,19 @@ const App: React.FC = () => {
     return Array.from(themeSet).sort();
   }, [ideas]);
 
-  const handleUpdateStatus = useCallback(async (id: string, newStatus: Status) => {
-    // Optimistic Update
-    setIdeas(prev => prev.map(idea => 
-      idea.id === id ? { ...idea, status: newStatus } : idea
-    ));
-    setDetailTabs(prev => prev.map(idea => 
-      idea.id === id ? { ...idea, status: newStatus } : idea
-    ));
+  const allTechnologies = useMemo(() => {
+    const techSet = new Set<string>();
+    ideas.forEach(idea => {
+      idea.technologies.forEach(tech => techSet.add(tech));
+    });
+    return Array.from(techSet).sort();
+  }, [ideas]);
 
-    if (!usingMockData) {
-      try {
-        await updateIdeaStatus(id, newStatus);
-      } catch (err) {
-        console.error("Failed to persist status update", err);
-      }
-    }
-  }, [usingMockData]);
-
-  const handleOpenDetails = (idea: Idea) => {
-    if (!detailTabs.find(t => t.id === idea.id)) {
-      setDetailTabs([...detailTabs, idea]);
-    }
-    setActiveTab(idea.id);
-  };
-
-  const handleViewAssociate = async (associateId: number) => {
-     setIsAssociateModalOpen(true);
-     setAssociateLoading(true);
-     try {
-       if (usingMockData) {
-          // Mock associate for demo mode
-          setSelectedAssociate({
-             associate_id: associateId,
-             account: "MOCK_ACCOUNT",
-             location: "New York, USA",
-             parent_ou: "Global Technology",
-             business_group: "Digital Operations"
-          });
-       } else {
-          const details = await fetchAssociateDetails(associateId);
-          setSelectedAssociate(details);
-       }
-     } catch (err) {
-       console.error("Failed to fetch associate", err);
-       setSelectedAssociate(null);
-     } finally {
-       setAssociateLoading(false);
-     }
-  };
-
-  const handleOpenChart = (chartId: string) => {
-    setActiveTab(`chart:${chartId}`);
-  };
-
-  const handleCloseTab = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    const newTabs = detailTabs.filter(t => t.id !== id);
-    setDetailTabs(newTabs);
-    if (activeTab === id) {
-      setActiveTab(newTabs.length > 0 ? newTabs[newTabs.length - 1].id : 'projects');
-    }
-  };
-
-  const handleApplyGlobalFilters = (filters: ExploreFilters) => {
-    setGlobalFilters(filters);
-    setIsExploreOpen(false);
-    // Switch to projects tab immediately to show the list without stats
-    setActiveTab('projects');
+  // Handlers
+  const handleLogin = () => {
+    setIsAuthenticated(true);
+    const storedUser = localStorage.getItem('user');
+    if (storedUser) setUser(JSON.parse(storedUser));
   };
 
   const handleLogout = () => {
@@ -228,242 +159,225 @@ const App: React.FC = () => {
     localStorage.removeItem('user');
     setIsAuthenticated(false);
     setUser(null);
-    setIdeas([]);
-    setActiveTab('dashboard');
     setAuthView('login');
   };
 
-  // Callback after successful login from LoginPage
-  const handleLoginSuccess = () => {
-    const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-       setUser(JSON.parse(storedUser));
-    }
-    setIsAuthenticated(true);
+  const handleApplyGlobalFilters = (filters: ExploreFilters) => {
+    setGlobalFilters(filters);
+    // CRITICAL: When applying filters, redirect to the Projects list to show results immediately
+    setActiveTab('projects');
   };
 
-  // Helper to determine if current tab is a chart tab
-  const isChartTab = activeTab.startsWith('chart:');
-  const currentChartId = isChartTab ? activeTab.split(':')[1] : '';
-  const getChartTabName = (id: string) => {
-      switch(id) {
-          case 'theme': return 'Themes';
-          case 'status': return 'Status';
-          case 'build': return 'Build Type';
-          case 'businessGroup': return 'Business Group';
-          default: return 'Chart';
-      }
-  }
+  const handleOpenChart = useCallback((chartId: string, context: 'global' | 'filtered' = 'global') => {
+    setActiveTab(`chart:${chartId}:${context}`);
+  }, []);
 
-  // --- Auth Render ---
+  const handleViewDetails = useCallback((idea: Idea) => {
+    setActiveTab(`detail:${idea.id}`);
+  }, []);
+
+  const handleViewAssociate = useCallback(async (associateId: number) => {
+    setIsAssociateModalOpen(true);
+    setAssociateLoading(true);
+    try {
+      const details = await fetchAssociateDetails(associateId);
+      setSelectedAssociate(details);
+    } catch (err) {
+      console.error("Failed to fetch associate details", err);
+      setSelectedAssociate(null);
+    } finally {
+      setAssociateLoading(false);
+    }
+  }, []);
+
+  // Auth Views
   if (!isAuthenticated) {
-    if (authView === 'register') {
-      return <RegisterPage onNavigateToLogin={() => setAuthView('login')} />;
-    }
-    if (authView === 'forgot-password') {
-      return <ForgotPasswordPage onNavigateToLogin={() => setAuthView('login')} />;
-    }
-    return (
-      <LoginPage 
-        onLogin={handleLoginSuccess} 
-        onForgotPassword={() => setAuthView('forgot-password')}
-      />
-    );
+    if (authView === 'register') return <RegisterPage onNavigateToLogin={() => setAuthView('login')} />;
+    if (authView === 'forgot-password') return <ForgotPasswordPage onNavigateToLogin={() => setAuthView('login')} />;
+    return <LoginPage onLogin={handleLogin} onForgotPassword={() => setAuthView('forgot-password')} />;
   }
 
-  // --- Loading State ---
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="text-center">
-          <Loader2 className="h-10 w-10 animate-spin text-indigo-600 mx-auto mb-4" />
-          <p className="text-slate-500">Loading Repository Data...</p>
-        </div>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-400">
+        <Loader2 className="h-10 w-10 animate-spin mb-4 text-indigo-600" />
+        <p className="font-medium">Loading Dashboard...</p>
       </div>
     );
   }
 
   const activeFiltersCount = globalFilters.themes.length + globalFilters.businessGroups.length + globalFilters.technologies.length;
 
-  // --- Main App Render ---
+  // Render Logic
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex flex-col">
       <Header 
         user={user} 
-        onLogout={handleLogout} 
-        // Explore button removed from header
+        onLogout={handleLogout}
+        onExplore={() => setIsExploreOpen(true)}
       />
-      
-      {/* Backend Status Indicator */}
-      {usingMockData && (
-        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-xs text-amber-800 flex items-center justify-center gap-2">
-          <AlertCircle className="h-3 w-3" />
-          <span>Backend unconnected or empty. Running in Demo Mode.</span>
-        </div>
-      )}
 
-      {/* Global Filter Indicator (If active) */}
-      {activeFiltersCount > 0 && (
-        <div className="bg-emerald-50 border-b border-emerald-200 px-4 py-3 flex items-center justify-center gap-4 animate-in slide-in-from-top-2">
-           <div className="flex items-center gap-2 text-sm text-emerald-800">
-             <Filter className="h-4 w-4" />
-             <span className="font-medium">Active Explore Filters:</span> 
-             {activeFiltersCount} applied. Showing {filteredIdeas.length} of {ideas.length} results.
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        {/* Navigation Tabs */}
+        {!activeTab.startsWith('detail') && !activeTab.startsWith('chart') && (
+           <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex p-1 bg-white border border-slate-200 rounded-xl shadow-sm">
+                <button 
+                  onClick={() => setActiveTab('dashboard')}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === 'dashboard' 
+                      ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200' 
+                      : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <LayoutDashboard className="h-4 w-4" />
+                  Global Dashboard
+                </button>
+                
+                {activeFiltersCount > 0 && (
+                   <button 
+                    onClick={() => setActiveTab('filtered-analytics')}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                      activeTab === 'filtered-analytics' 
+                        ? 'bg-emerald-50 text-emerald-700 shadow-sm ring-1 ring-emerald-200' 
+                        : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <BarChart3 className="h-4 w-4" />
+                    Filtered Analytics
+                    <span className="bg-emerald-100 text-emerald-700 text-xs px-1.5 py-0.5 rounded-full">
+                       {activeFiltersCount}
+                    </span>
+                  </button>
+                )}
+
+                <button 
+                  onClick={() => setActiveTab('projects')}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === 'projects' 
+                      ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200' 
+                      : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <FolderKanban className="h-4 w-4" />
+                  Ideas Submissions
+                  <span className="bg-slate-100 text-slate-600 text-xs px-1.5 py-0.5 rounded-full border border-slate-200">
+                    {filteredIdeas.length}
+                  </span>
+                </button>
+              </div>
+
+              {activeFiltersCount > 0 && (
+                 <div className="flex items-center gap-2 text-sm text-slate-500 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
+                    <Filter className="h-3 w-3" />
+                    <span>Active Filters: {activeFiltersCount}</span>
+                    <button 
+                      onClick={() => {
+                        setGlobalFilters({ themes: [], businessGroups: [], technologies: [] });
+                        // Optional: Redirect back to dashboard on clear
+                        // setActiveTab('dashboard'); 
+                      }}
+                      className="ml-2 hover:bg-slate-100 p-1 rounded-full text-slate-400 hover:text-red-500 transition-colors"
+                      title="Clear Filters"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                 </div>
+              )}
            </div>
-           <button 
-             onClick={() => setGlobalFilters({ themes: [], businessGroups: [], technologies: [] })}
-             className="text-xs font-semibold text-emerald-600 hover:text-emerald-800 underline"
-           >
-             Clear All
-           </button>
-        </div>
-      )}
+        )}
 
-      {/* Tab Navigation Bar */}
-      <div className="bg-white border-b border-slate-200 px-4 sm:px-6 lg:px-8 sticky top-16 z-20">
-        <div className="max-w-7xl mx-auto flex items-center gap-1 overflow-x-auto no-scrollbar">
-          <button
-            onClick={() => setActiveTab('dashboard')}
-            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-              activeTab === 'dashboard' 
-                ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' 
-                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-            }`}
-          >
-            <LayoutDashboard className="h-4 w-4" />
-            Dashboard
-          </button>
+        {/* Content Area */}
+        <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
           
-          <button
-            onClick={() => setActiveTab('projects')}
-            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-              activeTab === 'projects' 
-                ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' 
-                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-            }`}
-          >
-            <FolderKanban className="h-4 w-4" />
-            Ideas Submissions
-          </button>
-
-          {/* Dynamic Chart Tab */}
-          {isChartTab && (
-             <button
-             onClick={() => {}}
-             className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap border-indigo-600 text-indigo-600 bg-indigo-50/50`}
-           >
-             <PieChart className="h-4 w-4" />
-             Analytics: {getChartTabName(currentChartId)}
-             <span 
-                onClick={(e) => { e.stopPropagation(); setActiveTab('dashboard'); }}
-                className="ml-2 p-0.5 rounded-full hover:bg-indigo-100 text-indigo-400 hover:text-indigo-600"
-             >
-               <X className="h-3 w-3" />
-             </span>
-           </button>
+          {/* 1. Global Dashboard View */}
+          {activeTab === 'dashboard' && (
+            <StatsSection 
+              data={ideas} // Pass FULL dataset
+              onOpenChart={(id) => handleOpenChart(id, 'global')} 
+            />
           )}
 
-          {/* Idea Detail Tabs */}
-          {detailTabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`group flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap relative pr-8 ${
-                activeTab === tab.id 
-                  ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' 
-                  : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-              }`}
-            >
-              <Sparkles className="h-4 w-4" />
-              <span className="max-w-[100px] truncate">{tab.title}</span>
-              <span 
-                onClick={(e) => handleCloseTab(e, tab.id)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-slate-200 text-slate-400 hover:text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity"
-              >
-                <X className="h-3 w-3" />
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-      
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        
-        {activeTab === 'dashboard' && (
-          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 relative min-h-[80vh]">
-            
-            {/* Charts & Stats Layer */}
-            <section className="animate-in fade-in duration-500">
-              
-              <StatsSection data={filteredIdeas} onOpenChart={handleOpenChart} />
-            </section>
-          </div>
-        )}
+          {/* 2. Filtered Analytics View */}
+          {activeTab === 'filtered-analytics' && (
+            <div className="space-y-4">
+               <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl flex items-center gap-3 text-emerald-800">
+                  <Filter className="h-5 w-5" />
+                  <div>
+                    <h3 className="font-semibold">Filtered Analytics View</h3>
+                    <p className="text-xs opacity-80">Showing statistics for {filteredIdeas.length} ideas matching your filters.</p>
+                  </div>
+               </div>
+               <StatsSection 
+                 data={filteredIdeas} // Pass FILTERED dataset
+                 onOpenChart={(id) => handleOpenChart(id, 'filtered')} 
+               />
+            </div>
+          )}
 
-        {activeTab === 'projects' && (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-             <div className="mb-6 flex items-center justify-between">
-                <div>
-                  <h2 className="text-2xl font-bold text-slate-800">Ideas Submissions</h2>
-                  <p className="text-slate-500">Manage and review all associate idea submissions.</p>
-                </div>
-             </div>
-             {/* IdeaTable now includes search and local filtering logic */}
-             <IdeaTable 
-               data={filteredIdeas} 
-               onUpdateStatus={handleUpdateStatus} 
-               onViewDetails={handleOpenDetails}
-               onOpenExplore={() => setIsExploreOpen(true)}
-             />
-          </div>
-        )}
+          {/* 3. Ideas List View */}
+          {activeTab === 'projects' && (
+            <IdeaTable 
+              data={filteredIdeas} 
+              onViewDetails={handleViewDetails}
+              onOpenExplore={() => setIsExploreOpen(true)}
+              isGlobalFilterActive={activeFiltersCount > 0}
+            />
+          )}
 
-        {isChartTab && (
-            <div className="animate-in fade-in slide-in-from-bottom-4 duration-300">
-                <ChartDetail 
-                    chartId={currentChartId} 
-                    data={filteredIdeas} // Pass filtered data to charts too
-                    onBack={() => setActiveTab('dashboard')} 
+          {/* 4. Details View */}
+          {activeTab.startsWith('detail:') && (
+            (() => {
+              const ideaId = activeTab.split(':')[1];
+              const idea = ideas.find(i => i.id === ideaId);
+              return idea ? (
+                <IdeaDetails 
+                  idea={idea} 
+                  onBack={() => setActiveTab('projects')} 
+                  onViewAssociate={handleViewAssociate}
+                  onNavigateToIdea={handleViewDetails}
                 />
-            </div>
-        )}
+              ) : <div>Idea not found</div>;
+            })()
+          )}
 
-        {detailTabs.map(idea => (
-          activeTab === idea.id && (
-            <div key={idea.id}>
-              <IdeaDetails 
-                idea={idea} 
-                onUpdateStatus={handleUpdateStatus}
-                onBack={() => setActiveTab('projects')}
-                onViewAssociate={handleViewAssociate}
-                onNavigateToIdea={handleOpenDetails}
-              />
-            </div>
-          )
-        ))}
-
+          {/* 5. Chart Detail View */}
+          {activeTab.startsWith('chart:') && (
+            (() => {
+              const [, chartId, context] = activeTab.split(':');
+              // Determine which dataset to use based on context
+              const chartData = context === 'filtered' ? filteredIdeas : ideas;
+              
+              return (
+                <ChartDetail 
+                  chartId={chartId} 
+                  data={chartData} 
+                  onBack={() => setActiveTab(context === 'filtered' ? 'filtered-analytics' : 'dashboard')} 
+                />
+              );
+            })()
+          )}
+        </div>
       </main>
 
-      {/* Associate Details Modal */}
-      {isAssociateModalOpen && (
-         <AssociateModal 
-            associate={selectedAssociate} 
-            loading={associateLoading} 
-            onClose={() => setIsAssociateModalOpen(false)} 
-         />
-      )}
-
-      {/* Global Explore Modal */}
+      {/* Global Modals */}
       <ExploreModal 
         isOpen={isExploreOpen} 
-        onClose={() => setIsExploreOpen(false)} 
+        onClose={() => setIsExploreOpen(false)}
         onApplyFilters={handleApplyGlobalFilters}
         initialFilters={globalFilters}
         availableTechnologies={allTechnologies}
         availableThemes={allThemes}
         availableBusinessGroups={allBusinessGroups}
       />
+
+      <AssociateModal 
+        associate={selectedAssociate}
+        loading={associateLoading}
+        onClose={() => setIsAssociateModalOpen(false)}
+      />
+
     </div>
   );
 };
