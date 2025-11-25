@@ -232,7 +232,7 @@ const App: React.FC = () => {
                   }`}
                 >
                   <LayoutDashboard className="h-4 w-4" />
-                  Global Dashboard
+                  Dashboard
                 </button>
                 
                 {activeFiltersCount > 0 && (
