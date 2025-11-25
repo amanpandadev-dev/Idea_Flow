@@ -1,3 +1,4 @@
+
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -30,13 +31,14 @@ if (process.env.DATABASE_URL) {
   });
   console.log("Database configured. Attempting to connect...");
 } else {
-  console.warn("⚠️ No DATABASE_URL found in .env file. DB-dependent endpoints will return 503.");
+  console.warn("⚠️ No DATABASE_URL found in .env file.");
 }
 
 // --- Helpers ---
 
 const randomScore = () => Math.floor(Math.random() * 5) + 6;
 
+// Helper: Generate synthetic future scope
 const generateFutureScope = (domain) => {
   const scopes = [
     `Integration with wider enterprise ecosystems to enable cross-functional data synergy in ${domain}.`,
@@ -48,7 +50,7 @@ const generateFutureScope = (domain) => {
   return scopes[Math.floor(Math.random() * scopes.length)];
 };
 
-// Map DB row to Frontend Idea Interface — keep attribute names exactly as DB provides
+// Map DB row to Frontend Idea Interface
 const mapDBToFrontend = (row) => ({
   id: `IDEA-${row.idea_id}`,
   dbId: row.idea_id,
@@ -56,15 +58,19 @@ const mapDBToFrontend = (row) => ({
   description: row.summary || '',
   domain: row.challenge_opportunity || 'Other',
   status: row.build_phase || 'Submitted',
-  businessGroup: row.idea_bg || 'Corporate Functions',
+  businessGroup: row.idea_bg || 'Corporate Functions', 
   buildType: row.build_preference || 'New Solution / IP',
   technologies: row.code_preference ? (row.code_preference.includes(',') ? row.code_preference.split(',').map(s=>s.trim()) : [row.code_preference]) : [],
   submissionDate: row.created_at,
+  
+  // Mapped Associate Info
   associateId: row.associate_id,
-  associateAccount: row.account || 'Unknown',
+  associateAccount: row.account || 'Unknown', 
   associateBusinessGroup: row.assoc_bg || 'Unknown',
+
   votes: 0,
-  futureScope: generateFutureScope(row.challenge_opportunity || 'General'),
+  
+  futureScope: generateFutureScope(row.challenge_opportunity),
   impactScore: randomScore(),
   confidenceScore: randomScore(),
   feasibilityScore: randomScore()
@@ -72,7 +78,7 @@ const mapDBToFrontend = (row) => ({
 
 // Middleware to verify Token
 const auth = (req, res, next) => {
-  if (!pool) return next(); // Skip auth in demo mode/no db
+  if (!pool) return next(); 
 
   const token = req.header('Authorization')?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ msg: 'No token, authorization denied' });
@@ -120,12 +126,12 @@ app.post('/api/auth/login', async (req, res) => {
       res.json({ token, user: { id: user.id, name: user.name, role: user.role } });
     });
   } catch (err) {
-    console.error("Login Error:", err);
+    console.error(err.message);
     res.status(500).send('Server error');
   }
 });
 
-// 2. Auth: Register (Hidden/Utility)
+// 2. Auth: Register
 app.post('/api/auth/register', async (req, res) => {
   if (!pool) return res.status(503).json({ msg: 'DB not connected' });
   
@@ -147,7 +153,7 @@ app.post('/api/auth/register', async (req, res) => {
 
     res.json(newUser.rows[0]);
   } catch (err) {
-    console.error("Register Error:", err);
+    console.error(err.message);
     res.status(500).send('Server error');
   }
 });
@@ -160,7 +166,6 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
   try {
     const userCheck = await pool.query('SELECT * FROM users WHERE emp_id = $1 AND email = $2', [emp_id, email]);
-    
     if (userCheck.rows.length === 0) {
       return res.status(404).json({ msg: 'User details not found or do not match' });
     }
@@ -172,7 +177,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
     res.json({ msg: 'Password updated successfully' });
   } catch (err) {
-    console.error("Reset Password Error:", err);
+    console.error(err.message);
     res.status(500).send('Server error');
   }
 });
@@ -184,8 +189,13 @@ app.get('/api/ideas', auth, async (req, res) => {
   try {
     const { search } = req.query;
     
-    // Use your real attribute names (do NOT rename columns)
-    const selectClause = `
+    // Corrected Query Logic
+    // 1. DISTINCT ON (i.idea_id) to avoid duplicates from joins
+    // 2. LEFT JOIN idea_team (it) on idea_id
+    // 3. LEFT JOIN associates (a) on it.associate_id
+    // 4. Fetch i.business_group (Idea BG) and it.business_group (Associate BG)
+    
+    let query = `
       SELECT DISTINCT ON (i.idea_id)
         i.*,
         i.business_group as idea_bg,
@@ -194,19 +204,14 @@ app.get('/api/ideas', auth, async (req, res) => {
         a.parent_ou,
         it.business_group as assoc_bg,
         a.location
-    `;
-    
-    const fromClause = `
       FROM ideas i
       LEFT JOIN idea_team it ON i.idea_id = it.idea_id
       LEFT JOIN associates a ON it.associate_id = a.associate_id
     `;
     
-    let whereClause = "";
     const params = [];
-    
     if (search) {
-      whereClause = `
+      query += `
         WHERE 
           i.title ILIKE $1 OR 
           i.summary ILIKE $1 OR 
@@ -216,21 +221,19 @@ app.get('/api/ideas', auth, async (req, res) => {
       params.push(`%${search}%`);
     }
 
-    // Important: DISTINCT ON requires ORDER BY with the DISTINCT expr as first element
-    const orderBy = ` ORDER BY i.idea_id, i.created_at DESC`;
-    
-    const query = `${selectClause} ${fromClause} ${whereClause} ${orderBy}`;
+    // Important: DISTINCT ON expressions must match initial ORDER BY expressions
+    query += ` ORDER BY i.idea_id, i.created_at DESC`;
     
     const result = await pool.query(query, params);
     const mappedData = result.rows.map(mapDBToFrontend);
     res.json(mappedData);
   } catch (err) {
-    console.error("Database Query Error (/api/ideas):", err);
+    console.error("Database Query Error:", err.message);
     res.status(500).json({ error: 'Database query failed' });
   }
 });
 
-// 5. Get Unique Business Groups (For Filter)
+// 5. Get Unique Business Groups
 app.get('/api/business-groups', auth, async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'No database connection' });
 
@@ -246,12 +249,12 @@ app.get('/api/business-groups', auth, async (req, res) => {
     const groups = result.rows.map(r => r.business_group);
     res.json(groups);
   } catch (err) {
-    console.error("BG Fetch Error:", err);
+    console.error("BG Fetch Error:", err.message);
     res.status(500).json({ error: 'Failed to fetch business groups' });
   }
 });
 
-// 6. Get Similar Ideas (Semantic-like Search)
+// 6. Get Similar Ideas
 app.get('/api/ideas/:id/similar', auth, async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'No database connection' });
 
@@ -259,14 +262,12 @@ app.get('/api/ideas/:id/similar', auth, async (req, res) => {
     const { id } = req.params;
     const numericId = id.replace('IDEA-', '');
 
-    // 1. Get current idea to find its domain/title
     const currentIdea = await pool.query('SELECT title, challenge_opportunity FROM ideas WHERE idea_id = $1', [numericId]);
     
     if (currentIdea.rows.length === 0) return res.json([]);
     
     const { title, challenge_opportunity } = currentIdea.rows[0];
     
-    // 2. Find similar ideas
     const query = `
       SELECT DISTINCT ON (i.idea_id)
         i.*,
@@ -285,18 +286,16 @@ app.get('/api/ideas/:id/similar', auth, async (req, res) => {
           i.challenge_opportunity = $2
           OR i.title ILIKE $3
         )
-      ORDER BY i.idea_id, i.created_at DESC
       LIMIT 3
     `;
     
-    const keyword = (title || '').split(' ')[0] || title || '';
-
+    const keyword = title.split(' ')[0] || title;
     const result = await pool.query(query, [numericId, challenge_opportunity, `%${keyword}%`]);
     const mappedData = result.rows.map(mapDBToFrontend);
     res.json(mappedData);
 
   } catch (err) {
-    console.error("Similar Ideas Error:", err);
+    console.error(err.message);
     res.status(500).json({ error: 'Failed to fetch similar ideas' });
   }
 });
@@ -318,7 +317,7 @@ app.get('/api/associates/:id', auth, async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (err) {
-    console.error("Associate Fetch Error:", err);
+    console.error(err.message);
     res.status(500).send('Server Error');
   }
 });
@@ -339,7 +338,7 @@ app.put('/api/ideas/:id/status', auth, async (req, res) => {
 
     res.json({ msg: 'Status updated successfully' });
   } catch (err) {
-    console.error("Update Status Error:", err);
+    console.error(err.message);
     res.status(500).send('Server Error');
   }
 });
