@@ -1,4 +1,3 @@
-
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -51,30 +50,39 @@ const generateFutureScope = (domain) => {
 };
 
 // Map DB row to Frontend Idea Interface
-const mapDBToFrontend = (row) => ({
-  id: `IDEA-${row.idea_id}`,
-  dbId: row.idea_id,
-  title: row.title,
-  description: row.summary || '',
-  domain: row.challenge_opportunity || 'Other',
-  status: row.build_phase || 'Submitted',
-  businessGroup: row.idea_bg || 'Corporate Functions', 
-  buildType: row.build_preference || 'New Solution / IP',
-  technologies: row.code_preference ? (row.code_preference.includes(',') ? row.code_preference.split(',').map(s=>s.trim()) : [row.code_preference]) : [],
-  submissionDate: row.created_at,
-  
-  // Mapped Associate Info
-  associateId: row.associate_id,
-  associateAccount: row.account || 'Unknown', 
-  associateBusinessGroup: row.assoc_bg || 'Unknown',
+const mapDBToFrontend = (row) => {
+  // Safe integer parsing helper
+  const safeInt = (val) => (val !== null && val !== undefined) ? parseInt(val, 10) : 0;
 
-  votes: 0,
-  
-  futureScope: generateFutureScope(row.challenge_opportunity),
-  impactScore: randomScore(),
-  confidenceScore: randomScore(),
-  feasibilityScore: randomScore()
-});
+  return {
+    id: `IDEA-${row.idea_id}`,
+    dbId: row.idea_id,
+    title: row.title,
+    description: row.summary || '',
+    domain: row.challenge_opportunity || 'Other',
+    status: row.build_phase || 'Submitted',
+    businessGroup: row.idea_bg || 'Corporate Functions', 
+    buildType: row.build_preference || 'New Solution / IP',
+    technologies: row.code_preference ? (row.code_preference.includes(',') ? row.code_preference.split(',').map(s=>s.trim()) : [row.code_preference]) : [],
+    submissionDate: row.created_at,
+    
+    // Mapped Associate Info
+    associateId: row.associate_id,
+    associateAccount: row.account || 'Unknown', 
+    associateBusinessGroup: row.assoc_bg || 'Unknown',
+
+    // Metrics
+    // CRITICAL: Map explicitly selected 'idea_score'
+    score: row.idea_score !== undefined && row.idea_score !== null ? safeInt(row.idea_score) : 0,
+    likesCount: safeInt(row.likes_count),
+    isLiked: !!row.is_liked, // Boolean conversion
+    
+    futureScope: generateFutureScope(row.challenge_opportunity),
+    impactScore: randomScore(),
+    confidenceScore: randomScore(),
+    feasibilityScore: randomScore()
+  };
+};
 
 // Middleware to verify Token
 const auth = (req, res, next) => {
@@ -116,14 +124,15 @@ app.post('/api/auth/login', async (req, res) => {
 
     const payload = {
       user: {
-        id: user.id,
+        id: user.id,       // Numeric Primary Key
+        emp_id: user.emp_id, // String Employee ID (Used for Likes FK)
         role: user.role
       }
     };
 
     jwt.sign(payload, JWT_SECRET, { expiresIn: '8h' }, (err, token) => {
       if (err) throw err;
-      res.json({ token, user: { id: user.id, name: user.name, role: user.role } });
+      res.json({ token, user: { id: user.emp_id, name: user.name, role: user.role } });
     });
   } catch (err) {
     console.error(err.message);
@@ -188,40 +197,43 @@ app.get('/api/ideas', auth, async (req, res) => {
 
   try {
     const { search } = req.query;
+    // CRITICAL: Use emp_id (string) for likes check to match Schema FK
+    const userId = req.user ? req.user.user.emp_id : ''; 
     
-    // Corrected Query Logic
-    // 1. DISTINCT ON (i.idea_id) to avoid duplicates from joins
-    // 2. LEFT JOIN idea_team (it) on idea_id
-    // 3. LEFT JOIN associates (a) on it.associate_id
-    // 4. Fetch i.business_group (Idea BG) and it.business_group (Associate BG)
-    
+    // Updated query:
+    // 1. Explicitly select 'i.score as idea_score' to guarantee fetching
+    // 2. JOIN via idea_team to get team info
+    // 3. Check likes using user_id (String emp_id) comparison
     let query = `
       SELECT DISTINCT ON (i.idea_id)
+        i.score as idea_score, 
         i.*,
         i.business_group as idea_bg,
         a.associate_id,
         a.account,
         a.parent_ou,
         it.business_group as assoc_bg,
-        a.location
+        a.location,
+        (SELECT COUNT(*) FROM likes WHERE idea_id = i.idea_id) as likes_count,
+        (EXISTS (SELECT 1 FROM likes WHERE idea_id = i.idea_id AND user_id = $1)) as is_liked
       FROM ideas i
       LEFT JOIN idea_team it ON i.idea_id = it.idea_id
       LEFT JOIN associates a ON it.associate_id = a.associate_id
     `;
     
-    const params = [];
+    const params = [userId]; // $1 is userId (emp_id)
+    
     if (search) {
       query += `
         WHERE 
-          i.title ILIKE $1 OR 
-          i.summary ILIKE $1 OR 
-          i.challenge_opportunity ILIKE $1 OR
-          a.account ILIKE $1
+          (i.title ILIKE $2 OR 
+          i.summary ILIKE $2 OR 
+          i.challenge_opportunity ILIKE $2 OR
+          a.account ILIKE $2)
       `;
-      params.push(`%${search}%`);
+      params.push(`%${search}%`); // $2 is search term
     }
 
-    // Important: DISTINCT ON expressions must match initial ORDER BY expressions
     query += ` ORDER BY i.idea_id, i.created_at DESC`;
     
     const result = await pool.query(query, params);
@@ -260,6 +272,7 @@ app.get('/api/ideas/:id/similar', auth, async (req, res) => {
 
   try {
     const { id } = req.params;
+    const userId = req.user ? req.user.user.emp_id : ''; // Use emp_id
     const numericId = id.replace('IDEA-', '');
 
     const currentIdea = await pool.query('SELECT title, challenge_opportunity FROM ideas WHERE idea_id = $1', [numericId]);
@@ -270,27 +283,30 @@ app.get('/api/ideas/:id/similar', auth, async (req, res) => {
     
     const query = `
       SELECT DISTINCT ON (i.idea_id)
+        i.score as idea_score,
         i.*,
         i.business_group as idea_bg,
         a.associate_id,
         a.account,
         a.parent_ou,
         it.business_group as assoc_bg,
-        a.location
+        a.location,
+        (SELECT COUNT(*) FROM likes WHERE idea_id = i.idea_id) as likes_count,
+        (EXISTS (SELECT 1 FROM likes WHERE idea_id = i.idea_id AND user_id = $1)) as is_liked
       FROM ideas i
       LEFT JOIN idea_team it ON i.idea_id = it.idea_id
       LEFT JOIN associates a ON it.associate_id = a.associate_id
       WHERE 
-        i.idea_id != $1
+        i.idea_id != $2
         AND (
-          i.challenge_opportunity = $2
-          OR i.title ILIKE $3
+          i.challenge_opportunity = $3
+          OR i.title ILIKE $4
         )
       LIMIT 3
     `;
     
     const keyword = title.split(' ')[0] || title;
-    const result = await pool.query(query, [numericId, challenge_opportunity, `%${keyword}%`]);
+    const result = await pool.query(query, [userId, numericId, challenge_opportunity, `%${keyword}%`]);
     const mappedData = result.rows.map(mapDBToFrontend);
     res.json(mappedData);
 
@@ -342,6 +358,39 @@ app.put('/api/ideas/:id/status', auth, async (req, res) => {
     res.status(500).send('Server Error');
   }
 });
+
+// 9. Like/Unlike Idea
+app.post('/api/ideas/:id/like', auth, async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'No database connection' });
+
+  try {
+    const { id } = req.params;
+    // CRITICAL: Use string emp_id from token for likes table (referencing users.emp_id)
+    const userId = req.user.user.emp_id;
+    const numericId = id.replace('IDEA-', '');
+
+    console.log(`Toggling like for Idea: ${numericId} by User: ${userId}`);
+
+    // Check if like exists
+    const check = await pool.query('SELECT id FROM likes WHERE user_id = $1 AND idea_id = $2', [userId, numericId]);
+
+    if (check.rows.length > 0) {
+      // Unlike
+      await pool.query('DELETE FROM likes WHERE user_id = $1 AND idea_id = $2', [userId, numericId]);
+      console.log("Unliked");
+      res.json({ liked: false });
+    } else {
+      // Like
+      await pool.query('INSERT INTO likes (user_id, idea_id) VALUES ($1, $2)', [userId, numericId]);
+      console.log("Liked");
+      res.json({ liked: true });
+    }
+  } catch (err) {
+    console.error("Like Error:", err.message);
+    res.status(500).send('Server Error');
+  }
+});
+
 
 // --- 404 Handler for API Routes ---
 app.use('/api/*', (req, res) => {
