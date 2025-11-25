@@ -6,7 +6,6 @@ import { ChevronDown, ChevronUp, Calendar, User, ExternalLink, Filter, Compass, 
 
 interface IdeaTableProps {
   data: Idea[];
-  onUpdateStatus: (id: string, newStatus: Status) => void;
   onViewDetails: (idea: Idea) => void;
   onOpenExplore: () => void;
 }
@@ -16,7 +15,6 @@ type SortOrder = 'asc' | 'desc';
 
 const IdeaTable: React.FC<IdeaTableProps> = ({ 
   data, 
-  onUpdateStatus, 
   onViewDetails,
   onOpenExplore
 }) => {
@@ -92,7 +90,7 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
             <div className="flex items-center gap-3">
                <h3 className="text-lg font-semibold text-slate-800">Submissions List</h3>
                <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded-full">
-                 {sortedData.length} items
+                 Latest {Math.min(sortedData.length, 100)} items
                </span>
             </div>
             
@@ -160,6 +158,7 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
                 </td>
               </tr>
             ) : (
+              // RESTRICT TO TOP 100 SUBMISSIONS
               sortedData.slice(0, 100).map((idea) => (
                 <tr key={idea.id} className="hover:bg-slate-50 transition-colors group">
                   <td className="px-6 py-4">
@@ -186,16 +185,9 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <select 
-                      value={idea.status}
-                      onChange={(e) => onUpdateStatus(idea.id, e.target.value as Status)}
-                      onClick={(e) => e.stopPropagation()}
-                      className={`text-xs font-medium px-2.5 py-1 rounded-full border cursor-pointer focus:ring-2 focus:ring-indigo-500 focus:outline-none ${getStatusColor(idea.status)}`}
-                    >
-                      {Object.values(Status).map(s => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
-                    </select>
+                    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${getStatusColor(idea.status)}`}>
+                       {idea.status}
+                    </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
                     <div className="flex items-center gap-1">
@@ -216,8 +208,8 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
             )}
             {sortedData.length > 100 && (
               <tr>
-                <td colSpan={5} className="px-6 py-4 text-center text-xs text-slate-400">
-                  Showing first 100 results of {sortedData.length}
+                <td colSpan={5} className="px-6 py-4 text-center text-xs text-slate-400 bg-slate-50/50">
+                   End of latest 100 submissions view. Use 'Explore & Filter' to find specific items.
                 </td>
               </tr>
             )}
@@ -225,12 +217,9 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
         </table>
       </div>
       
-      <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex justify-between items-center z-0">
-        <p className="text-sm text-slate-500">Showing {Math.min(sortedData.length, 100)} of {sortedData.length} results</p>
-        <div className="flex gap-2">
-          <button className="px-3 py-1 border border-slate-300 rounded-md text-sm text-slate-500 bg-white disabled:opacity-50" disabled>Previous</button>
-          <button className="px-3 py-1 border border-slate-300 rounded-md text-sm text-slate-500 bg-white hover:bg-slate-100">Next</button>
-        </div>
+      {/* Footer removed as per requirement (Pagination removed) */}
+      <div className="px-6 py-3 border-t border-slate-200 bg-slate-50 text-xs text-slate-400 text-center">
+        Displaying latest submissions only
       </div>
     </div>
   );
