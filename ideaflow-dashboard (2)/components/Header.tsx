@@ -25,12 +25,7 @@ const Header: React.FC<HeaderProps> = ({ user, onLogout }) => {
           
           <div className="flex items-center gap-4">
             
-            <button className="p-2 text-slate-400 hover:text-indigo-600 transition-colors relative">
-              <Bell className="h-6 w-6" />
-              <span className="absolute top-1.5 right-1.5 block h-2 w-2 rounded-full bg-red-500 ring-2 ring-white" />
-            </button>
-            
-            <div className="h-8 w-px bg-slate-200 mx-1 hidden sm:block"></div>
+           
 
             <div className="flex items-center gap-3 pl-2">
               <div className="flex items-center gap-2">
