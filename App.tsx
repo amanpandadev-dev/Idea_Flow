@@ -153,24 +153,6 @@ const App: React.FC = () => {
     return Array.from(themeSet).sort();
   }, [ideas]);
 
-  const handleUpdateStatus = useCallback(async (id: string, newStatus: Status) => {
-    // Optimistic Update
-    setIdeas(prev => prev.map(idea => 
-      idea.id === id ? { ...idea, status: newStatus } : idea
-    ));
-    setDetailTabs(prev => prev.map(idea => 
-      idea.id === id ? { ...idea, status: newStatus } : idea
-    ));
-
-    if (!usingMockData) {
-      try {
-        await updateIdeaStatus(id, newStatus);
-      } catch (err) {
-        console.error("Failed to persist status update", err);
-      }
-    }
-  }, [usingMockData]);
-
   const handleOpenDetails = (idea: Idea) => {
     if (!detailTabs.find(t => t.id === idea.id)) {
       setDetailTabs([...detailTabs, idea]);
@@ -395,7 +377,15 @@ const App: React.FC = () => {
             
             {/* Charts & Stats Layer */}
             <section className="animate-in fade-in duration-500">
-              
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                   <h2 className="text-2xl font-bold text-slate-800">Overview</h2>
+                   {activeFiltersCount > 0 && <p className="text-sm text-emerald-600">Showing filtered results</p>}
+                </div>
+                <div className="text-sm text-slate-500">
+                  Last updated: {new Date().toLocaleDateString()}
+                </div>
+              </div>
               <StatsSection data={filteredIdeas} onOpenChart={handleOpenChart} />
             </section>
           </div>
@@ -412,7 +402,6 @@ const App: React.FC = () => {
              {/* IdeaTable now includes search and local filtering logic */}
              <IdeaTable 
                data={filteredIdeas} 
-               onUpdateStatus={handleUpdateStatus} 
                onViewDetails={handleOpenDetails}
                onOpenExplore={() => setIsExploreOpen(true)}
              />
@@ -434,7 +423,6 @@ const App: React.FC = () => {
             <div key={idea.id}>
               <IdeaDetails 
                 idea={idea} 
-                onUpdateStatus={handleUpdateStatus}
                 onBack={() => setActiveTab('projects')}
                 onViewAssociate={handleViewAssociate}
                 onNavigateToIdea={handleOpenDetails}

@@ -190,13 +190,13 @@ const StatsSection: React.FC<StatsSectionProps> = ({ data, onOpenChart }) => {
           title="Total Submissions" 
           value={data.length.toLocaleString()} 
           icon={<Lightbulb className="h-8 w-8" />} 
-          subtext="+124 this week"
+          
         />
         <StatCard 
           title="Total Participants" 
           value={uniqueAssociates.toLocaleString()} 
           icon={<Users className="h-8 w-8" />} 
-          subtext="Across 6 Global Regions"
+          
         />
       </div>
 
