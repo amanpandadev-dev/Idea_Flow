@@ -7,13 +7,12 @@ import { Calendar, User, ArrowLeft, CheckCircle, Clock, AlertCircle, Activity, C
 
 interface IdeaDetailsProps {
   idea: Idea;
-  onUpdateStatus: (id: string, status: Status) => void;
   onBack?: () => void;
   onViewAssociate?: (associateId: number) => void;
   onNavigateToIdea?: (idea: Idea) => void;
 }
 
-const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onUpdateStatus, onBack, onViewAssociate, onNavigateToIdea }) => {
+const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate, onNavigateToIdea }) => {
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [similarIdeas, setSimilarIdeas] = useState<Idea[]>([]);
@@ -108,24 +107,11 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onUpdateStatus, onBack,
               </div>
             </div>
           </div>
-
-          <div className="flex flex-col gap-3 min-w-[200px]">
-             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Update Status</label>
-             <select 
-                value={idea.status}
-                onChange={(e) => onUpdateStatus(idea.id, e.target.value as Status)}
-                className="block w-full pl-3 pr-10 py-2 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-lg border"
-              >
-                {Object.values(Status).map(s => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-          </div>
         </div>
       </div>
 
       {/* AI Analysis Section Button */}
-     
+      
 
       {/* Analysis Results */}
       {showAnalysis && (

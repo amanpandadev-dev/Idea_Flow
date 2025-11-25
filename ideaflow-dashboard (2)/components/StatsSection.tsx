@@ -1,28 +1,37 @@
+
 import React, { useMemo } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   PieChart, Pie, Cell, Legend
 } from 'recharts';
-import { Idea, Domain, Status } from '../types';
+import { Idea, Status } from '../types';
 import { CHART_COLORS, DOMAIN_COLORS } from '../constants';
-import { ArrowLeft, Download } from 'lucide-react';
+import { Users, Lightbulb, Code2, Maximize2, ArrowUpRight } from 'lucide-react';
 
-interface ChartDetailProps {
-  chartId: string;
+interface StatsSectionProps {
   data: Idea[];
-  onBack: () => void;
+  onOpenChart: (chartId: string) => void;
 }
 
+// Custom Tick Component for long labels (Truncated for compact view)
 const CustomYAxisTick = (props: any) => {
   const { x, y, payload } = props;
-  const maxLength = 40;
+  const maxLength = 25;
   const text = payload.value;
   const truncated = text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+
   return (
     <g transform={`translate(${x},${y})`}>
-      <text x={0} y={0} dy={4} textAnchor="end" fill="#64748b" fontSize={11} fontWeight={500}>
+      <text 
+        x={0} 
+        y={0} 
+        dy={4} 
+        textAnchor="end" 
+        fill="#64748b" 
+        fontSize={11}
+        fontWeight={500}
+      >
         {truncated}
-        <title>{text}</title>
       </text>
     </g>
   );
@@ -31,7 +40,7 @@ const CustomYAxisTick = (props: any) => {
 // Custom X Axis Tick for Business Groups to prevent overlap
 const CustomXAxisTick = (props: any) => {
   const { x, y, payload } = props;
-  const maxLength = 20;
+  const maxLength = 15;
   const text = payload.value;
   const truncated = text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
 
@@ -53,223 +62,290 @@ const CustomXAxisTick = (props: any) => {
   );
 };
 
-const ChartDetail: React.FC<ChartDetailProps> = ({ chartId, data, onBack }) => {
-  
-  // --- Data Processing ---
+const StatCard: React.FC<{ title: string; value: string | number; icon: React.ReactNode; subtext?: string }> = ({ title, value, icon, subtext }) => (
+  <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between h-full transition-transform hover:-translate-y-1 duration-300">
+    <div className="flex items-start justify-between mb-4">
+      <div>
+        <h3 className="text-sm font-medium text-slate-500 uppercase tracking-wider">{title}</h3>
+        <div className="mt-2 text-4xl font-extrabold text-slate-800">{value}</div>
+      </div>
+      <div className="p-3 bg-indigo-50 rounded-xl text-indigo-600">
+        {icon}
+      </div>
+    </div>
+    {subtext && <div className="text-sm text-slate-500 border-t border-slate-100 pt-3 mt-2">{subtext}</div>}
+  </div>
+);
 
+const ChartCard: React.FC<{ 
+  title: string; 
+  chartId: string; 
+  onOpen: () => void; 
+  children: React.ReactNode;
+  className?: string;
+}> = ({ title, chartId, onOpen, children, className = "" }) => (
+  <div 
+    className={`bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col relative group cursor-pointer transition-all hover:shadow-md hover:border-indigo-200 ${className}`}
+    onClick={onOpen}
+  >
+    <div className="flex items-center justify-between mb-4 shrink-0">
+      <h3 className="text-lg font-semibold text-slate-800 group-hover:text-indigo-600 transition-colors">{title}</h3>
+      <button className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all opacity-0 group-hover:opacity-100">
+         <Maximize2 className="h-5 w-5" />
+      </button>
+    </div>
+    <div className="flex-1 min-h-0 relative">
+       {children}
+       {/* Click hint overlay */}
+       <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">
+          <div className="bg-white/90 px-4 py-2 rounded-full shadow-lg border border-slate-100 text-xs font-medium text-indigo-600 flex items-center gap-2 transform translate-y-4 group-hover:translate-y-0 transition-transform">
+             Click to expand <ArrowUpRight className="h-3 w-3" />
+          </div>
+       </div>
+    </div>
+  </div>
+);
+
+const StatsSection: React.FC<StatsSectionProps> = ({ data, onOpenChart }) => {
+  
+  // 1. Submissions by Theme (Domain) - Compact Top 8
   const domainData = useMemo(() => {
     const counts = data.reduce((acc, curr) => {
       acc[curr.domain] = (acc[curr.domain] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
+
     return Object.keys(counts)
-      .map(key => ({ name: key, value: counts[key], fill: DOMAIN_COLORS[key] || '#ccc' }))
-      .sort((a, b) => b.value - a.value);
+      .map(key => ({
+        name: key,
+        value: counts[key],
+        fill: DOMAIN_COLORS[key] || CHART_COLORS[0]
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8); // COMPACT VIEW
   }, [data]);
 
+  // 2. Submissions by Status (Restored)
   const statusData = useMemo(() => {
-     const counts = data.reduce((acc, curr) => {
+    const counts = data.reduce((acc, curr) => {
       acc[curr.status] = (acc[curr.status] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
     return Object.keys(counts).map(key => ({ name: key, value: counts[key] }));
   }, [data]);
 
+  // 3. Submissions by Build Type
   const buildData = useMemo(() => {
     const counts = data.reduce((acc, curr) => {
       acc[curr.buildType] = (acc[curr.buildType] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
-    return Object.keys(counts).map(key => ({ name: key, value: counts[key] }));
+
+    return Object.keys(counts).map(key => ({
+      name: key,
+      value: counts[key]
+    }));
   }, [data]);
 
+  // 4. Submissions by Business Group (was OU)
   const bgData = useMemo(() => {
     const counts = data.reduce((acc, curr) => {
       acc[curr.businessGroup] = (acc[curr.businessGroup] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
-    return Object.keys(counts).map(key => ({ name: key, value: counts[key], fill: '#6366f1' })).sort((a, b) => b.value - a.value);
+
+    return Object.keys(counts).map(key => ({
+      name: key,
+      value: counts[key],
+      fill: '#4f46e5'
+    })).sort((a, b) => b.value - a.value);
   }, [data]);
 
-  // Status by Theme (Stacked Bar) for detailed Status view
-  const statusByThemeData = useMemo(() => {
-    const map: Record<string, any> = {};
-    // Initialize for all domains
-    Object.values(Domain).forEach(d => {
-        map[d] = { name: d, total: 0 };
-        Object.values(Status).forEach(s => map[d][s] = 0);
+  // 5. Top Technologies
+  const techData = useMemo(() => {
+    const counts: Record<string, number> = {};
+    data.forEach(item => {
+      item.technologies.forEach(tech => {
+        counts[tech] = (counts[tech] || 0) + 1;
+      });
     });
-    
-    data.forEach(idea => {
-        if(map[idea.domain]) {
-            map[idea.domain][idea.status]++;
-            map[idea.domain].total++;
-        }
-    });
-
-    return Object.values(map).sort((a, b) => b.total - a.total);
+    return Object.keys(counts)
+      .map(key => ({ name: key, value: counts[key] }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5); // Just top 5 for compact
   }, [data]);
 
-  // --- Render Logic ---
-
-  const getChartTitle = () => {
-    switch(chartId) {
-        case 'theme': return 'Submissions by Theme';
-        case 'status': return 'Idea Status Distribution & Theme Breakdown';
-        case 'build': return 'Submissions by Build Type';
-        case 'businessGroup': return 'Submissions by Business Group';
-        default: return 'Chart Details';
-    }
-  };
-
-  const renderContent = () => {
-    switch (chartId) {
-      case 'theme':
-        return (
-            <div className="h-full w-full overflow-y-auto custom-scrollbar pr-4 bg-white rounded-xl border border-slate-200 p-6">
-                <div style={{ height: `${Math.max(800, domainData.length * 50)}px` }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={domainData} layout="vertical" margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" />
-                      <YAxis dataKey="name" type="category" width={320} tick={<CustomYAxisTick />} interval={0} />
-                      <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '8px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                      <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={28}>
-                        {domainData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.fill} />)}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-            </div>
-        );
-      case 'status':
-        return (
-            <div className="flex flex-col lg:flex-row gap-6 h-full">
-                {/* Overall Pie */}
-                <div className="lg:w-1/3 bg-white rounded-xl border border-slate-200 p-6 flex flex-col">
-                    <h3 className="text-lg font-semibold text-slate-700 mb-4 text-center">Global Status</h3>
-                    <div className="flex-1">
-                        <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                            <Pie 
-                                data={statusData} 
-                                cx="50%" 
-                                cy="50%" 
-                                innerRadius={60}
-                                outerRadius={100} 
-                                label 
-                                paddingAngle={2}
-                                dataKey="value"
-                            >
-                            {statusData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                            ))}
-                            </Pie>
-                            <Tooltip />
-                            <Legend verticalAlign="bottom" height={80} />
-                        </PieChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
-                
-                {/* Stacked Bar by Theme */}
-                <div className="lg:w-2/3 bg-white rounded-xl border border-slate-200 p-6 flex flex-col overflow-hidden">
-                     <h3 className="text-lg font-semibold text-slate-700 mb-4">Status Breakdown by Theme</h3>
-                     <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
-                         <div style={{ height: `${Math.max(800, statusByThemeData.length * 60)}px` }}>
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={statusByThemeData} layout="vertical" margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                                    <XAxis type="number" />
-                                    <YAxis dataKey="name" type="category" width={280} tick={<CustomYAxisTick />} interval={0} />
-                                    <Tooltip />
-                                    <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                                    {Object.values(Status).map((s, i) => (
-                                        <Bar key={s} dataKey={s} stackId="a" fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                                    ))}
-                                </BarChart>
-                            </ResponsiveContainer>
-                         </div>
-                     </div>
-                </div>
-            </div>
-        );
-      case 'build':
-        return (
-            <div className="bg-white rounded-xl border border-slate-200 p-6 h-full flex flex-col items-center justify-center">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={buildData}
-                      cx="50%"
-                      cy="50%"
-                      label
-                      innerRadius={80}
-                      outerRadius={160}
-                      paddingAngle={2}
-                      dataKey="value"
-                    >
-                      {buildData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend verticalAlign="bottom" />
-                  </PieChart>
-                </ResponsiveContainer>
-            </div>
-        );
-      case 'businessGroup':
-         return (
-            <div className="bg-white rounded-xl border border-slate-200 p-6 h-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={bgData} margin={{ top: 20, right: 30, left: 20, bottom: 80 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis 
-                       dataKey="name" 
-                       angle={-15} 
-                       textAnchor="end" 
-                       interval={0}
-                       tick={<CustomXAxisTick />}
-                    />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="value" fill="#4f46e5" radius={[4, 4, 0, 0]} barSize={60}>
-                       {bgData.map((entry, index) => (
-                         <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                       ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-            </div>
-         );
-      default: return <div className="flex items-center justify-center h-full text-slate-400">Chart not available</div>;
-    }
-  };
+  const uniqueAssociates = new Set(data.map(i => i.associateAccount)).size;
 
   return (
-    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 h-[calc(100vh-140px)]">
-      <div className="flex items-center justify-between">
-         <div className="flex items-center gap-4">
-            <button 
-              onClick={onBack}
-              className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-600"
-            >
-              <ArrowLeft className="h-6 w-6" />
-            </button>
-            <h1 className="text-2xl font-bold text-slate-800">{getChartTitle()}</h1>
-         </div>
-         <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors shadow-sm">
-            <Download className="h-4 w-4" />
-            Export Data
-         </button>
+    <div className="space-y-6 pb-12">
+      <div className="mb-2">
+        <h2 className="text-2xl font-bold text-slate-800">Quick Stats Dashboard</h2>
+        <p className="text-slate-500">Real-time overview. Click any chart to view details.</p>
       </div>
 
-      <div className="h-full pb-10">
-        {renderContent()}
+      {/* Top Row: Big Number Widgets */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <StatCard 
+          title="Total Submissions" 
+          value={data.length.toLocaleString()} 
+          icon={<Lightbulb className="h-8 w-8" />} 
+          
+        />
+        <StatCard 
+          title="Total Participants" 
+          value={uniqueAssociates.toLocaleString()} 
+          icon={<Users className="h-8 w-8" />} 
+          
+        />
       </div>
+
+      {/* Chart Row 1: Themes & Status */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[400px]">
+        {/* Submissions by Theme - Compact */}
+        <ChartCard 
+           title="Top Themes" 
+           chartId="theme" 
+           onOpen={() => onOpenChart('theme')} 
+           className="lg:col-span-2"
+        >
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart 
+                data={domainData} 
+                layout="vertical" 
+                margin={{ top: 5, right: 30, left: 10, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" hide />
+                <YAxis 
+                  dataKey="name" 
+                  type="category" 
+                  width={200} 
+                  tick={<CustomYAxisTick />}
+                  interval={0}
+                />
+                <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '8px' }} />
+                <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
+                  {domainData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.fill} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+        </ChartCard>
+
+        {/* Submissions by Status - Restored */}
+        <ChartCard 
+           title="Status Overview" 
+           chartId="status" 
+           onOpen={() => onOpenChart('status')}
+        >
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={statusData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={80}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {statusData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend verticalAlign="bottom" height={36} iconSize={10} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none pb-10">
+               <div className="text-center">
+                 <span className="block text-xl font-bold text-slate-800">{data.length}</span>
+                 <span className="text-[10px] text-slate-500 uppercase">Ideas</span>
+               </div>
+            </div>
+        </ChartCard>
+      </div>
+
+      {/* Chart Row 2: Business Group (Full Width) */}
+      <div className="h-[400px]">
+         <ChartCard 
+            title="Submissions by Business Group" 
+            chartId="businessGroup" 
+            onOpen={() => onOpenChart('businessGroup')}
+            className="h-full"
+         >
+             <ResponsiveContainer width="100%" height="100%">
+               <BarChart data={bgData} margin={{ top: 10, right: 30, left: 20, bottom: 20 }}>
+                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                 <XAxis 
+                    dataKey="name" 
+                    tick={<CustomXAxisTick />} 
+                    interval={0}
+                 />
+                 <YAxis hide />
+                 <Tooltip cursor={{fill: '#f8fafc'}} />
+                 <Bar dataKey="value" fill="#4f46e5" radius={[4, 4, 0, 0]} barSize={50} />
+               </BarChart>
+             </ResponsiveContainer>
+         </ChartCard>
+      </div>
+
+      {/* Chart Row 3: Build Type & Top Technologies */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[350px]">
+         {/* Build Type */}
+        <ChartCard 
+           title="Build Type" 
+           chartId="build" 
+           onOpen={() => onOpenChart('build')}
+        >
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={buildData}
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={100}
+                  dataKey="value"
+                >
+                  {buildData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend verticalAlign="middle" align="right" layout="vertical" />
+              </PieChart>
+            </ResponsiveContainer>
+        </ChartCard>
+
+        {/* Top Technologies List */}
+        <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col h-full">
+            <div className="flex items-center justify-between mb-4 shrink-0">
+               <h3 className="text-lg font-semibold text-slate-800">Top Technologies</h3>
+               <Code2 className="h-5 w-5 text-slate-400" />
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-2 space-y-4">
+              {techData.map((tech, index) => (
+                <div key={tech.name} className="relative">
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span className="font-medium text-slate-700">{index + 1}. {tech.name}</span>
+                    <span className="text-slate-500">{tech.value} ideas</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-2">
+                    <div 
+                      className="bg-emerald-500 h-2 rounded-full transition-all duration-500" 
+                      style={{ width: `${(tech.value / techData[0].value) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+      </div>
+
     </div>
   );
 };
 
-export default ChartDetail;
+export default StatsSection;
