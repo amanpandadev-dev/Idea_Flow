@@ -94,3 +94,11 @@ export const updateIdeaStatus = async (id: string, status: Status): Promise<void
   });
   return handleResponse(response);
 };
+
+export const toggleLikeIdea = async (id: string): Promise<{ liked: boolean }> => {
+  const response = await fetch(`${API_URL}/ideas/${id}/like`, {
+    method: 'POST',
+    headers: getAuthHeaders()
+  });
+  return handleResponse(response);
+};

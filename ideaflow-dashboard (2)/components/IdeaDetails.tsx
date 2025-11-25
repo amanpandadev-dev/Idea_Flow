@@ -2,23 +2,30 @@
 import React, { useState, useEffect } from 'react';
 import { Idea, Status } from '../types';
 import { DOMAIN_COLORS } from '../constants';
-import { fetchSimilarIdeas } from '../services';
-import { Calendar, User, ArrowLeft, CheckCircle, Clock, AlertCircle, Activity, Cpu, Layers, GitBranch, Building2, Hammer, Code2, Sparkles, Zap, TrendingUp, Target, ShieldCheck, Info, ArrowRight } from 'lucide-react';
+import { fetchSimilarIdeas, toggleLikeIdea } from '../services';
+import { Calendar, User, ArrowLeft, CheckCircle, Clock, AlertCircle, Activity, Cpu, Layers, GitBranch, Building2, Hammer, Code2, Sparkles, Zap, TrendingUp, Target, ShieldCheck, Info, ArrowRight, Heart } from 'lucide-react';
 
 interface IdeaDetailsProps {
   idea: Idea;
   onBack?: () => void;
   onViewAssociate?: (associateId: number) => void;
   onNavigateToIdea?: (idea: Idea) => void;
+  onRefreshData?: () => void;
 }
 
-const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate, onNavigateToIdea }) => {
+const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate, onNavigateToIdea, onRefreshData }) => {
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [similarIdeas, setSimilarIdeas] = useState<Idea[]>([]);
   const [loadingSimilar, setLoadingSimilar] = useState(false);
+  
+  const [localIdea, setLocalIdea] = useState<Idea>(idea);
+  const [isLiking, setIsLiking] = useState(false);
 
-  // Fetch similar ideas on mount or when idea changes
+  useEffect(() => {
+    setLocalIdea(idea);
+  }, [idea]);
+
   useEffect(() => {
     const loadSimilar = async () => {
       setLoadingSimilar(true);
@@ -32,17 +39,37 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
       }
     };
     loadSimilar();
-    // Reset analysis view when idea changes
     setShowAnalysis(false);
   }, [idea.id]);
 
   const handleGenerateAnalysis = () => {
     setIsAnalyzing(true);
-    // Simulate AI processing delay
     setTimeout(() => {
       setIsAnalyzing(false);
       setShowAnalysis(true);
     }, 1500);
+  };
+
+  const handleLike = async () => {
+    if (isLiking) return;
+    setIsLiking(true);
+
+    const previousState = { ...localIdea };
+    setLocalIdea(prev => ({
+      ...prev,
+      isLiked: !prev.isLiked,
+      likesCount: prev.isLiked ? prev.likesCount - 1 : prev.likesCount + 1
+    }));
+
+    try {
+      await toggleLikeIdea(localIdea.id);
+      if (onRefreshData) onRefreshData();
+    } catch (err) {
+      console.error("Failed to toggle like", err);
+      setLocalIdea(previousState);
+    } finally {
+      setIsLiking(false);
+    }
   };
   
   const getStatusColor = (status: Status) => {
@@ -65,11 +92,11 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
     }
   };
 
-  // Helper for Score Color
   const getScoreColor = (score: number = 0) => {
-    if (score >= 8) return 'text-emerald-600 bg-emerald-100';
-    if (score >= 5) return 'text-amber-600 bg-amber-100';
-    return 'text-red-600 bg-red-100';
+    if (score >= 90) return 'text-emerald-600 bg-emerald-50 border-emerald-200';
+    if (score >= 70) return 'text-emerald-500 bg-emerald-50 border-emerald-100';
+    if (score >= 50) return 'text-amber-500 bg-amber-50 border-amber-100';
+    return 'text-slate-500 bg-slate-50 border-slate-200';
   };
 
   return (
@@ -89,28 +116,48 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
         <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
           <div className="space-y-4 flex-1">
             <div className="flex items-center gap-3 text-sm text-slate-500">
-               <span className="bg-slate-100 px-2 py-1 rounded text-xs font-mono">{idea.id}</span>
+               <span className="bg-slate-100 px-2 py-1 rounded text-xs font-mono">{localIdea.id}</span>
                <span>•</span>
-               <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {new Date(idea.submissionDate).toLocaleDateString()}</span>
+               <span className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {new Date(localIdea.submissionDate).toLocaleDateString()}</span>
             </div>
             
-            <h1 className="text-3xl font-bold text-slate-900">{idea.title}</h1>
+            <h1 className="text-3xl font-bold text-slate-900">{localIdea.title}</h1>
             
             <div className="flex flex-wrap items-center gap-3">
-              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm font-medium ${getStatusColor(idea.status)}`}>
-                {getStatusIcon(idea.status)}
-                {idea.status}
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm font-medium ${getStatusColor(localIdea.status)}`}>
+                {getStatusIcon(localIdea.status)}
+                {localIdea.status}
               </div>
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 bg-white text-slate-700 text-sm font-medium">
-                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: DOMAIN_COLORS[idea.domain] || '#ccc' }}></span>
-                {idea.domain}
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: DOMAIN_COLORS[localIdea.domain] || '#ccc' }}></span>
+                {localIdea.domain}
               </div>
             </div>
+          </div>
+
+          {/* Score and Actions */}
+          <div className="flex flex-col items-end gap-4 shrink-0">
+             <div className={`flex flex-col items-center justify-center h-20 w-20 rounded-2xl border-2 ${getScoreColor(localIdea.score)}`}>
+                <span className="text-2xl font-bold">{localIdea.score || 0}</span>
+                <span className="text-[10px] uppercase font-bold tracking-wide">Score</span>
+             </div>
+
+             <button 
+                onClick={handleLike}
+                disabled={isLiking}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg border font-medium transition-all ${
+                   localIdea.isLiked 
+                    ? 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100' 
+                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-indigo-600 hover:border-indigo-200'
+                }`}
+             >
+                <Heart className={`h-5 w-5 ${localIdea.isLiked ? 'fill-red-600' : ''}`} />
+                <span>{localIdea.likesCount} Likes</span>
+             </button>
           </div>
         </div>
       </div>
 
-      {/* AI Analysis Section Button */}
       
 
       {/* Analysis Results */}
@@ -127,7 +174,7 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
               {/* Impact Score */}
               <div className="bg-white p-4 rounded-xl border border-indigo-50 shadow-sm flex flex-col items-center text-center">
-                 <div className={`h-12 w-12 rounded-full flex items-center justify-center font-bold text-lg mb-2 ${getScoreColor(idea.impactScore)}`}>
+                 <div className={`h-12 w-12 rounded-full flex items-center justify-center font-bold text-lg mb-2 text-indigo-600 bg-indigo-50`}>
                    {idea.impactScore}
                  </div>
                  <div className="text-slate-900 font-semibold flex items-center gap-1">
@@ -138,7 +185,7 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
 
               {/* Confidence Score */}
               <div className="bg-white p-4 rounded-xl border border-indigo-50 shadow-sm flex flex-col items-center text-center">
-                 <div className={`h-12 w-12 rounded-full flex items-center justify-center font-bold text-lg mb-2 ${getScoreColor(idea.confidenceScore)}`}>
+                 <div className={`h-12 w-12 rounded-full flex items-center justify-center font-bold text-lg mb-2 text-blue-600 bg-blue-50`}>
                    {idea.confidenceScore}
                  </div>
                  <div className="text-slate-900 font-semibold flex items-center gap-1">
@@ -149,7 +196,7 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
 
               {/* Feasibility Score */}
               <div className="bg-white p-4 rounded-xl border border-indigo-50 shadow-sm flex flex-col items-center text-center">
-                 <div className={`h-12 w-12 rounded-full flex items-center justify-center font-bold text-lg mb-2 ${getScoreColor(idea.feasibilityScore)}`}>
+                 <div className={`h-12 w-12 rounded-full flex items-center justify-center font-bold text-lg mb-2 text-emerald-600 bg-emerald-50`}>
                    {idea.feasibilityScore}
                  </div>
                  <div className="text-slate-900 font-semibold flex items-center gap-1">
@@ -183,11 +230,11 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
             </h3>
             <div className="prose prose-slate max-w-none">
               <p className="text-slate-600 leading-relaxed">
-                {idea.description}
+                {localIdea.description}
               </p>
               <p className="text-slate-600 leading-relaxed mt-4">
-                This initiative aims to leverage <strong>{idea.domain}</strong> to drive significant value for the {idea.businessGroup} organization. 
-                By implementing {idea.buildType}, we anticipate improvements in operational efficiency and user satisfaction.
+                This initiative aims to leverage <strong>{localIdea.domain}</strong> to drive significant value for the {localIdea.businessGroup} organization. 
+                By implementing {localIdea.buildType}, we anticipate improvements in operational efficiency and user satisfaction.
               </p>
             </div>
           </div>
@@ -199,7 +246,7 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
               Technology Stack
             </h3>
             <div className="flex flex-wrap gap-2">
-              {idea.technologies.map(tech => (
+              {localIdea.technologies.map(tech => (
                 <span key={tech} className="px-3 py-1 bg-slate-100 text-slate-700 rounded-md text-sm font-medium border border-slate-200">
                   {tech}
                 </span>
@@ -217,10 +264,10 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
               <div className="bg-slate-50 rounded-lg p-4 border border-slate-100 h-full">
                 <div className="flex items-center gap-3 mb-2">
                   <Cpu className="h-6 w-6 text-slate-400" />
-                  <span className="font-medium text-slate-700 line-clamp-1" title={idea.domain}>{idea.domain}</span>
+                  <span className="font-medium text-slate-700 line-clamp-1" title={localIdea.domain}>{localIdea.domain}</span>
                 </div>
                 <p className="text-sm text-slate-500 mt-2">
-                  Classified under <strong>{idea.domain}</strong>.
+                  Classified under <strong>{localIdea.domain}</strong>.
                 </p>
               </div>
             </div>
@@ -233,10 +280,10 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
               <div className="bg-slate-50 rounded-lg p-4 border border-slate-100 h-full">
                 <div className="flex items-center gap-3 mb-2">
                   <Activity className="h-6 w-6 text-slate-400" />
-                  <span className="font-medium text-slate-700">{idea.buildType}</span>
+                  <span className="font-medium text-slate-700">{localIdea.buildType}</span>
                 </div>
                 <p className="text-sm text-slate-500 mt-2">
-                  Categorized as a <strong>{idea.buildType}</strong> project.
+                  Categorized as a <strong>{localIdea.buildType}</strong> project.
                 </p>
               </div>
             </div>
@@ -254,29 +301,29 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
             {/* Clickable Associate Card */}
             <div 
               className="flex items-center gap-4 mb-6 p-3 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer border border-transparent hover:border-slate-200 group"
-              onClick={() => onViewAssociate && onViewAssociate(idea.associateId)}
+              onClick={() => onViewAssociate && onViewAssociate(localIdea.associateId)}
               title="Click to view full associate profile"
             >
               <div className="h-12 w-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-lg shrink-0 group-hover:bg-indigo-200 transition-colors">
-                {idea.associateAccount.charAt(0).toUpperCase()}
+                {localIdea.associateAccount.charAt(0).toUpperCase()}
               </div>
               <div>
                 <p className="font-medium text-slate-900 flex items-center gap-2">
-                   {idea.associateAccount}
+                   {localIdea.associateAccount}
                    <Info className="h-3 w-3 text-slate-400 group-hover:text-indigo-500" />
                 </p>
-                <p className="text-sm text-slate-500">Associate ID: {idea.associateId}</p>
+                <p className="text-sm text-slate-500">Associate ID: {localIdea.associateId}</p>
               </div>
             </div>
             
             <div className="border-t border-slate-100 pt-4 space-y-4">
               <div>
                  <label className="text-xs text-slate-500 uppercase font-semibold">Business Group</label>
-                 <p className="text-slate-900 font-medium">{idea.businessGroup}</p>
+                 <p className="text-slate-900 font-medium">{localIdea.businessGroup}</p>
               </div>
               <div>
                  <label className="text-xs text-slate-500 uppercase font-semibold">Submitted On</label>
-                 <p className="text-slate-900 font-medium">{new Date(idea.submissionDate).toLocaleDateString()}</p>
+                 <p className="text-slate-900 font-medium">{new Date(localIdea.submissionDate).toLocaleDateString()}</p>
               </div>
             </div>
           </div>

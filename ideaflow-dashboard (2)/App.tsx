@@ -77,46 +77,46 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const loadData = useCallback(async () => {
+    try {
+      setLoading(true);
+      const [ideasData, bgData] = await Promise.all([
+        fetchIdeas(),
+        fetchBusinessGroups()
+      ]);
+      
+      if (ideasData.length === 0) {
+         console.log("Database is empty or error, using mock data for demonstration.");
+         setIdeas(INITIAL_DATA);
+         const mockBGs = new Set<string>();
+         INITIAL_DATA.forEach(i => mockBGs.add(i.businessGroup));
+         setAllBusinessGroups(Array.from(mockBGs).sort());
+         setUsingMockData(true);
+      } else {
+         setIdeas(ideasData);
+         setAllBusinessGroups(bgData);
+         setError(null);
+         setUsingMockData(false);
+      }
+    } catch (err) {
+      console.warn("Backend connection failed or DB error, falling back to mock data:", err);
+      setIdeas(INITIAL_DATA);
+      const mockBGs = new Set<string>();
+      INITIAL_DATA.forEach(i => mockBGs.add(i.businessGroup));
+      setAllBusinessGroups(Array.from(mockBGs).sort());
+      setUsingMockData(true);
+      setError(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   // Fetch Data only after successful login
   useEffect(() => {
-    if (!isAuthenticated) return;
-
-    const loadData = async () => {
-      try {
-        setLoading(true);
-        const [ideasData, bgData] = await Promise.all([
-          fetchIdeas(),
-          fetchBusinessGroups()
-        ]);
-        
-        if (ideasData.length === 0) {
-           console.log("Database is empty or error, using mock data for demonstration.");
-           setIdeas(INITIAL_DATA);
-           const mockBGs = new Set<string>();
-           INITIAL_DATA.forEach(i => mockBGs.add(i.businessGroup));
-           setAllBusinessGroups(Array.from(mockBGs).sort());
-           setUsingMockData(true);
-        } else {
-           setIdeas(ideasData);
-           setAllBusinessGroups(bgData);
-           setError(null);
-           setUsingMockData(false);
-        }
-      } catch (err) {
-        console.warn("Backend connection failed or DB error, falling back to mock data:", err);
-        setIdeas(INITIAL_DATA);
-        const mockBGs = new Set<string>();
-        INITIAL_DATA.forEach(i => mockBGs.add(i.businessGroup));
-        setAllBusinessGroups(Array.from(mockBGs).sort());
-        setUsingMockData(true);
-        setError(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadData();
-  }, [isAuthenticated]);
+    if (isAuthenticated) {
+        loadData();
+    }
+  }, [isAuthenticated, loadData]);
 
   // Derived State: Filtered Ideas based on Global Filters
   const filteredIdeas = useMemo(() => {
@@ -164,7 +164,6 @@ const App: React.FC = () => {
 
   const handleApplyGlobalFilters = (filters: ExploreFilters) => {
     setGlobalFilters(filters);
-    // CRITICAL: When applying filters, redirect to the Projects list to show results immediately
     setActiveTab('projects');
   };
 
@@ -323,6 +322,7 @@ const App: React.FC = () => {
               onViewDetails={handleViewDetails}
               onOpenExplore={() => setIsExploreOpen(true)}
               isGlobalFilterActive={activeFiltersCount > 0}
+              onRefreshData={loadData}
             />
           )}
 
@@ -337,6 +337,7 @@ const App: React.FC = () => {
                   onBack={() => setActiveTab('projects')} 
                   onViewAssociate={handleViewAssociate}
                   onNavigateToIdea={handleViewDetails}
+                  onRefreshData={loadData}
                 />
               ) : <div>Idea not found</div>;
             })()
@@ -372,11 +373,13 @@ const App: React.FC = () => {
         availableBusinessGroups={allBusinessGroups}
       />
 
-      <AssociateModal 
-        associate={selectedAssociate}
-        loading={associateLoading}
-        onClose={() => setIsAssociateModalOpen(false)}
-      />
+      {isAssociateModalOpen && (
+        <AssociateModal 
+          associate={selectedAssociate}
+          loading={associateLoading}
+          onClose={() => setIsAssociateModalOpen(false)}
+        />
+      )}
 
     </div>
   );

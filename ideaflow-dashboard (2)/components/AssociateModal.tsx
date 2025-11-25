@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { X, User, MapPin, Building2, Briefcase } from 'lucide-react';
+import { X, User, MapPin, Briefcase } from 'lucide-react';
 import { Associate } from '../types';
 
 interface AssociateModalProps {
@@ -10,11 +10,18 @@ interface AssociateModalProps {
 }
 
 const AssociateModal: React.FC<AssociateModalProps> = ({ associate, loading, onClose }) => {
+  // If not loading and no associate data, don't render (though parent usually handles this)
   if (!associate && !loading) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden relative animate-in zoom-in-95 duration-200 border border-slate-200">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden relative animate-in zoom-in-95 duration-200 border border-slate-200"
+        onClick={(e) => e.stopPropagation()}
+      >
         
         {/* Header */}
         <div className="bg-indigo-600 px-6 py-4 flex items-center justify-between">
@@ -62,7 +69,7 @@ const AssociateModal: React.FC<AssociateModalProps> = ({ associate, loading, onC
                     </div>
                  </div>
 
-                 {/* Parent OU Removed as per requirement */}
+                 {/* Parent OU Removed as per previous requirement */}
 
                  <div className="flex items-start gap-3">
                     <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">

@@ -1,4 +1,5 @@
 
+
 import { Domain, Status, Idea, BusinessGroup, BuildType } from './types';
 
 // Palette for domains to ensure distinctness
@@ -92,7 +93,12 @@ export const generateMockIdeas = (count: number): Idea[] => {
       associateAccount: NAMES[Math.floor(Math.random() * NAMES.length)],
       associateId: Math.floor(Math.random() * 1000) + 1,
       associateBusinessGroup: bgKeys[Math.floor(Math.random() * bgKeys.length)],
-      votes: Math.floor(Math.random() * 150) + 1,
+      
+      // Metrics
+      score: Math.floor(Math.random() * 100),
+      likesCount: Math.floor(Math.random() * 150),
+      isLiked: Math.random() > 0.8,
+
       // Analysis Data
       futureScope: SCOPES[Math.floor(Math.random() * SCOPES.length)],
       impactScore: Math.floor(Math.random() * 5) + 5, // 5-10

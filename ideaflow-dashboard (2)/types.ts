@@ -73,7 +73,10 @@ export interface Idea {
   associateAccount: string; // Used for display instead of Name
   associateBusinessGroup: string; // From Associates Table (via Idea Team/Associates)
   
-  votes: number;
+  // Metrics
+  score: number; // Actual score from DB (Mapped to 'score' column)
+  likesCount: number;
+  isLiked: boolean;
   
   // AI Analysis Fields (Optional/Computed)
   futureScope?: string;
