@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Lightbulb, Bell, UserCircle, LogOut, Heart } from 'lucide-react';
 
@@ -30,19 +31,19 @@ const Header: React.FC<HeaderProps> = ({ user, onLogout, onOpenWishlist, onOpenP
             {onOpenWishlist && (
               <button 
                 onClick={onOpenWishlist}
-                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative group"
+                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative group"
                 title="My Like List"
               >
-                <Heart className="h-6 w-6 group-hover:scale-110 transition-transform" />
+                <Heart className="h-4 w-4 group-hover:scale-110 transition-transform" />
+                <span>My Likes</span>
                 {likedCount > 0 && (
-                  <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white ring-2 ring-white">
+                  <span className="ml-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
                     {likedCount}
                   </span>
                 )}
               </button>
             )}
 
-           
             
             <div className="h-8 w-px bg-slate-200 mx-1 hidden sm:block"></div>
 

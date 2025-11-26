@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS public.ideas
     code_preference VARCHAR(50),
     created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    business_group VARCHAR(200)
+    business_group VARCHAR(200),
+    score INTEGER DEFAULT 0
 );
 
 -- 4) users table
