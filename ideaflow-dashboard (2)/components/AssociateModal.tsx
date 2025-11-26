@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { X, User, MapPin, Briefcase } from 'lucide-react';
+import { X, User, MapPin, Building } from 'lucide-react';
 import { Associate } from '../types';
 
 interface AssociateModalProps {
@@ -10,7 +10,6 @@ interface AssociateModalProps {
 }
 
 const AssociateModal: React.FC<AssociateModalProps> = ({ associate, loading, onClose }) => {
-  // If not loading and no associate data, don't render (though parent usually handles this)
   if (!associate && !loading) return null;
 
   return (
@@ -69,15 +68,13 @@ const AssociateModal: React.FC<AssociateModalProps> = ({ associate, loading, onC
                     </div>
                  </div>
 
-                 {/* Parent OU Removed as per previous requirement */}
-
                  <div className="flex items-start gap-3">
                     <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
-                       <Briefcase className="h-5 w-5" />
+                       <Building className="h-5 w-5" />
                     </div>
                     <div>
-                       <p className="text-sm font-medium text-slate-500">Business Group</p>
-                       <p className="text-slate-800 font-semibold">{associate.business_group}</p>
+                       <p className="text-sm font-medium text-slate-500">Parent OU</p>
+                       <p className="text-slate-800 font-semibold">{associate.parent_ou || 'N/A'}</p>
                     </div>
                  </div>
               </div>

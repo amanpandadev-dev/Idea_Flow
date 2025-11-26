@@ -1,3 +1,4 @@
+
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -72,10 +73,9 @@ const mapDBToFrontend = (row) => {
     associateBusinessGroup: row.assoc_bg || 'Unknown',
 
     // Metrics
-    // CRITICAL: Map explicitly selected 'idea_score'
     score: row.idea_score !== undefined && row.idea_score !== null ? safeInt(row.idea_score) : 0,
     likesCount: safeInt(row.likes_count),
-    isLiked: !!row.is_liked, // Boolean conversion
+    isLiked: !!row.is_liked, 
     
     futureScope: generateFutureScope(row.challenge_opportunity),
     impactScore: randomScore(),
@@ -124,15 +124,15 @@ app.post('/api/auth/login', async (req, res) => {
 
     const payload = {
       user: {
-        id: user.id,       // Numeric Primary Key
-        emp_id: user.emp_id, // String Employee ID (Used for Likes FK)
+        id: user.id,       
+        emp_id: user.emp_id,
         role: user.role
       }
     };
 
     jwt.sign(payload, JWT_SECRET, { expiresIn: '8h' }, (err, token) => {
       if (err) throw err;
-      res.json({ token, user: { id: user.emp_id, name: user.name, role: user.role } });
+      res.json({ token, user: { id: user.id, name: user.name, role: user.role } });
     });
   } catch (err) {
     console.error(err.message);
@@ -167,7 +167,21 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// 3. Auth: Reset Password
+// 3. Auth: Get Current User Details
+app.get('/api/auth/me', auth, async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'No database connection' });
+  try {
+    // req.user.user.id is the numeric ID
+    const result = await pool.query('SELECT id, emp_id, name, email, role FROM users WHERE id = $1', [req.user.user.id]);
+    if (result.rows.length === 0) return res.status(404).json({ msg: 'User not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server error');
+  }
+});
+
+// 4. Auth: Reset Password
 app.post('/api/auth/reset-password', async (req, res) => {
   if (!pool) return res.status(503).json({ msg: 'DB not connected' });
   
@@ -191,19 +205,14 @@ app.post('/api/auth/reset-password', async (req, res) => {
   }
 });
 
-// 4. Get Ideas (Filtered)
+// 5. Get Ideas (Filtered)
 app.get('/api/ideas', auth, async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'No database connection' });
 
   try {
     const { search } = req.query;
-    // CRITICAL: Use emp_id (string) for likes check to match Schema FK
     const userId = req.user ? req.user.user.emp_id : ''; 
     
-    // Updated query:
-    // 1. Explicitly select 'i.score as idea_score' to guarantee fetching
-    // 2. JOIN via idea_team to get team info
-    // 3. Check likes using user_id (String emp_id) comparison
     let query = `
       SELECT DISTINCT ON (i.idea_id)
         i.score as idea_score, 
@@ -221,7 +230,7 @@ app.get('/api/ideas', auth, async (req, res) => {
       LEFT JOIN associates a ON it.associate_id = a.associate_id
     `;
     
-    const params = [userId]; // $1 is userId (emp_id)
+    const params = [userId]; 
     
     if (search) {
       query += `
@@ -231,7 +240,7 @@ app.get('/api/ideas', auth, async (req, res) => {
           i.challenge_opportunity ILIKE $2 OR
           a.account ILIKE $2)
       `;
-      params.push(`%${search}%`); // $2 is search term
+      params.push(`%${search}%`);
     }
 
     query += ` ORDER BY i.idea_id, i.created_at DESC`;
@@ -245,7 +254,44 @@ app.get('/api/ideas', auth, async (req, res) => {
   }
 });
 
-// 5. Get Unique Business Groups
+// 6. Get Liked Ideas (Wishlist)
+app.get('/api/ideas/liked', auth, async (req, res) => {
+  if (!pool) return res.status(503).json({ error: 'No database connection' });
+
+  try {
+    // Fetch ideas where user_id match in likes table
+    const userId = req.user.user.emp_id;
+
+    let query = `
+      SELECT DISTINCT ON (i.idea_id)
+        i.score as idea_score,
+        i.*,
+        i.business_group as idea_bg,
+        a.associate_id,
+        a.account,
+        a.parent_ou,
+        it.business_group as assoc_bg,
+        a.location,
+        (SELECT COUNT(*) FROM likes WHERE idea_id = i.idea_id) as likes_count,
+        (TRUE) as is_liked -- Since we are fetching liked ideas, this is always true
+      FROM ideas i
+      JOIN likes l ON i.idea_id = l.idea_id
+      LEFT JOIN idea_team it ON i.idea_id = it.idea_id
+      LEFT JOIN associates a ON it.associate_id = a.associate_id
+      WHERE l.user_id = $1
+      ORDER BY i.idea_id, l.created_at DESC
+    `;
+
+    const result = await pool.query(query, [userId]);
+    const mappedData = result.rows.map(mapDBToFrontend);
+    res.json(mappedData);
+  } catch (err) {
+    console.error("Fetch Liked Ideas Error:", err.message);
+    res.status(500).json({ error: 'Failed to fetch liked ideas' });
+  }
+});
+
+// 7. Get Unique Business Groups
 app.get('/api/business-groups', auth, async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'No database connection' });
 
@@ -266,13 +312,13 @@ app.get('/api/business-groups', auth, async (req, res) => {
   }
 });
 
-// 6. Get Similar Ideas
+// 8. Get Similar Ideas
 app.get('/api/ideas/:id/similar', auth, async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'No database connection' });
 
   try {
     const { id } = req.params;
-    const userId = req.user ? req.user.user.emp_id : ''; // Use emp_id
+    const userId = req.user ? req.user.user.emp_id : ''; 
     const numericId = id.replace('IDEA-', '');
 
     const currentIdea = await pool.query('SELECT title, challenge_opportunity FROM ideas WHERE idea_id = $1', [numericId]);
@@ -316,7 +362,7 @@ app.get('/api/ideas/:id/similar', auth, async (req, res) => {
   }
 });
 
-// 7. Get Associate Details
+// 9. Get Associate Details
 app.get('/api/associates/:id', auth, async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'No database connection' });
 
@@ -338,7 +384,7 @@ app.get('/api/associates/:id', auth, async (req, res) => {
   }
 });
 
-// 8. Update Idea Status
+// 10. Update Idea Status
 app.put('/api/ideas/:id/status', auth, async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'No database connection' });
 
@@ -359,28 +405,24 @@ app.put('/api/ideas/:id/status', auth, async (req, res) => {
   }
 });
 
-// 9. Like/Unlike Idea
+// 11. Like/Unlike Idea
 app.post('/api/ideas/:id/like', auth, async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'No database connection' });
 
   try {
     const { id } = req.params;
-    // CRITICAL: Use string emp_id from token for likes table (referencing users.emp_id)
     const userId = req.user.user.emp_id;
     const numericId = id.replace('IDEA-', '');
 
     console.log(`Toggling like for Idea: ${numericId} by User: ${userId}`);
 
-    // Check if like exists
     const check = await pool.query('SELECT id FROM likes WHERE user_id = $1 AND idea_id = $2', [userId, numericId]);
 
     if (check.rows.length > 0) {
-      // Unlike
       await pool.query('DELETE FROM likes WHERE user_id = $1 AND idea_id = $2', [userId, numericId]);
       console.log("Unliked");
       res.json({ liked: false });
     } else {
-      // Like
       await pool.query('INSERT INTO likes (user_id, idea_id) VALUES ($1, $2)', [userId, numericId]);
       console.log("Liked");
       res.json({ liked: true });
