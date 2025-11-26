@@ -58,8 +58,22 @@ export const resetPassword = async (emp_id: string, email: string, password: str
   return handleResponse(response);
 };
 
+export const fetchCurrentUser = async (): Promise<any> => {
+  const response = await fetch(`${API_URL}/auth/me`, {
+    headers: getAuthHeaders()
+  });
+  return handleResponse(response);
+};
+
 export const fetchIdeas = async (): Promise<Idea[]> => {
   const response = await fetch(`${API_URL}/ideas`, {
+    headers: getAuthHeaders()
+  });
+  return handleResponse(response);
+};
+
+export const fetchLikedIdeas = async (): Promise<Idea[]> => {
+  const response = await fetch(`${API_URL}/ideas/liked`, {
     headers: getAuthHeaders()
   });
   return handleResponse(response);

@@ -1,14 +1,16 @@
-
 import React from 'react';
-import { Lightbulb, Bell, UserCircle, LogOut } from 'lucide-react';
+import { Lightbulb, Bell, UserCircle, LogOut, Heart } from 'lucide-react';
 
 interface HeaderProps {
   user?: { name: string; role: string } | null;
   onLogout?: () => void;
-  onExplore?: () => void; // Keeping prop definition optional to prevent breakage if passed, but ignored in render
+  onExplore?: () => void;
+  onOpenWishlist?: () => void;
+  onOpenProfile?: () => void;
+  likedCount?: number;
 }
 
-const Header: React.FC<HeaderProps> = ({ user, onLogout }) => {
+const Header: React.FC<HeaderProps> = ({ user, onLogout, onOpenWishlist, onOpenProfile, likedCount = 0 }) => {
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -25,16 +27,37 @@ const Header: React.FC<HeaderProps> = ({ user, onLogout }) => {
           
           <div className="flex items-center gap-4">
             
+            {onOpenWishlist && (
+              <button 
+                onClick={onOpenWishlist}
+                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative group"
+                title="My Like List"
+              >
+                <Heart className="h-6 w-6 group-hover:scale-110 transition-transform" />
+                {likedCount > 0 && (
+                  <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white ring-2 ring-white">
+                    {likedCount}
+                  </span>
+                )}
+              </button>
+            )}
+
            
+            
+            <div className="h-8 w-px bg-slate-200 mx-1 hidden sm:block"></div>
 
             <div className="flex items-center gap-3 pl-2">
-              <div className="flex items-center gap-2">
-                <UserCircle className="h-8 w-8 text-slate-400" />
-                <div className="hidden md:block text-sm text-right">
-                  <p className="font-medium text-slate-700">{user?.name || 'Guest User'}</p>
+              <button 
+                onClick={onOpenProfile}
+                className="flex items-center gap-2 hover:bg-slate-50 p-1.5 rounded-lg transition-colors group text-left"
+                title="View Profile"
+              >
+                <UserCircle className="h-8 w-8 text-slate-400 group-hover:text-indigo-600" />
+                <div className="hidden md:block text-sm">
+                  <p className="font-medium text-slate-700 group-hover:text-indigo-700">{user?.name || 'Guest User'}</p>
                   <p className="text-xs text-slate-500 capitalize">{user?.role || 'Viewer'}</p>
                 </div>
-              </div>
+              </button>
               
               {onLogout && (
                 <button 

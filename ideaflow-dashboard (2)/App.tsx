@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import Header from './components/Header';
 import StatsSection from './components/StatsSection';
@@ -9,9 +8,11 @@ import LoginPage from './components/LoginPage';
 import RegisterPage from './components/RegisterPage';
 import ForgotPasswordPage from './components/ForgotPasswordPage';
 import AssociateModal from './components/AssociateModal';
+import UserProfileModal from './components/UserProfileModal';
 import ExploreModal, { ExploreFilters } from './components/ExploreModal';
+import WishlistModal from './components/WishListModal';
 import { INITIAL_DATA } from './constants';
-import { fetchIdeas, fetchAssociateDetails, fetchBusinessGroups } from './services';
+import { fetchIdeas, fetchAssociateDetails, fetchBusinessGroups, fetchLikedIdeas, fetchCurrentUser } from './services';
 import { Idea, Associate } from './types';
 import { X, LayoutDashboard, FolderKanban, Loader2, Filter, BarChart3 } from 'lucide-react';
 
@@ -22,6 +23,8 @@ interface UserProfile {
   id: number;
   name: string;
   role: string;
+  emp_id?: string;
+  email?: string;
 }
 
 const App: React.FC = () => {
@@ -32,6 +35,7 @@ const App: React.FC = () => {
 
   // App Data State
   const [ideas, setIdeas] = useState<Idea[]>([]); 
+  const [likedIdeas, setLikedIdeas] = useState<Idea[]>([]);
   const [allBusinessGroups, setAllBusinessGroups] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,10 +50,15 @@ const App: React.FC = () => {
     technologies: []
   });
 
-  // Associate Modal State
+  // Modals State
   const [selectedAssociate, setSelectedAssociate] = useState<Associate | null>(null);
   const [associateLoading, setAssociateLoading] = useState(false);
   const [isAssociateModalOpen, setIsAssociateModalOpen] = useState(false);
+  
+  const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+
+  const [isWishlistOpen, setIsWishlistOpen] = useState(false);
 
   // Check Hash for Hidden Register Route
   useEffect(() => {
@@ -80,9 +89,10 @@ const App: React.FC = () => {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [ideasData, bgData] = await Promise.all([
+      const [ideasData, bgData, likedData] = await Promise.all([
         fetchIdeas(),
-        fetchBusinessGroups()
+        fetchBusinessGroups(),
+        fetchLikedIdeas()
       ]);
       
       if (ideasData.length === 0) {
@@ -92,9 +102,11 @@ const App: React.FC = () => {
          INITIAL_DATA.forEach(i => mockBGs.add(i.businessGroup));
          setAllBusinessGroups(Array.from(mockBGs).sort());
          setUsingMockData(true);
+         setLikedIdeas([]);
       } else {
          setIdeas(ideasData);
          setAllBusinessGroups(bgData);
+         setLikedIdeas(likedData);
          setError(null);
          setUsingMockData(false);
       }
@@ -189,6 +201,24 @@ const App: React.FC = () => {
     }
   }, []);
 
+  const handleViewProfile = async () => {
+    setIsProfileModalOpen(true);
+    try {
+      const profile = await fetchCurrentUser();
+      setCurrentUserProfile(profile);
+    } catch (err) {
+      console.error("Failed to fetch user profile", err);
+    }
+  };
+
+  const handleOpenWishlist = async () => {
+    setIsWishlistOpen(true);
+    try {
+      const likedData = await fetchLikedIdeas();
+      setLikedIdeas(likedData);
+    } catch(e) { console.error(e); }
+  };
+
   // Auth Views
   if (!isAuthenticated) {
     if (authView === 'register') return <RegisterPage onNavigateToLogin={() => setAuthView('login')} />;
@@ -196,7 +226,7 @@ const App: React.FC = () => {
     return <LoginPage onLogin={handleLogin} onForgotPassword={() => setAuthView('forgot-password')} />;
   }
 
-  if (loading) {
+  if (loading && !activeTab.startsWith('detail')) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-400">
         <Loader2 className="h-10 w-10 animate-spin mb-4 text-indigo-600" />
@@ -214,6 +244,9 @@ const App: React.FC = () => {
         user={user} 
         onLogout={handleLogout}
         onExplore={() => setIsExploreOpen(true)}
+        onOpenWishlist={handleOpenWishlist}
+        onOpenProfile={handleViewProfile}
+        likedCount={likedIdeas.length}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -231,9 +264,24 @@ const App: React.FC = () => {
                   }`}
                 >
                   <LayoutDashboard className="h-4 w-4" />
-                  Dashboard
+                  Global Dashboard
                 </button>
                 
+                <button 
+                  onClick={() => setActiveTab('projects')}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === 'projects' 
+                      ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200' 
+                      : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <FolderKanban className="h-4 w-4" />
+                  Ideas Submissions
+                  <span className="bg-slate-100 text-slate-600 text-xs px-1.5 py-0.5 rounded-full border border-slate-200">
+                    {filteredIdeas.length}
+                  </span>
+                </button>
+
                 {activeFiltersCount > 0 && (
                    <button 
                     onClick={() => setActiveTab('filtered-analytics')}
@@ -250,21 +298,6 @@ const App: React.FC = () => {
                     </span>
                   </button>
                 )}
-
-                <button 
-                  onClick={() => setActiveTab('projects')}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                    activeTab === 'projects' 
-                      ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200' 
-                      : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <FolderKanban className="h-4 w-4" />
-                  Ideas Submissions
-                  <span className="bg-slate-100 text-slate-600 text-xs px-1.5 py-0.5 rounded-full border border-slate-200">
-                    {filteredIdeas.length}
-                  </span>
-                </button>
               </div>
 
               {activeFiltersCount > 0 && (
@@ -274,8 +307,7 @@ const App: React.FC = () => {
                     <button 
                       onClick={() => {
                         setGlobalFilters({ themes: [], businessGroups: [], technologies: [] });
-                        // Optional: Redirect back to dashboard on clear
-                        // setActiveTab('dashboard'); 
+                        setActiveTab('projects');
                       }}
                       className="ml-2 hover:bg-slate-100 p-1 rounded-full text-slate-400 hover:text-red-500 transition-colors"
                       title="Clear Filters"
@@ -298,7 +330,18 @@ const App: React.FC = () => {
             />
           )}
 
-          {/* 2. Filtered Analytics View */}
+          {/* 2. Ideas List View */}
+          {activeTab === 'projects' && (
+            <IdeaTable 
+              data={filteredIdeas} 
+              onViewDetails={handleViewDetails}
+              onOpenExplore={() => setIsExploreOpen(true)}
+              isGlobalFilterActive={activeFiltersCount > 0}
+              onRefreshData={loadData}
+            />
+          )}
+
+          {/* 3. Filtered Analytics View */}
           {activeTab === 'filtered-analytics' && (
             <div className="space-y-4">
                <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl flex items-center gap-3 text-emerald-800">
@@ -315,22 +358,11 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {/* 3. Ideas List View */}
-          {activeTab === 'projects' && (
-            <IdeaTable 
-              data={filteredIdeas} 
-              onViewDetails={handleViewDetails}
-              onOpenExplore={() => setIsExploreOpen(true)}
-              isGlobalFilterActive={activeFiltersCount > 0}
-              onRefreshData={loadData}
-            />
-          )}
-
           {/* 4. Details View */}
           {activeTab.startsWith('detail:') && (
             (() => {
               const ideaId = activeTab.split(':')[1];
-              const idea = ideas.find(i => i.id === ideaId);
+              const idea = ideas.find(i => i.id === ideaId) || likedIdeas.find(i => i.id === ideaId);
               return idea ? (
                 <IdeaDetails 
                   idea={idea} 
@@ -378,6 +410,24 @@ const App: React.FC = () => {
           associate={selectedAssociate}
           loading={associateLoading}
           onClose={() => setIsAssociateModalOpen(false)}
+        />
+      )}
+
+      {isProfileModalOpen && (
+        <UserProfileModal 
+           user={currentUserProfile}
+           isOpen={isProfileModalOpen}
+           onClose={() => setIsProfileModalOpen(false)}
+        />
+      )}
+
+      {isWishlistOpen && (
+        <WishlistModal 
+           isOpen={isWishlistOpen}
+           onClose={() => setIsWishlistOpen(false)}
+           likedIdeas={likedIdeas}
+           onViewDetails={handleViewDetails}
+           onRefreshData={loadData}
         />
       )}
 

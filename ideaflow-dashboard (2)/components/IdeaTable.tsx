@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import { Idea, Status } from '../types';
 import { DOMAIN_COLORS } from '../constants';
@@ -8,9 +7,10 @@ import { toggleLikeIdea } from '../services';
 interface IdeaTableProps {
   data: Idea[];
   onViewDetails: (idea: Idea) => void;
-  onOpenExplore: () => void;
+  onOpenExplore?: () => void;
   isGlobalFilterActive: boolean;
-  onRefreshData?: () => void; // Callback to refresh data after liking
+  onRefreshData?: () => void;
+  showExplore?: boolean;
 }
 
 type SortField = 'date' | 'status' | 'domain' | 'score' | 'likes';
@@ -23,7 +23,8 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
   onViewDetails,
   onOpenExplore,
   isGlobalFilterActive,
-  onRefreshData
+  onRefreshData,
+  showExplore = true
 }) => {
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -74,7 +75,7 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
           comparison = (a.score || 0) - (b.score || 0); 
           break;
         case 'likes':
-          comparison = a.likesCount - b.likesCount;
+          comparison = (a.likesCount || 0) - (b.likesCount || 0);
           break;
       }
       return sortOrder === 'asc' ? comparison : -comparison;
@@ -166,18 +167,20 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
                 />
               </div>
 
-              <button 
-                 onClick={onOpenExplore}
-                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border shadow-sm shrink-0 ${
-                    isGlobalFilterActive 
-                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100' 
-                      : 'bg-white border-slate-200 text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700'
-                 }`}
-              >
-                 <Compass className="h-4 w-4" />
-                 Explore & Filter
-                 {isGlobalFilterActive && <span className="flex h-2 w-2 rounded-full bg-emerald-500 ml-1"></span>}
-              </button>
+              {showExplore && onOpenExplore && (
+                <button 
+                   onClick={onOpenExplore}
+                   className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors border shadow-sm shrink-0 ${
+                      isGlobalFilterActive 
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100' 
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700'
+                   }`}
+                >
+                   <Compass className="h-4 w-4" />
+                   Explore & Filter
+                   {isGlobalFilterActive && <span className="flex h-2 w-2 rounded-full bg-emerald-500 ml-1"></span>}
+                </button>
+              )}
             </div>
          </div>
       </div>
@@ -187,18 +190,7 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
         <table className="min-w-full divide-y divide-slate-200">
           <thead className="bg-slate-50">
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider w-1/3">
-                 <div className="flex items-center gap-2">
-                   Idea Title & Likes
-                   <span 
-                      onClick={() => handleSort('likes')}
-                      className="cursor-pointer hover:text-indigo-600 ml-2 flex items-center gap-1"
-                      title="Sort by Likes"
-                   >
-                     {sortField === 'likes' && (sortOrder === 'asc' ? <ChevronUp className="h-3 w-3"/> : <ChevronDown className="h-3 w-3"/>)}
-                   </span>
-                 </div>
-              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider w-1/3">Idea Title</th>
               <th 
                 className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-700"
                 onClick={() => handleSort('domain')}
@@ -210,6 +202,15 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
                 onClick={() => handleSort('status')}
               >
                  <div className="flex items-center gap-1">Status {sortField === 'status' && (sortOrder === 'asc' ? <ChevronUp className="h-3 w-3"/> : <ChevronDown className="h-3 w-3"/>)}</div>
+              </th>
+              <th 
+                className="px-6 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-700 w-24"
+                onClick={() => handleSort('likes')}
+              >
+                <div className="flex items-center justify-center gap-1">
+                   <Heart className="h-3 w-3" /> Likes
+                   {sortField === 'likes' && (sortOrder === 'asc' ? <ChevronUp className="h-3 w-3"/> : <ChevronDown className="h-3 w-3"/>)}
+                </div>
               </th>
               <th 
                 className="px-6 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-700 w-24"
@@ -240,28 +241,13 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
                 <tr key={idea.id} className="hover:bg-slate-50 transition-colors group">
                   <td className="px-6 py-4">
                     <div className="flex flex-col">
-                      <div className="flex items-center gap-2">
-                         {/* Like Button */}
-                         <button 
-                            onClick={(e) => handleLike(e, idea)}
-                            disabled={likingId === idea.id}
-                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium transition-all ${
-                               idea.isLiked 
-                                ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' 
-                                : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
-                            }`}
-                         >
-                            <Heart className={`h-3 w-3 ${idea.isLiked ? 'fill-red-600' : ''}`} />
-                            {idea.likesCount}
-                         </button>
-                         <span 
-                           className="text-sm font-medium text-indigo-600 cursor-pointer hover:underline truncate"
-                           onClick={() => onViewDetails(idea)}
-                         >
-                           {idea.title}
-                         </span>
-                      </div>
-                      <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 pl-14">
+                      <span 
+                        className="text-sm font-medium text-indigo-600 cursor-pointer hover:underline truncate"
+                        onClick={() => onViewDetails(idea)}
+                      >
+                        {idea.title}
+                      </span>
+                      <div className="flex items-center gap-2 mt-1 text-xs text-slate-500">
                         <User className="h-3 w-3" /> {idea.associateAccount}
                       </div>
                     </div>
@@ -280,6 +266,20 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
                     <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${getStatusColor(idea.status)}`}>
                        {idea.status}
                     </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-center">
+                     <button 
+                        onClick={(e) => handleLike(e, idea)}
+                        disabled={likingId === idea.id}
+                        className={`flex items-center justify-center gap-1 px-2 py-1 rounded-full border text-xs font-medium transition-all mx-auto ${
+                           idea.isLiked 
+                            ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' 
+                            : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'
+                        }`}
+                     >
+                        <Heart className={`h-3 w-3 ${idea.isLiked ? 'fill-red-600' : ''}`} />
+                        {idea.likesCount}
+                     </button>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-center">
                     <span className={`text-lg ${getScoreColor(idea.score || 0)}`}>
@@ -336,4 +336,4 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
   );
 };
 
-export default IdeaTable;
+export default IdeaTable
