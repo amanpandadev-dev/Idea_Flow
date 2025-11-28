@@ -94,6 +94,28 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
 
         setUploading(true);
         setError(null);
+
+        try {
+            const response = await uploadContext(file, embeddingProvider);
+            setUploadedContext(response);
+            setFile(null);
+            onUploadSuccess?.(response);
+
+            // Find matching ideas based on document keywords
+            try {
+                console.log('[DocumentUpload] Finding matching ideas...');
+                const matchingIdeasResponse = await findMatchingIdeas(embeddingProvider);
+                console.log(`[DocumentUpload] Found ${matchingIdeasResponse.count} matching ideas`);
+                onMatchingIdeasFound?.(matchingIdeasResponse);
+            } catch (mErr: any) {
+                console.error('[DocumentUpload] Failed to find matching ideas:', mErr.message);
+                // Don't fail the upload if idea matching fails
+            }
+        } catch (err: any) {
+            setError(err.message || 'Upload failed');
+        } finally {
+            setUploading(false);
+        }
     };
 
     const handleReset = async () => {
