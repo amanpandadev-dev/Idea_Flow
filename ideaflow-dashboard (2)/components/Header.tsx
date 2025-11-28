@@ -1,53 +1,73 @@
 import React from 'react';
-import { Lightbulb, Bell, UserCircle, LogOut, Heart } from 'lucide-react';
+import { Lightbulb, UserCircle, LogOut, Bot } from 'lucide-react';
+import { NavLink, Link } from 'react-router-dom';
 
 interface HeaderProps {
   user?: { name: string; role: string } | null;
   onLogout?: () => void;
-  onExplore?: () => void;
   onOpenWishlist?: () => void;
   onOpenProfile?: () => void;
   likedCount?: number;
+  ideaCount?: number;
 }
 
-const Header: React.FC<HeaderProps> = ({ user, onLogout, onOpenWishlist, onOpenProfile, likedCount = 0 }) => {
+const Header: React.FC<HeaderProps> = ({ user, onLogout, onOpenWishlist, onOpenProfile, likedCount = 0, ideaCount = 0 }) => {
+  const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+    `px-3 py-2 text-sm font-medium rounded-lg transition-all ${isActive
+      ? 'bg-indigo-50 text-indigo-600'
+      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
+    }`;
+
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
-          <div className="flex items-center gap-3">
-            <div className="bg-indigo-600 p-2 rounded-lg">
-              <Lightbulb className="h-6 w-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-slate-800">IdeaFlow</h1>
-              <p className="text-xs text-slate-500 hidden sm:block">Associate Idea Repository</p>
-            </div>
+          <div className="flex items-center gap-6">
+            {/* Logo */}
+            <Link to="/" className="flex items-center gap-3">
+              <div className="bg-indigo-600 p-2 rounded-lg">
+                <Lightbulb className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-slate-800">IdeaFlow</h1>
+              </div>
+            </Link>
+
+            {/* Primary Navigation */}
+            <nav className="hidden md:flex items-center gap-2">
+              <NavLink to="/" className={navLinkClass}>
+                Dashboard
+              </NavLink>
+              <NavLink to="/ideas" className={navLinkClass}>
+                Ideas
+                {ideaCount > 0 && <span className="ml-1.5 bg-slate-100 text-slate-600 text-xs px-1.5 py-0.5 rounded-full border border-slate-200">{ideaCount}</span>}
+              </NavLink>
+              <NavLink to="/agent" className={navLinkClass}>
+                <span className="flex items-center gap-1.5">
+                  <Bot className="h-4 w-4" />
+                  AI Agent
+                </span>
+              </NavLink>
+            </nav>
           </div>
-          
+
           <div className="flex items-center gap-4">
-            
+            {/* Action Buttons */}
             {onOpenWishlist && (
-              <button 
+              <button
                 onClick={onOpenWishlist}
-                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative group"
+                className="px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 rounded-lg transition-all"
                 title="My Like List"
               >
-                <Heart className="h-6 w-6 group-hover:scale-110 transition-transform" />
-                {likedCount > 0 && (
-                  <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white ring-2 ring-white">
-                    {likedCount}
-                  </span>
-                )}
+                My Likes {likedCount > 0 && `(${likedCount})`}
               </button>
             )}
 
-           
-            
             <div className="h-8 w-px bg-slate-200 mx-1 hidden sm:block"></div>
 
+            {/* User Menu */}
             <div className="flex items-center gap-3 pl-2">
-              <button 
+              <button
                 onClick={onOpenProfile}
                 className="flex items-center gap-2 hover:bg-slate-50 p-1.5 rounded-lg transition-colors group text-left"
                 title="View Profile"
@@ -58,9 +78,9 @@ const Header: React.FC<HeaderProps> = ({ user, onLogout, onOpenWishlist, onOpenP
                   <p className="text-xs text-slate-500 capitalize">{user?.role || 'Viewer'}</p>
                 </div>
               </button>
-              
+
               {onLogout && (
-                <button 
+                <button
                   onClick={onLogout}
                   className="ml-2 p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
                   title="Sign Out"

@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS public.ideas
     code_preference VARCHAR(50),
     created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    business_group VARCHAR(200)
+    business_group VARCHAR(200),
+    score INTEGER DEFAULT 0
 );
 
 -- 4) users table
@@ -71,7 +72,7 @@ CREATE TABLE IF NOT EXISTS public.users
 CREATE TABLE IF NOT EXISTS public.likes   
 (
     id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL,
+    user_id VARCHAR(64) NOT NULL,
     idea_id INTEGER NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES public.users(emp_id) ON DELETE CASCADE,
