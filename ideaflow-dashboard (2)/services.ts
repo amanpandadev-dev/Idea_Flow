@@ -15,7 +15,7 @@ const getAuthHeaders = () => {
 // Helper to safely handle responses
 const handleResponse = async (response: Response) => {
   const contentType = response.headers.get("content-type");
-  
+
   if (contentType && contentType.includes("application/json")) {
     const data = await response.json();
     if (!response.ok) {
@@ -116,3 +116,191 @@ export const toggleLikeIdea = async (id: string): Promise<{ liked: boolean }> =>
   });
   return handleResponse(response);
 };
+
+// Phase-2: Agent Query
+export interface AgentResponse {
+  answer: string;
+  citations: {
+    internal: Array<{
+      ideaId: string;
+      title: string;
+      snippet: string;
+      domain?: string;
+      relevance: number;
+    }>;
+    external: Array<{
+      title: string;
+      url: string;
+      snippet: string;
+    }>;
+  };
+  reasoning?: string;
+  usedEphemeralContext: boolean;
+  processingTime: number;
+}
+
+export interface AgentSession {
+  id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  query: string;
+  history: string[];
+  result: AgentResponse | null;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+
+/**
+ * @deprecated Use session-based functions instead.
+ */
+export const queryAgent = async (
+  userQuery: string,
+  embeddingProvider: 'llama' | 'grok',
+  filters?: { businessGroups?: string[]; themes?: string[] },
+  synergyMode?: boolean
+): Promise<AgentResponse> => {
+  const response = await fetch(`${API_URL}/agent/query`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ userQuery, embeddingProvider, filters, synergyMode })
+  });
+  return handleResponse(response);
+};
+
+export const startAgentSession = async (
+  userQuery: string,
+  embeddingProvider: 'llama' | 'grok',
+  filters?: { businessGroups?: string[]; themes?: string[] }
+): Promise<{ success: boolean; jobId: string; }> => {
+  const response = await fetch(`${API_URL}/agent/session`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ userQuery, embeddingProvider, filters })
+  });
+  return handleResponse(response);
+};
+
+export const getAgentSessionStatus = async (jobId: string): Promise<AgentSession> => {
+  const response = await fetch(`${API_URL}/agent/session/${jobId}/status`, {
+    headers: getAuthHeaders()
+  });
+  return handleResponse(response);
+};
+
+export const stopAgentSession = async (jobId: string): Promise<{ success: boolean; message: string; }> => {
+  const response = await fetch(`${API_URL}/agent/session/${jobId}/stop`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  return handleResponse(response);
+};
+
+// Phase-2: Context Upload
+export interface ContextUploadResponse {
+  success: boolean;
+  chunksProcessed: number;
+  themes: string[];
+  sessionId: string;
+  stats: {
+    originalLength: number;
+    chunkCount: number;
+    avgChunkLength: number;
+  };
+}
+
+export const uploadContext = async (file: File, embeddingProvider: 'llama' | 'grok'): Promise<ContextUploadResponse> => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('embeddingProvider', embeddingProvider);
+
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_URL}/context/upload`, {
+    method: 'POST',
+    headers: {
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    },
+    body: formData
+  });
+  return handleResponse(response);
+};
+
+// Phase-2: Reset Context
+export const resetContext = async (): Promise<{ success: boolean; message: string }> => {
+  const response = await fetch(`${API_URL}/context/reset`, {
+    method: 'DELETE',
+    headers: getAuthHeaders()
+  });
+  return handleResponse(response);
+};
+
+// Phase-2: Get Context Status
+export interface ContextStatus {
+  hasContext: boolean;
+  sessionId: string | null;
+  stats?: {
+    sessionId: string;
+    documentCount: number;
+    collectionName: string;
+  };
+}
+
+export const getContextStatus = async (): Promise<ContextStatus> => {
+  const response = await fetch(`${API_URL}/context/status`, {
+    headers: getAuthHeaders()
+  });
+  return handleResponse(response);
+};
+
+// Find ideas matching uploaded document keywords
+export interface MatchingIdea extends SemanticSearchResult {
+  matchedKeywords?: string[];
+}
+
+export interface MatchingIdeasResponse {
+  keywords: string[];
+  count: number;
+  ideas: MatchingIdea[];
+}
+
+export const findMatchingIdeas = async (embeddingProvider: 'llama' | 'grok'): Promise<MatchingIdeasResponse> => {
+  const response = await fetch(`${API_URL}/context/find-matching-ideas`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ embeddingProvider })
+  });
+  const data = await handleResponse(response);
+  return {
+    keywords: data.keywords || [],
+    count: data.count || 0,
+    ideas: data.ideas || []
+  };
+};
+
+// Semantic search for similar idea submissions
+export interface SemanticSearchResult {
+  id: string;
+  title: string;
+  description: string;
+  team: string;
+  tags: string[];
+  similarity: number;
+  createdAt: string;
+  category?: string;
+  status?: string;
+}
+
+export const semanticSearchIdeas = async (
+  query: string,
+  embeddingProvider: 'llama' | 'grok',
+  limit: number = 10
+): Promise<SemanticSearchResult[]> => {
+  const response = await fetch(`${API_URL}/ideas/semantic-search`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ query, embeddingProvider, limit })
+  });
+  const data = await handleResponse(response);
+  return data.results || [];
+};
+

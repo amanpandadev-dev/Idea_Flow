@@ -7,32 +7,85 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import session from 'express-session';
+
+import { initChromaDB } from './backend/config/chroma.js';
+
+// Import Routers
+import contextRoutes from './backend/routes/contextRoutes.js';
+import agentRoutes from './backend/routes/agentRoutes.js';
+import semanticSearchRoutes from './backend/routes/semanticSearchRoutes.js';
 
 const { Pool } = pg;
 const app = express();
 const port = process.env.PORT || 3001;
+
+// --- Environment Variable Validation ---
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey123';
+const SESSION_SECRET = process.env.SESSION_SECRET;
+const DATABASE_URL = process.env.DATABASE_URL;
+
+if (!SESSION_SECRET) {
+  console.error("FATAL ERROR: SESSION_SECRET is not defined in your .env file.");
+  process.exit(1);
+}
+if (!DATABASE_URL) {
+  console.error("FATAL ERROR: DATABASE_URL is not defined in your .env file.");
+  process.exit(1);
+}
 
 // Fix __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Middleware
-app.use(cors());
+// --- Middleware ---
+app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
 app.use(express.json());
 
-// Database Connection Management
-let pool;
+// Session Middleware
+app.use(session({
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: process.env.NODE_ENV === 'production' } // secure: true in production
+}));
 
-if (process.env.DATABASE_URL) {
-  pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-  });
-  console.log("Database configured. Attempting to connect...");
-} else {
-  console.warn("⚠️ No DATABASE_URL found in .env file.");
-}
+
+// --- Database Connection ---
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+
+// Make DB pool available to all routes
+app.locals.pool = pool;
+
+// Test DB connection on startup
+pool.connect((err, client, release) => {
+  if (err) {
+    console.error('❌ Database connection failed:', err.stack);
+    process.exit(1);
+  } else {
+    console.log('✅ Database connected successfully.');
+    client.release();
+  }
+});
+
+// --- In-Memory Vector Store Initialization ---
+const chromaClient = await initChromaDB();
+
+// Make ChromaDB and DB available to routes
+app.set('chromaClient', chromaClient);
+app.set('db', pool);
+
+
+
+// --- API Routes ---
+// New Agent and Context routes
+app.use('/api/context', contextRoutes);
+app.use('/api/agent', agentRoutes);
+app.use('/api/ideas', semanticSearchRoutes);
+
 
 // --- Helpers ---
 
@@ -62,21 +115,21 @@ const mapDBToFrontend = (row) => {
     description: row.summary || '',
     domain: row.challenge_opportunity || 'Other',
     status: row.build_phase || 'Submitted',
-    businessGroup: row.idea_bg || 'Corporate Functions', 
+    businessGroup: row.idea_bg || 'Corporate Functions',
     buildType: row.build_preference || 'New Solution / IP',
-    technologies: row.code_preference ? (row.code_preference.includes(',') ? row.code_preference.split(',').map(s=>s.trim()) : [row.code_preference]) : [],
+    technologies: row.code_preference ? (row.code_preference.includes(',') ? row.code_preference.split(',').map(s => s.trim()) : [row.code_preference]) : [],
     submissionDate: row.created_at,
-    
+
     // Mapped Associate Info
     associateId: row.associate_id,
-    associateAccount: row.account || 'Unknown', 
+    associateAccount: row.account || 'Unknown',
     associateBusinessGroup: row.assoc_bg || 'Unknown',
 
     // Metrics
     score: row.idea_score !== undefined && row.idea_score !== null ? safeInt(row.idea_score) : 0,
     likesCount: safeInt(row.likes_count),
-    isLiked: !!row.is_liked, 
-    
+    isLiked: !!row.is_liked,
+
     futureScope: generateFutureScope(row.challenge_opportunity),
     impactScore: randomScore(),
     confidenceScore: randomScore(),
@@ -86,7 +139,7 @@ const mapDBToFrontend = (row) => {
 
 // Middleware to verify Token
 const auth = (req, res, next) => {
-  if (!pool) return next(); 
+  if (!pool) return next();
 
   const token = req.header('Authorization')?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ msg: 'No token, authorization denied' });
@@ -105,12 +158,12 @@ const auth = (req, res, next) => {
 // 1. Auth: Login
 app.post('/api/auth/login', async (req, res) => {
   if (!pool) return res.status(503).json({ msg: 'DB not connected' });
-  
+
   const { emp_id, password } = req.body;
 
   try {
     const result = await pool.query('SELECT * FROM users WHERE emp_id = $1', [emp_id]);
-    
+
     if (result.rows.length === 0) {
       return res.status(400).json({ msg: 'Invalid Credentials' });
     }
@@ -124,7 +177,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     const payload = {
       user: {
-        id: user.id,       
+        id: user.id,
         emp_id: user.emp_id,
         role: user.role
       }
@@ -143,7 +196,7 @@ app.post('/api/auth/login', async (req, res) => {
 // 2. Auth: Register
 app.post('/api/auth/register', async (req, res) => {
   if (!pool) return res.status(503).json({ msg: 'DB not connected' });
-  
+
   const { emp_id, name, email, password } = req.body;
 
   try {
@@ -184,7 +237,7 @@ app.get('/api/auth/me', auth, async (req, res) => {
 // 4. Auth: Reset Password
 app.post('/api/auth/reset-password', async (req, res) => {
   if (!pool) return res.status(503).json({ msg: 'DB not connected' });
-  
+
   const { emp_id, email, password } = req.body;
 
   try {
@@ -211,8 +264,8 @@ app.get('/api/ideas', auth, async (req, res) => {
 
   try {
     const { search } = req.query;
-    const userId = req.user ? req.user.user.emp_id : ''; 
-    
+    const userId = req.user ? req.user.user.emp_id : '';
+
     let query = `
       SELECT DISTINCT ON (i.idea_id)
         i.score as idea_score, 
@@ -229,9 +282,9 @@ app.get('/api/ideas', auth, async (req, res) => {
       LEFT JOIN idea_team it ON i.idea_id = it.idea_id
       LEFT JOIN associates a ON it.associate_id = a.associate_id
     `;
-    
-    const params = [userId]; 
-    
+
+    const params = [userId];
+
     if (search) {
       query += `
         WHERE 
@@ -244,7 +297,7 @@ app.get('/api/ideas', auth, async (req, res) => {
     }
 
     query += ` ORDER BY i.idea_id, i.created_at DESC`;
-    
+
     const result = await pool.query(query, params);
     const mappedData = result.rows.map(mapDBToFrontend);
     res.json(mappedData);
@@ -318,15 +371,15 @@ app.get('/api/ideas/:id/similar', auth, async (req, res) => {
 
   try {
     const { id } = req.params;
-    const userId = req.user ? req.user.user.emp_id : ''; 
+    const userId = req.user ? req.user.user.emp_id : '';
     const numericId = id.replace('IDEA-', '');
 
     const currentIdea = await pool.query('SELECT title, challenge_opportunity FROM ideas WHERE idea_id = $1', [numericId]);
-    
+
     if (currentIdea.rows.length === 0) return res.json([]);
-    
+
     const { title, challenge_opportunity } = currentIdea.rows[0];
-    
+
     const query = `
       SELECT DISTINCT ON (i.idea_id)
         i.score as idea_score,
@@ -350,7 +403,7 @@ app.get('/api/ideas/:id/similar', auth, async (req, res) => {
         )
       LIMIT 3
     `;
-    
+
     const keyword = title.split(' ')[0] || title;
     const result = await pool.query(query, [userId, numericId, challenge_opportunity, `%${keyword}%`]);
     const mappedData = result.rows.map(mapDBToFrontend);
@@ -448,17 +501,20 @@ app.get('/', (req, res) => {
   res.send('API Running. Use port 5173 for Frontend.');
 });
 
-// Start Server
+// --- Start Server ---
 try {
   app.listen(port, () => {
     console.log(`\n🚀 Server running on port ${port}`);
+    console.log(`   Frontend expects API at http://localhost:${port}`);
   }).on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`❌ Port ${port} is already in use. Please stop other processes or use a different port.`);
     } else {
       console.error('❌ Server failed to start:', err);
     }
+    process.exit(1);
   });
 } catch (e) {
   console.error('❌ Server startup error:', e);
+  process.exit(1);
 }
