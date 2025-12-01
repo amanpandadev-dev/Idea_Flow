@@ -1,118 +1,182 @@
+import { Idea, Status, Associate, ExploreFilters } from './types';
 
-import { Idea, Status, Associate } from './types';
-
-// Use relative path to leverage Vite proxy configured in vite.config.ts
 const API_URL = '/api';
 
-const getAuthHeaders = () => {
-  const token = localStorage.getItem('token');
+// Helper to get tokens
+const getTokens = () => {
   return {
-    'Content-Type': 'application/json',
-    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    accessToken: localStorage.getItem('token'), // Access Token
+    refreshToken: localStorage.getItem('refreshToken') // Refresh Token
   };
 };
 
-// Helper to safely handle responses
-const handleResponse = async (response: Response) => {
-  const contentType = response.headers.get("content-type");
-  
-  if (contentType && contentType.includes("application/json")) {
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.msg || data.error || 'API Request Failed');
+// Generic Fetch Wrapper with Auth Handling
+const fetchWithAuth = async (url: string, options: RequestInit = {}) => {
+  // console.log(`[API Request] ${options.method || 'GET'} ${url}`);
+  let { accessToken, refreshToken } = getTokens();
+
+  let headers: HeadersInit = {
+    'Content-Type': 'application/json',
+    ...(accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {})
+  };
+
+  try {
+    let response = await fetch(url, { ...options, headers });
+    // console.log(`[API Response] ${response.status} ${url}`);
+
+    // Handle Token Expiry (401)
+    if (response.status === 401 && refreshToken) {
+      console.warn(`[API] 401 Unauthorized at ${url}. Attempting refresh...`);
+      // Attempt Refresh
+      try {
+        const refreshRes = await fetch(`${API_URL}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken })
+        });
+
+        if (refreshRes.ok) {
+          console.log("[API] Token refresh successful. Retrying original request.");
+          const data = await refreshRes.json();
+          localStorage.setItem('token', data.accessToken); // Update Access Token
+
+          // Retry Original Request
+          headers = {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${data.accessToken}`
+          };
+          response = await fetch(url, { ...options, headers });
+        } else {
+          // Refresh Failed (Exp or Invalid) -> Logout
+          console.error("[API] Token refresh failed. Session expired.");
+          throw new Error('Session Expired');
+        }
+      } catch (err) {
+        console.error("[API] Error during token refresh:", err);
+        throw new Error('Session Expired');
+      }
     }
-    return data;
-  } else {
-    // If response is not JSON (e.g., HTML 404 page), throw a readable error
-    if (!response.ok) {
-      throw new Error(`Server Error: ${response.status} ${response.statusText}. Please check server logs.`);
+
+    const contentType = response.headers.get("content-type");
+    if (contentType && contentType.includes("application/json")) {
+      const data = await response.json();
+      if (!response.ok) {
+        console.error(`[API Error] ${url}:`, data.msg || 'Request Failed');
+        throw new Error(data.msg || 'Request Failed');
+      }
+      return data;
+    } else {
+      if (!response.ok) {
+        console.error(`[API Error] ${url}: Server Error ${response.status}`);
+        throw new Error(`Server Error: ${response.status}`);
+      }
+      return null;
     }
-    return null; // Should not happen for our API
+
+  } catch (err: any) {
+    console.error(`[API Exception] ${url}:`, err.message);
+    if (err.message === 'Session Expired') {
+      // Trigger global logout if possible, or re-throw for App to handle
+      throw err;
+    }
+    throw err;
   }
 };
 
-export const loginUser = async (emp_id: string, password: string): Promise<{ token: string, user: any }> => {
+export const loginUser = async (emp_id: string, password: string) => {
+  console.log(`[Service] Logging in user: ${emp_id}`);
   const response = await fetch(`${API_URL}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ emp_id, password }),
   });
-  return handleResponse(response);
+  // Login is public, use standard handling
+  const data = await response.json();
+  if (!response.ok) {
+    console.error("[Service] Login failed:", data.msg);
+    throw new Error(data.msg || 'Login Failed');
+  }
+  console.log("[Service] Login successful");
+  return data;
 };
 
-export const registerUser = async (emp_id: string, name: string, email: string, password: string): Promise<any> => {
+export const registerUser = async (emp_id: string, name: string, email: string, password: string) => {
+  console.log(`[Service] Registering user: ${emp_id}`);
   const response = await fetch(`${API_URL}/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ emp_id, name, email, password }),
   });
-  return handleResponse(response);
+  const data = await response.json();
+  if (!response.ok) {
+    console.error("[Service] Registration failed:", data.msg);
+    throw new Error(data.msg || 'Registration Failed');
+  }
+  console.log("[Service] Registration successful");
+  return data;
 };
 
-export const resetPassword = async (emp_id: string, email: string, password: string): Promise<any> => {
+export const resetPassword = async (emp_id: string, email: string, password: string) => {
   const response = await fetch(`${API_URL}/auth/reset-password`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ emp_id, email, password }),
   });
-  return handleResponse(response);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.msg || 'Reset Failed');
+  return data;
 };
 
-export const fetchCurrentUser = async (): Promise<any> => {
-  const response = await fetch(`${API_URL}/auth/me`, {
-    headers: getAuthHeaders()
-  });
-  return handleResponse(response);
+export const fetchCurrentUser = async () => {
+  return fetchWithAuth(`${API_URL}/auth/me`);
 };
 
 export const fetchIdeas = async (): Promise<Idea[]> => {
-  const response = await fetch(`${API_URL}/ideas`, {
-    headers: getAuthHeaders()
-  });
-  return handleResponse(response);
+  return fetchWithAuth(`${API_URL}/ideas`);
+};
+
+export const searchIdeas = async (query: string, filters?: ExploreFilters): Promise<{ results: Idea[], facets: any }> => {
+  console.log(`[Service] Searching ideas with query: "${query}"`);
+  let url = `${API_URL}/ideas/search?q=${encodeURIComponent(query)}`;
+
+  if (filters) {
+    if (filters.themes && filters.themes.length > 0) {
+      url += `&themes=${encodeURIComponent(JSON.stringify(filters.themes))}`;
+    }
+    if (filters.businessGroups && filters.businessGroups.length > 0) {
+      url += `&businessGroups=${encodeURIComponent(JSON.stringify(filters.businessGroups))}`;
+    }
+    if (filters.technologies && filters.technologies.length > 0) {
+      url += `&technologies=${encodeURIComponent(JSON.stringify(filters.technologies))}`;
+    }
+  }
+
+  return fetchWithAuth(url);
 };
 
 export const fetchLikedIdeas = async (): Promise<Idea[]> => {
-  const response = await fetch(`${API_URL}/ideas/liked`, {
-    headers: getAuthHeaders()
-  });
-  return handleResponse(response);
+  return fetchWithAuth(`${API_URL}/ideas/liked`);
 };
 
 export const fetchBusinessGroups = async (): Promise<string[]> => {
-  const response = await fetch(`${API_URL}/business-groups`, {
-    headers: getAuthHeaders()
-  });
-  return handleResponse(response) || [];
+  return fetchWithAuth(`${API_URL}/business-groups`) || [];
 };
 
 export const fetchSimilarIdeas = async (id: string): Promise<Idea[]> => {
-  const response = await fetch(`${API_URL}/ideas/${id}/similar`, {
-    headers: getAuthHeaders()
-  });
-  return handleResponse(response);
+  return fetchWithAuth(`${API_URL}/ideas/${id}/similar`);
 };
 
 export const fetchAssociateDetails = async (associateId: number): Promise<Associate> => {
-  const response = await fetch(`${API_URL}/associates/${associateId}`, {
-    headers: getAuthHeaders()
-  });
-  return handleResponse(response);
+  return fetchWithAuth(`${API_URL}/associates/${associateId}`);
 };
 
 export const updateIdeaStatus = async (id: string, status: Status): Promise<void> => {
-  const response = await fetch(`${API_URL}/ideas/${id}/status`, {
+  return fetchWithAuth(`${API_URL}/ideas/${id}/status`, {
     method: 'PUT',
-    headers: getAuthHeaders(),
     body: JSON.stringify({ status }),
   });
-  return handleResponse(response);
 };
 
 export const toggleLikeIdea = async (id: string): Promise<{ liked: boolean }> => {
-  const response = await fetch(`${API_URL}/ideas/${id}/like`, {
-    method: 'POST',
-    headers: getAuthHeaders()
-  });
-  return handleResponse(response);
+  return fetchWithAuth(`${API_URL}/ideas/${id}/like`, { method: 'POST' });
 };

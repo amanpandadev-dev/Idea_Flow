@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Lightbulb, Lock, User, ArrowRight, Loader2, CheckCircle } from 'lucide-react';
 import { loginUser } from '../services';
@@ -19,8 +20,10 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin, onForgotPassword }) => {
     setLoading(true);
 
     try {
-      const { token, user } = await loginUser(username, password);
-      localStorage.setItem('token', token);
+      const { accessToken, refreshToken, user } = await loginUser(username, password);
+      // Store both tokens
+      localStorage.setItem('token', accessToken);
+      localStorage.setItem('refreshToken', refreshToken);
       localStorage.setItem('user', JSON.stringify(user));
       onLogin();
     } catch (err: any) {
