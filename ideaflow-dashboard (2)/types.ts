@@ -67,17 +67,20 @@ export interface Idea {
   buildType: BuildType;
   technologies: string[];
   submissionDate: string; // ISO String
-  
+
   // Associate Info mapped from DB
-  associateId: number; 
+  associateId: number;
   associateAccount: string; // Used for display instead of Name
   associateBusinessGroup: string; // From Associates Table (via Idea Team/Associates)
-  
+
   // Metrics
   score: number; // Actual score from DB (Mapped to 'score' column)
   likesCount: number;
   isLiked: boolean;
-  
+
+  // Search Relevance Metadata
+  matchScore?: number;
+
   // AI Analysis Fields (Optional/Computed)
   futureScope?: string;
   impactScore?: number;      // 1-10
@@ -89,4 +92,10 @@ export interface ChartDataPoint {
   name: string;
   value: number;
   color?: string;
+}
+
+export interface ExploreFilters {
+  themes: string[];
+  businessGroups: string[];
+  technologies: string[];
 }

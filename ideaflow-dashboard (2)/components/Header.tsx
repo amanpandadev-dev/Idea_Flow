@@ -1,6 +1,5 @@
-
 import React from 'react';
-import { Lightbulb, Bell, UserCircle, LogOut, Heart } from 'lucide-react';
+import { Lightbulb, Bell, UserCircle, LogOut, Heart, Sparkles } from 'lucide-react';
 
 interface HeaderProps {
   user?: { name: string; role: string } | null;
@@ -8,10 +7,11 @@ interface HeaderProps {
   onExplore?: () => void;
   onOpenWishlist?: () => void;
   onOpenProfile?: () => void;
+  onOpenProSearch?: () => void;
   likedCount?: number;
 }
 
-const Header: React.FC<HeaderProps> = ({ user, onLogout, onOpenWishlist, onOpenProfile, likedCount = 0 }) => {
+const Header: React.FC<HeaderProps> = ({ user, onLogout, onOpenWishlist, onOpenProfile, onOpenProSearch, likedCount = 0 }) => {
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -28,17 +28,27 @@ const Header: React.FC<HeaderProps> = ({ user, onLogout, onOpenWishlist, onOpenP
           
           <div className="flex items-center gap-4">
             
+            {onOpenProSearch && (
+               <button 
+                 onClick={onOpenProSearch}
+                 className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-full text-sm font-medium hover:shadow-lg hover:shadow-indigo-200 transition-all hover:-translate-y-0.5"
+               >
+                 <Sparkles className="h-4 w-4" />
+                 Pro Search
+               </button>
+            )}
+
             {onOpenWishlist && (
               <button 
                 onClick={onOpenWishlist}
                 className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative group"
                 title="My Like List"
               >
-                <Heart className="h-4 w-4 group-hover:scale-110 transition-transform" />
+                
                 <span>My Likes</span>
                 {likedCount > 0 && (
-                  <span className="ml-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
-                    {likedCount}
+                  <span >
+                    ({likedCount})
                   </span>
                 )}
               </button>
