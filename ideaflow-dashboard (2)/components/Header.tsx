@@ -1,23 +1,19 @@
 import React from 'react';
-import { Lightbulb, UserCircle, LogOut, Bot } from 'lucide-react';
+import { Lightbulb, UserCircle, LogOut, Bot, Sparkles } from 'lucide-react';
 import { NavLink, Link } from 'react-router-dom';
+
 
 interface HeaderProps {
   user?: { name: string; role: string } | null;
   onLogout?: () => void;
   onOpenWishlist?: () => void;
   onOpenProfile?: () => void;
+  onOpenProSearch?: () => void;
   likedCount?: number;
   ideaCount?: number;
 }
 
-const Header: React.FC<HeaderProps> = ({ user, onLogout, onOpenWishlist, onOpenProfile, likedCount = 0, ideaCount = 0 }) => {
-  const navLinkClass = ({ isActive }: { isActive: boolean }) =>
-    `px-3 py-2 text-sm font-medium rounded-lg transition-all ${isActive
-      ? 'bg-indigo-50 text-indigo-600'
-      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-800'
-    }`;
-
+const Header: React.FC<HeaderProps> = ({ user, onLogout, onOpenWishlist, onOpenProfile, onOpenProSearch, likedCount = 0 }) => {
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -52,17 +48,34 @@ const Header: React.FC<HeaderProps> = ({ user, onLogout, onOpenWishlist, onOpenP
           </div>
 
           <div className="flex items-center gap-4">
-            {/* Action Buttons */}
+            
+            {onOpenProSearch && (
+               <button 
+                 onClick={onOpenProSearch}
+                 className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-full text-sm font-medium hover:shadow-lg hover:shadow-indigo-200 transition-all hover:-translate-y-0.5"
+               >
+                 <Sparkles className="h-4 w-4" />
+                 Pro Search
+               </button>
+            )}
+
             {onOpenWishlist && (
               <button
                 onClick={onOpenWishlist}
-                className="px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-800 rounded-lg transition-all"
+                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative group"
                 title="My Like List"
               >
-                My Likes {likedCount > 0 && `(${likedCount})`}
+                
+                <span>My Likes</span>
+                {likedCount > 0 && (
+                  <span >
+                    ({likedCount})
+                  </span>
+                )}
               </button>
             )}
 
+            
             <div className="h-8 w-px bg-slate-200 mx-1 hidden sm:block"></div>
 
             {/* User Menu */}

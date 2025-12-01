@@ -32,6 +32,21 @@
   },
   "devDependencies": {
     "@types/express-session": "^1.18.2",
+    "@google/genai": "*",
+    "@google/generative-ai": "^0.24.1",
+    "bcryptjs": "^2.4.3",
+    "concurrently": "^8.2.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.263.1",
+    "nodemon": "^3.1.11",
+    "pg": "^8.11.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.7.2",
+    "@types/node": "^24.10.1",
     "@types/react": "^18.2.15",
     "@types/react-dom": "^18.2.7",
     "@types/react-router-dom": "^5.3.3",
@@ -39,6 +54,7 @@
     "typescript": "^5.0.2",
     "vite": "^4.4.5"
   },
+ 
   "browserslist": {
     "production": [
       ">0.2%",
