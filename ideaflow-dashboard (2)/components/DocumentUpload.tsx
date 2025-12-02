@@ -1,15 +1,16 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Upload, X, FileText, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
-import { uploadContext, resetContext, getContextStatus, findMatchingIdeas, type ContextUploadResponse, type MatchingIdeasResponse } from '../services';
+import { uploadContext, resetContext, getContextStatus, findMatchingIdeas, generateQuestions, type ContextUploadResponse, type MatchingIdeasResponse } from '../services';
 
 interface DocumentUploadProps {
     embeddingProvider: 'llama' | 'grok';
     onUploadSuccess?: (response: ContextUploadResponse) => void;
     onReset?: () => void;
     onMatchingIdeasFound?: (response: MatchingIdeasResponse) => void;
+    onQuestionsGenerated?: (questions: string[]) => void;
 }
 
-const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUploadSuccess, onReset, onMatchingIdeasFound }) => {
+const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUploadSuccess, onReset, onMatchingIdeasFound, onQuestionsGenerated }) => {
     const [file, setFile] = useState<File | null>(null);
     const [uploading, setUploading] = useState(false);
     const [uploadedContext, setUploadedContext] = useState<ContextUploadResponse | null>(null);
@@ -94,6 +95,39 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
 
         setUploading(true);
         setError(null);
+
+        try {
+            const response = await uploadContext(file, embeddingProvider);
+            setUploadedContext(response);
+            setFile(null);
+            onUploadSuccess?.(response);
+
+            // Also trigger matching ideas search
+            if (response.success) {
+                try {
+                    const matches = await findMatchingIdeas(embeddingProvider);
+                    onMatchingIdeasFound?.(matches);
+                } catch (matchErr) {
+                    console.error('Failed to find matching ideas:', matchErr);
+                }
+
+                // Generate suggested questions
+                if (onQuestionsGenerated) {
+                    try {
+                        // Pass context stats with themes
+                        const questions = await generateQuestions({ themes: response.themes }, embeddingProvider);
+                        onQuestionsGenerated(questions);
+                    } catch (qErr) {
+                        console.error('Failed to generate questions:', qErr);
+                    }
+                }
+            }
+        } catch (err: any) {
+            console.error('Upload failed:', err);
+            setError(err.message || 'Failed to upload document');
+        } finally {
+            setUploading(false);
+        }
     };
 
     const handleReset = async () => {

@@ -2,6 +2,7 @@ import express from 'express';
 import crypto from 'crypto';
 import { executeAgent, executeSimpleAgent } from '../agents/reactAgent.js';
 import sessionManager from '../services/sessionManager.js';
+import { generateQuestionsFromContext } from '../services/questionGenerator.js';
 
 console.log('✅ [Router] agentRoutes.js loaded');
 
@@ -27,7 +28,7 @@ router.post('/session', async (req, res) => {
         if (!pool) {
             return res.status(503).json({ error: true, message: 'Database not available' });
         }
-        
+
         // Create a unique ID for this specific job
         const jobId = crypto.randomUUID();
 
@@ -38,7 +39,7 @@ router.post('/session', async (req, res) => {
             history: [],
         };
         sessionManager.createSession(jobId, initialState);
-        
+
         // Immediately respond to the client with the job ID
         res.status(202).json({ success: true, jobId });
 
@@ -141,6 +142,21 @@ router.post('/query', async (req, res) => {
             message: 'Failed to process agent query',
             details: error.message
         });
+    }
+});
+
+/**
+ * POST /api/agent/generate-questions
+ * Generate suggested questions from context stats
+ */
+router.post('/generate-questions', async (req, res) => {
+    try {
+        const { contextStats, provider = 'llama' } = req.body;
+        const questions = await generateQuestionsFromContext(contextStats, provider);
+        res.json({ success: true, questions });
+    } catch (error) {
+        console.error('Failed to generate questions:', error);
+        res.status(500).json({ error: true, message: 'Failed to generate questions' });
     }
 });
 

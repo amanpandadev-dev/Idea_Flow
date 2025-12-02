@@ -1,73 +1,71 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Loader2, Bot, ChevronDown, ChevronUp, Sparkles, StopCircle, RefreshCcw, History, Trash2, X, Search, MessageSquare } from 'lucide-react';
-import { startAgentSession, getAgentSessionStatus, stopAgentSession, semanticSearchIdeas, type AgentSession, type SemanticSearchResult } from '../services';
+import { Send, Loader2, Bot, ChevronDown, ChevronUp, Sparkles, StopCircle, RefreshCcw, History, Trash2, X, Search, MessageSquare, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+    startAgentSession,
+    getAgentSessionStatus,
+    stopAgentSession,
+    semanticSearchIdeas,
+    saveSearchHistory,
+    getSearchHistory,
+    rerunSearch,
+    toggleLikeIdea,
+    type AgentSession,
+    type SemanticSearchResult,
+    type SearchHistoryEntry
+} from '../services';
+import { Idea } from '../types';
 import CitationDisplay from './CitationDisplay';
 import DocumentUpload from './DocumentUpload';
+import IdeaCard from './IdeaCard';
 
 const SESSION_STORAGE_KEY = 'agent_session_job_id';
-const HISTORY_STORAGE_KEY = 'agent_search_history';
 
 interface AgentChatProps {
+    user: any;
     onNavigateToIdea?: (ideaId: string) => void;
-}
-
-interface SearchHistoryItem {
-    id: string;
-    query: string;
-    timestamp: number;
-    session: AgentSession;
 }
 
 type SearchMode = 'agent' | 'semantic';
 
-const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
+const AgentChat: React.FC<AgentChatProps> = ({ user, onNavigateToIdea }) => {
     const [query, setQuery] = useState('');
     const [jobId, setJobId] = useState<string | null>(null);
     const [session, setSession] = useState<AgentSession | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [showReasoning, setShowReasoning] = useState(false);
-    const [embeddingProvider, setEmbeddingProvider] = useState<'llama' | 'grok'>('grok');
+    const [embeddingProvider, setEmbeddingProvider] = useState<'llama' | 'grok'>('llama');
     const [isReconnecting, setIsReconnecting] = useState(false);
-    const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
+    const [searchHistory, setSearchHistory] = useState<SearchHistoryEntry[]>([]);
     const [showHistory, setShowHistory] = useState(false);
-    const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+    const [selectedHistoryId, setSelectedHistoryId] = useState<number | null>(null);
     const [searchMode, setSearchMode] = useState<SearchMode>('agent');
     const [semanticResults, setSemanticResults] = useState<SemanticSearchResult[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
+    const [page, setPage] = useState(1);
+    const [hasMore, setHasMore] = useState(true);
 
     const pollingInterval = useRef<NodeJS.Timeout | null>(null);
 
     const isRunning = session?.status === 'running' || session?.status === 'queued' || session?.status === 'starting';
 
-    // Load search history from localStorage on mount
+    // Load search history from API
     useEffect(() => {
-        const loadHistory = () => {
-            try {
-                const stored = localStorage.getItem(HISTORY_STORAGE_KEY);
-                if (stored) {
-                    const history: SearchHistoryItem[] = JSON.parse(stored);
+        const loadHistory = async () => {
+            if (user?.emp_id) {
+                try {
+                    console.log(`[AgentChat] Loading history for user: ${user.emp_id}`);
+                    const history = await getSearchHistory(user.emp_id);
                     setSearchHistory(history);
-                    console.log(`[AgentChat] Loaded ${history.length} items from search history`);
+                } catch (err) {
+                    console.error('[AgentChat] Failed to load search history:', err);
                 }
-            } catch (err) {
-                console.error('[AgentChat] Failed to load search history:', err);
+            } else if (user) {
+                console.warn('[AgentChat] User loaded but emp_id is missing', user);
             }
         };
         loadHistory();
-    }, []);
-
-    // Save search history to localStorage whenever it changes
-    useEffect(() => {
-        if (searchHistory.length > 0) {
-            try {
-                localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(searchHistory));
-                console.log(`[AgentChat] Saved ${searchHistory.length} items to search history`);
-            } catch (err) {
-                console.error('[AgentChat] Failed to save search history:', err);
-            }
-        }
-    }, [searchHistory]);
+    }, [user]);
 
     // Polling effect
     useEffect(() => {
@@ -80,14 +78,20 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                         if (pollingInterval.current) clearInterval(pollingInterval.current);
 
                         // Add to history if completed successfully
-                        if (status.status === 'completed' && status.result) {
-                            const historyItem: SearchHistoryItem = {
-                                id: jobId,
-                                query: status.query,
-                                timestamp: Date.now(),
-                                session: status
-                            };
-                            setSearchHistory(prev => [historyItem, ...prev].slice(0, 20));
+                        if (status.status === 'completed' && status.result && user?.emp_id) {
+                            try {
+                                await saveSearchHistory({
+                                    user_emp_id: user.emp_id,
+                                    query: status.query,
+                                    embedding_provider: embeddingProvider,
+                                    session_id: jobId
+                                });
+                                // Reload history
+                                const history = await getSearchHistory(user.emp_id);
+                                setSearchHistory(history);
+                            } catch (err) {
+                                console.error('Failed to save agent history', err);
+                            }
                         }
 
                         localStorage.removeItem(SESSION_STORAGE_KEY);
@@ -135,16 +139,18 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                     if (status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled') {
                         console.log(`[AgentChat] Session ${storedJobId} already finished with status: ${status.status}`);
 
-                        if (status.status === 'completed' && status.result) {
-                            const exists = searchHistory.some(item => item.id === storedJobId);
-                            if (!exists) {
-                                const historyItem: SearchHistoryItem = {
-                                    id: storedJobId,
+                        if (status.status === 'completed' && status.result && user?.emp_id) {
+                            try {
+                                await saveSearchHistory({
+                                    user_emp_id: user.emp_id,
                                     query: status.query,
-                                    timestamp: Date.now(),
-                                    session: status
-                                };
-                                setSearchHistory(prev => [historyItem, ...prev].slice(0, 20));
+                                    embedding_provider: embeddingProvider,
+                                    session_id: storedJobId
+                                });
+                                const history = await getSearchHistory(user.emp_id);
+                                setSearchHistory(history);
+                            } catch (err) {
+                                console.error('Failed to save agent history', err);
                             }
                         }
 
@@ -157,11 +163,14 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                     console.error(`[AgentChat] Failed to reattach to session ${storedJobId}:`, err.message);
                     setIsReconnecting(false);
 
-                    if (err.message.includes('404') || err.message.includes('not found')) {
+                    // If session not found (404) or server error, clear the stale session
+                    if (err.message.includes('404') || err.message.includes('not found') || err.message.includes('Job not found')) {
                         console.warn(`[AgentChat] Session ${storedJobId} not found on server, clearing stale reference`);
                         localStorage.removeItem(SESSION_STORAGE_KEY);
                         setJobId(null);
+                        setSession(null); // Ensure session state is cleared
                     } else {
+                        // Only show error for non-404 issues
                         setError(`Failed to reconnect to session: ${err.message}`);
                     }
                 }
@@ -185,9 +194,25 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
 
             try {
                 console.log(`[AgentChat] Performing semantic search: "${query}"`);
-                const results = await semanticSearchIdeas(query.trim(), embeddingProvider, 10);
+                setPage(1);
+                setHasMore(true);
+                const results = await semanticSearchIdeas(query.trim(), embeddingProvider, 10, 1);
                 setSemanticResults(results);
+                if (results.length < 10) setHasMore(false);
                 console.log(`[AgentChat] Found ${results.length} similar ideas`);
+
+                // Save history
+                if (user?.emp_id) {
+                    await saveSearchHistory({
+                        user_emp_id: user.emp_id,
+                        query: query.trim(),
+                        embedding_provider: embeddingProvider,
+                        result_ids: results.map(r => r.id)
+                    });
+                    // Reload history
+                    const history = await getSearchHistory(user.emp_id);
+                    setSearchHistory(history);
+                }
             } catch (err: any) {
                 setError(err.message || 'Semantic search failed');
             } finally {
@@ -238,21 +263,36 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
         localStorage.removeItem('agent_last_query');
     };
 
-    const handleViewHistoryItem = (item: SearchHistoryItem) => {
-        setSession(item.session);
+    const handleViewHistoryItem = async (item: SearchHistoryEntry) => {
         setQuery(item.query);
-        setSelectedHistoryId(item.id);
+        setEmbeddingProvider(item.embedding_provider as any);
         setShowHistory(false);
         setShowReasoning(false);
-        setSearchMode('agent');
+        setSelectedHistoryId(item.id);
+
+        setIsSearching(true);
+        setSearchMode('semantic'); // Default to semantic for rerun
         setSemanticResults([]);
+        setSession(null);
+
+        try {
+            const response = await rerunSearch(item.id);
+            if (response.success && response.results) {
+                setSemanticResults(response.results);
+                console.log(`[AgentChat] Rerun found ${response.results.length} results`);
+            }
+        } catch (err: any) {
+            setError(err.message || 'Failed to rerun search');
+        } finally {
+            setIsSearching(false);
+        }
     };
 
     const handleClearHistory = () => {
         if (confirm('Are you sure you want to clear all search history?')) {
             setSearchHistory([]);
-            localStorage.removeItem(HISTORY_STORAGE_KEY);
-            console.log('[AgentChat] Search history cleared');
+            // TODO: Add API endpoint to clear history
+            console.log('[AgentChat] Search history cleared (local state only)');
         }
     };
 
@@ -263,6 +303,54 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
 
     const handleNavigate = (ideaId: string) => {
         if (onNavigateToIdea) onNavigateToIdea(ideaId);
+    };
+
+    const handleNextPage = async () => {
+        const nextPage = page + 1;
+        setIsSearching(true);
+        try {
+            const results = await semanticSearchIdeas(query.trim(), embeddingProvider, 10, nextPage);
+            setSemanticResults(results);
+            setPage(nextPage);
+        } catch (err: any) {
+            setError(err.message || 'Failed to load next page');
+        } finally {
+            setIsSearching(false);
+        }
+    };
+
+    const handlePrevPage = async () => {
+        if (page <= 1) return;
+        const prevPage = page - 1;
+        setIsSearching(true);
+        try {
+            const results = await semanticSearchIdeas(query.trim(), embeddingProvider, 10, prevPage);
+            setSemanticResults(results);
+            setPage(prevPage);
+        } catch (err: any) {
+            setError(err.message || 'Failed to load previous page');
+        } finally {
+            setIsSearching(false);
+        }
+    };
+
+    const handleLike = async (e: React.MouseEvent, idea: Idea) => {
+        e.stopPropagation();
+        try {
+            const { liked } = await toggleLikeIdea(idea.id);
+            setSemanticResults(prev => prev.map(item => {
+                if (item.id === idea.id) {
+                    return {
+                        ...item,
+                        isLiked: liked,
+                        likesCount: liked ? (item.likesCount || 0) + 1 : (item.likesCount || 0) - 1
+                    };
+                }
+                return item;
+            }));
+        } catch (err) {
+            console.error('Failed to toggle like', err);
+        }
     };
 
     const renderLoadingState = () => (
@@ -298,34 +386,33 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                 </div>
                 <div className="grid gap-3">
                     {semanticResults.map((idea) => (
-                        <div key={idea.id} className="bg-white rounded-lg border border-slate-200 p-4 hover:border-indigo-300 transition-colors cursor-pointer" onClick={() => handleNavigate(idea.id)}>
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="flex-1 min-w-0">
-                                    <h4 className="font-semibold text-slate-900 mb-1">{idea.title}</h4>
-                                    <p className="text-sm text-slate-600 line-clamp-2 mb-2">{idea.description}</p>
-                                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                                        <span className="text-slate-500">{idea.team}</span>
-                                        {idea.tags && idea.tags.length > 0 && (
-                                            <>
-                                                <span className="text-slate-300">•</span>
-                                                <div className="flex gap-1">
-                                                    {idea.tags.slice(0, 3).map((tag, idx) => (
-                                                        <span key={idx} className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded">{tag}</span>
-                                                    ))}
-                                                </div>
-                                            </>
-                                        )}
-                                    </div>
-                                </div>
-                                <div className="flex flex-col items-end gap-1">
-                                    <div className="px-2 py-1 bg-green-50 text-green-700 text-xs font-medium rounded">
-                                        {(idea.similarity * 100).toFixed(0)}% match
-                                    </div>
-                                    <span className="text-xs text-slate-400">{new Date(idea.createdAt).toLocaleDateString()}</span>
-                                </div>
-                            </div>
-                        </div>
+                        <IdeaCard
+                            key={idea.id}
+                            idea={idea}
+                            similarity={idea.similarity * 100}
+                            onClick={() => handleNavigate(idea.id)}
+                            onLike={handleLike}
+                        />
                     ))}
+                </div>
+
+                {/* Pagination Controls */}
+                <div className="flex items-center justify-between pt-4 border-t border-slate-100 mt-2">
+                    <button
+                        onClick={handlePrevPage}
+                        disabled={page === 1 || isSearching}
+                        className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+                    >
+                        <ChevronLeft className="h-4 w-4" /> Previous
+                    </button>
+                    <span className="text-sm text-slate-500 font-medium">Page {page}</span>
+                    <button
+                        onClick={handleNextPage}
+                        disabled={semanticResults.length < 10 || isSearching}
+                        className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+                    >
+                        Next <ChevronRight className="h-4 w-4" />
+                    </button>
                 </div>
             </div>
         );
@@ -448,14 +535,14 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                                 key={item.id}
                                 onClick={() => handleViewHistoryItem(item)}
                                 className={`w-full text-left p-3 rounded-lg border transition-colors ${selectedHistoryId === item.id
-                                        ? 'border-indigo-300 bg-indigo-50'
-                                        : 'border-slate-200 hover:border-indigo-200 hover:bg-slate-50'
+                                    ? 'border-indigo-300 bg-indigo-50'
+                                    : 'border-slate-200 hover:border-indigo-200 hover:bg-slate-50'
                                     }`}
                             >
                                 <div className="flex items-start justify-between gap-2">
                                     <div className="flex-1 min-w-0">
                                         <p className="text-sm font-medium text-slate-900 truncate">{item.query}</p>
-                                        <p className="text-xs text-slate-500 mt-1">{formatTimestamp(item.timestamp)}</p>
+                                        <p className="text-xs text-slate-500 mt-1">{formatTimestamp(new Date(item.created_at).getTime())}</p>
                                     </div>
                                     <div className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded">Completed</div>
                                 </div>
@@ -473,14 +560,15 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                         <Sparkles className="h-5 w-5 text-indigo-600" />
                         Suggested Questions
                     </h3>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {suggestedQuestions.map((question, idx) => (
                             <button
                                 key={idx}
                                 onClick={() => setQuery(question)}
-                                className="text-left px-3 py-2 bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-colors text-sm border border-indigo-200"
+                                className="text-left px-4 py-3 bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-colors text-sm border border-indigo-200 flex items-start gap-2 h-full"
                             >
-                                {question}
+                                <Sparkles className="h-4 w-4 mt-0.5 shrink-0 opacity-70" />
+                                <span>{question}</span>
                             </button>
                         ))}
                     </div>
@@ -493,8 +581,8 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                     <button
                         onClick={() => setSearchMode('agent')}
                         className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-colors ${searchMode === 'agent'
-                                ? 'bg-indigo-600 text-white'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                             }`}
                     >
                         <MessageSquare className="h-4 w-4" />
@@ -503,8 +591,8 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                     <button
                         onClick={() => setSearchMode('semantic')}
                         className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-colors ${searchMode === 'semantic'
-                                ? 'bg-indigo-600 text-white'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                             }`}
                     >
                         <Search className="h-4 w-4" />
@@ -541,8 +629,8 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                                 className="px-4 py-3 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                 disabled={isRunning || isSearching}
                             >
-                                <option value="grok">Grok (OpenRouter)</option>
                                 <option value="llama">Llama (Local)</option>
+                                <option value="grok">Grok (OpenRouter)</option>
                             </select>
                             <button
                                 type="submit"

@@ -42,7 +42,7 @@ const App: React.FC = () => {
       if (storedUser) setUser(JSON.parse(storedUser));
     }
   }, []);
-  
+
   useEffect(() => {
     if (window.location.hash === '#register') setAuthView('register');
   }, []);
@@ -76,7 +76,7 @@ const MainApp: React.FC<{ user: UserProfile | null, onLogout: () => void }> = ({
   const [likedIdeas, setLikedIdeas] = useState<Idea[]>([]);
   const [allBusinessGroups, setAllBusinessGroups] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  
+
   const navigate = useNavigate();
 
   // Modal states
@@ -108,7 +108,7 @@ const MainApp: React.FC<{ user: UserProfile | null, onLogout: () => void }> = ({
   }, [loadData]);
 
   const handleViewDetails = (idea: Idea) => navigate(`/idea/${idea.id}`);
-  
+
   const handleViewAssociate = async (associateId: number) => {
     setIsAssociateModalOpen(true);
     setAssociateLoading(true);
@@ -125,7 +125,7 @@ const MainApp: React.FC<{ user: UserProfile | null, onLogout: () => void }> = ({
       setCurrentUserProfile(await fetchCurrentUser());
     } catch (err) { console.error("Failed to fetch user profile", err); }
   };
-  
+
   const handleOpenWishlist = async () => {
     setIsWishlistOpen(true);
     try {
@@ -144,21 +144,21 @@ const MainApp: React.FC<{ user: UserProfile | null, onLogout: () => void }> = ({
         ideaCount={ideas.length}
       />
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-         {loading ? (
-            <div className="flex items-center justify-center pt-20"><Loader2 className="h-10 w-10 animate-spin text-indigo-600" /></div>
-         ) : (
-            <Routes>
-                <Route path="/" element={<StatsSection data={ideas} onOpenChart={(id) => navigate(`/chart/${id}`)} />} />
-                <Route path="/ideas" element={<IdeaTable data={ideas} onViewDetails={handleViewDetails} onOpenExplore={() => setIsExploreOpen(true)} onRefreshData={loadData} isGlobalFilterActive={false}/>} />
-                <Route path="/agent" element={<AgentChat onNavigateToIdea={(ideaId) => navigate(`/idea/${ideaId}`)} />} />
-                <Route path="/idea/:ideaId" element={<IdeaDetailsWrapper ideas={ideas.concat(likedIdeas)} onViewAssociate={handleViewAssociate} onNavigateToIdea={(idea) => navigate(`/idea/${idea.id}`)} onRefreshData={loadData} />} />
-                <Route path="/chart/:chartId" element={<ChartDetailWrapper ideas={ideas} />} />
-            </Routes>
-         )}
+        {loading ? (
+          <div className="flex items-center justify-center pt-20"><Loader2 className="h-10 w-10 animate-spin text-indigo-600" /></div>
+        ) : (
+          <Routes>
+            <Route path="/" element={<StatsSection data={ideas} onOpenChart={(id) => navigate(`/chart/${id}`)} />} />
+            <Route path="/ideas" element={<IdeaTable data={ideas} onViewDetails={handleViewDetails} onOpenExplore={() => setIsExploreOpen(true)} onRefreshData={loadData} isGlobalFilterActive={false} />} />
+            <Route path="/agent" element={<AgentChat user={user} onNavigateToIdea={(ideaId) => navigate(`/idea/${ideaId}`, { state: { from: '/agent' } })} />} />
+            <Route path="/idea/:ideaId" element={<IdeaDetailsWrapper ideas={ideas.concat(likedIdeas)} onViewAssociate={handleViewAssociate} onNavigateToIdea={(idea) => navigate(`/idea/${idea.id}`)} onRefreshData={loadData} />} />
+            <Route path="/chart/:chartId" element={<ChartDetailWrapper ideas={ideas} />} />
+          </Routes>
+        )}
       </main>
 
       {/* Global Modals */}
-      <ExploreModal isOpen={isExploreOpen} onClose={() => setIsExploreOpen(false)} onApplyFilters={() => {}} initialFilters={{themes: [], businessGroups: [], technologies: []}} availableTechnologies={[]} availableThemes={[]} availableBusinessGroups={allBusinessGroups} />
+      <ExploreModal isOpen={isExploreOpen} onClose={() => setIsExploreOpen(false)} onApplyFilters={() => { }} initialFilters={{ themes: [], businessGroups: [], technologies: [] }} availableTechnologies={[]} availableThemes={[]} availableBusinessGroups={allBusinessGroups} />
       {isAssociateModalOpen && <AssociateModal associate={selectedAssociate} loading={associateLoading} onClose={() => setIsAssociateModalOpen(false)} />}
       {isProfileModalOpen && <UserProfileModal user={currentUserProfile} isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} />}
       {isWishlistOpen && <WishlistModal isOpen={isWishlistOpen} onClose={() => setIsWishlistOpen(false)} likedIdeas={likedIdeas} onViewDetails={handleViewDetails} onRefreshData={loadData} />}
@@ -170,8 +170,18 @@ const MainApp: React.FC<{ user: UserProfile | null, onLogout: () => void }> = ({
 const IdeaDetailsWrapper = (props: any) => {
   const { ideaId } = useParams<{ ideaId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const idea = props.ideas.find((i: Idea) => i.id === ideaId);
-  return idea ? <IdeaDetails {...props} idea={idea} onBack={() => navigate('/ideas')} /> : <div>Idea not found</div>;
+
+  const handleBack = () => {
+    if (location.state?.from) {
+      navigate(location.state.from);
+    } else {
+      navigate('/ideas');
+    }
+  };
+
+  return idea ? <IdeaDetails {...props} idea={idea} onBack={handleBack} /> : <div>Idea not found</div>;
 };
 
 const ChartDetailWrapper = (props: any) => {

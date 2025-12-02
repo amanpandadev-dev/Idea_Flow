@@ -9,7 +9,8 @@ const router = express.Router();
  */
 router.post('/semantic-search', async (req, res) => {
     try {
-        const { query, embeddingProvider = 'grok', limit = 10 } = req.body;
+        const { query, embeddingProvider = 'grok', limit = 10, page = 1, useDocumentContext = false } = req.body;
+        const sessionId = req.session?.id;
 
         if (!query || typeof query !== 'string' || query.trim().length === 0) {
             return res.status(400).json({
@@ -18,7 +19,7 @@ router.post('/semantic-search', async (req, res) => {
             });
         }
 
-        console.log(`[SemanticSearchRoute] Searching for: "${query}" using ${embeddingProvider}`);
+        console.log(`[SemanticSearchRoute] Searching for: "${query}" using ${embeddingProvider} (Context: ${useDocumentContext}, Page: ${page})`);
 
         // Get ChromaDB and database instances from app
         const chromaClient = req.app.get('chromaClient');
@@ -31,12 +32,19 @@ router.post('/semantic-search', async (req, res) => {
             });
         }
 
+        const limitVal = parseInt(limit) || 10;
+        const pageVal = parseInt(page) || 1;
+        const offset = (pageVal - 1) * limitVal;
+
         const results = await searchSimilarIdeas(
             chromaClient,
             db,
             query.trim(),
             embeddingProvider,
-            parseInt(limit) || 10
+            limitVal,
+            offset,
+            useDocumentContext,
+            sessionId
         );
 
         res.json({

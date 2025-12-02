@@ -19,7 +19,7 @@ const handleResponse = async (response: Response) => {
   if (contentType && contentType.includes("application/json")) {
     const data = await response.json();
     if (!response.ok) {
-      throw new Error(data.msg || data.error || 'API Request Failed');
+      throw new Error(data.message || data.msg || (typeof data.error === 'string' ? data.error : 'API Request Failed'));
     }
     return data;
   } else {
@@ -141,7 +141,7 @@ export interface AgentResponse {
 
 export interface AgentSession {
   id: string;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'queued' | 'starting' | 'running' | 'completed' | 'failed' | 'cancelled';
   query: string;
   history: string[];
   result: AgentResponse | null;
@@ -278,29 +278,78 @@ export const findMatchingIdeas = async (embeddingProvider: 'llama' | 'grok'): Pr
 };
 
 // Semantic search for similar idea submissions
-export interface SemanticSearchResult {
-  id: string;
-  title: string;
-  description: string;
-  team: string;
-  tags: string[];
+export interface SemanticSearchResult extends Idea {
   similarity: number;
-  createdAt: string;
-  category?: string;
-  status?: string;
+  vectorScore?: number;
+  bm25Score?: number;
+  tags?: string[]; // Optional as it might not be in Idea
+  team?: string;   // Optional alias for businessGroup if needed
 }
 
 export const semanticSearchIdeas = async (
   query: string,
   embeddingProvider: 'llama' | 'grok',
-  limit: number = 10
+  limit: number = 10,
+  page: number = 1
 ): Promise<SemanticSearchResult[]> => {
   const response = await fetch(`${API_URL}/ideas/semantic-search`, {
     method: 'POST',
     headers: getAuthHeaders(),
-    body: JSON.stringify({ query, embeddingProvider, limit })
+    body: JSON.stringify({ query, embeddingProvider, limit, page })
   });
   const data = await handleResponse(response);
   return data.results || [];
+};
+
+// Search History API
+
+export interface SearchHistoryEntry {
+  id: number;
+  user_emp_id: string;
+  query: string;
+  embedding_provider: string;
+  session_id?: string;
+  result_ids?: any;
+  created_at: string;
+}
+
+export const saveSearchHistory = async (data: {
+  user_emp_id: string;
+  query: string;
+  embedding_provider: string;
+  session_id?: string;
+  result_ids?: string[];
+}): Promise<{ success: boolean }> => {
+  const response = await fetch(`${API_URL}/search/history`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data)
+  });
+  return handleResponse(response);
+};
+
+export const getSearchHistory = async (user_emp_id: string): Promise<SearchHistoryEntry[]> => {
+  const response = await fetch(`${API_URL}/search/history?user=${user_emp_id}`, {
+    headers: getAuthHeaders()
+  });
+  return handleResponse(response);
+};
+
+export const rerunSearch = async (id: number): Promise<{ success: boolean; query: string; results: SemanticSearchResult[] }> => {
+  const response = await fetch(`${API_URL}/search/history/${id}/rerun`, {
+    method: 'POST',
+    headers: getAuthHeaders()
+  });
+  return handleResponse(response);
+};
+
+export const generateQuestions = async (contextStats: any, provider: 'llama' | 'grok'): Promise<string[]> => {
+  const response = await fetch(`${API_URL}/agent/generate-questions`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ contextStats, provider })
+  });
+  const data = await handleResponse(response);
+  return data.questions || [];
 };
 

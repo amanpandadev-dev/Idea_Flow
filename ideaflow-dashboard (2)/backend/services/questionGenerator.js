@@ -1,3 +1,5 @@
+import { generateChatCompletion, getModelNames } from '../config/ollama.js';
+
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 /**
@@ -9,11 +11,7 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 export async function generateQuestionsFromContext(contextStats, provider = 'grok') {
     if (!contextStats || !contextStats.themes || contextStats.themes.length === 0) {
         console.log('[QuestionGenerator] No themes available, returning default questions');
-        return [
-            'What are the main topics covered in this document?',
-            'How can these concepts be applied to our business?',
-            'What innovations are mentioned in this content?'
-        ];
+        return getDefaultQuestions('innovation, business strategy');
     }
 
     const themes = contextStats.themes.join(', ');
@@ -26,10 +24,11 @@ Requirements:
 - Open-ended and exploratory
 - Relevant for business/innovation context
 - Actionable and thought-provoking
-
-Return ONLY the questions, one per line, without numbering or bullets.`;
+- Return ONLY the questions, one per line, without numbering or bullets.`;
 
     try {
+        let content = '';
+
         if (provider === 'grok' && OPENROUTER_API_KEY) {
             console.log('[QuestionGenerator] Generating questions using Grok...');
             const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -56,22 +55,30 @@ Return ONLY the questions, one per line, without numbering or bullets.`;
             }
 
             const data = await response.json();
-            const content = data.choices[0]?.message?.content || '';
+            content = data.choices[0]?.message?.content || '';
 
-            // Parse questions from response
-            const questions = content
-                .split('\n')
-                .map(q => q.trim())
-                .filter(q => q.length > 10 && q.endsWith('?'))
-                .slice(0, 4);
-
-            console.log(`[QuestionGenerator] Generated ${questions.length} questions`);
-            return questions.length > 0 ? questions : getDefaultQuestions(themes);
+        } else if (provider === 'llama') {
+            console.log('[QuestionGenerator] Generating questions using Llama...');
+            const { reasoning: modelName } = getModelNames();
+            const messages = [{ role: 'user', content: prompt }];
+            const completion = await generateChatCompletion(messages, modelName, { temperature: 0.7, max_tokens: 300 });
+            content = completion.message.content;
         } else {
             // Fallback to template-based questions
-            console.log('[QuestionGenerator] Using template-based questions');
+            console.log('[QuestionGenerator] Using template-based questions (Provider not supported or key missing)');
             return getDefaultQuestions(themes);
         }
+
+        // Parse questions from response
+        const questions = content
+            .split('\n')
+            .map(q => q.trim())
+            .filter(q => q.length > 10 && q.endsWith('?'))
+            .slice(0, 4);
+
+        console.log(`[QuestionGenerator] Generated ${questions.length} questions`);
+        return questions.length > 0 ? questions : getDefaultQuestions(themes);
+
     } catch (error) {
         console.error('[QuestionGenerator] Error generating questions:', error.message);
         return getDefaultQuestions(themes);

@@ -15,6 +15,8 @@ import { initChromaDB } from './backend/config/chroma.js';
 import contextRoutes from './backend/routes/contextRoutes.js';
 import agentRoutes from './backend/routes/agentRoutes.js';
 import semanticSearchRoutes from './backend/routes/semanticSearchRoutes.js';
+import searchHistoryRoutes from './backend/routes/searchHistoryRoutes.js';
+import { reindexAllIdeas } from './backend/services/indexer.js';
 
 const { Pool } = pg;
 const app = express();
@@ -78,64 +80,17 @@ const chromaClient = await initChromaDB();
 app.set('chromaClient', chromaClient);
 app.set('db', pool);
 
-
+// Start background re-indexing
+reindexAllIdeas(pool, chromaClient).catch(err => console.error('Background indexing failed:', err));
 
 // --- API Routes ---
 // New Agent and Context routes
 app.use('/api/context', contextRoutes);
 app.use('/api/agent', agentRoutes);
 app.use('/api/ideas', semanticSearchRoutes);
+app.use('/api/search/history', searchHistoryRoutes);
 
-
-// --- Helpers ---
-
-const randomScore = () => Math.floor(Math.random() * 5) + 6;
-
-// Helper: Generate synthetic future scope
-const generateFutureScope = (domain) => {
-  const scopes = [
-    `Integration with wider enterprise ecosystems to enable cross-functional data synergy in ${domain}.`,
-    "Scaling to support multi-tenant architecture and 3rd-party API monetization.",
-    "Incorporating advanced reinforcement learning models to automate decision-making loops.",
-    "Expansion into mobile-first experiences with offline capabilities for field workers.",
-    "Adoption of edge computing principles to reduce latency and improve real-time processing."
-  ];
-  return scopes[Math.floor(Math.random() * scopes.length)];
-};
-
-// Map DB row to Frontend Idea Interface
-const mapDBToFrontend = (row) => {
-  // Safe integer parsing helper
-  const safeInt = (val) => (val !== null && val !== undefined) ? parseInt(val, 10) : 0;
-
-  return {
-    id: `IDEA-${row.idea_id}`,
-    dbId: row.idea_id,
-    title: row.title,
-    description: row.summary || '',
-    domain: row.challenge_opportunity || 'Other',
-    status: row.build_phase || 'Submitted',
-    businessGroup: row.idea_bg || 'Corporate Functions',
-    buildType: row.build_preference || 'New Solution / IP',
-    technologies: row.code_preference ? (row.code_preference.includes(',') ? row.code_preference.split(',').map(s => s.trim()) : [row.code_preference]) : [],
-    submissionDate: row.created_at,
-
-    // Mapped Associate Info
-    associateId: row.associate_id,
-    associateAccount: row.account || 'Unknown',
-    associateBusinessGroup: row.assoc_bg || 'Unknown',
-
-    // Metrics
-    score: row.idea_score !== undefined && row.idea_score !== null ? safeInt(row.idea_score) : 0,
-    likesCount: safeInt(row.likes_count),
-    isLiked: !!row.is_liked,
-
-    futureScope: generateFutureScope(row.challenge_opportunity),
-    impactScore: randomScore(),
-    confidenceScore: randomScore(),
-    feasibilityScore: randomScore()
-  };
-};
+import { mapDBToFrontend } from './backend/utils/mappers.js';
 
 // Middleware to verify Token
 const auth = (req, res, next) => {
