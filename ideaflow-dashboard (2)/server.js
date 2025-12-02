@@ -15,14 +15,19 @@ import { initChromaDB } from './backend/config/chroma.js';
 import contextRoutes from './backend/routes/contextRoutes.js';
 import agentRoutes from './backend/routes/agentRoutes.js';
 import semanticSearchRoutes from './backend/routes/semanticSearchRoutes.js';
+import advancedSearchRoutes from './backend/routes/advancedSearchRoutes.js';
 
 const { Pool } = pg;
 const app = express();
 const port = process.env.PORT || 3001;
 
 // --- Environment Variable Validation ---
-const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey123';
-const REFRESH_SECRET = process.env.REFRESH_SECRET || 'refreshsecretkey456'; // New Secret
+if (!process.env.JWT_SECRET || !process.env.REFRESH_SECRET) {
+  console.error('❌ CRITICAL: JWT_SECRET and REFRESH_SECRET must be set in .env file');
+  process.exit(1);
+}
+const JWT_SECRET = process.env.JWT_SECRET;
+const REFRESH_SECRET = process.env.REFRESH_SECRET;
 
 // Initialize Google GenAI
 let ai = null;
@@ -47,6 +52,18 @@ const __dirname = path.dirname(__filename);
 app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
 app.use(express.json());
 
+// Session middleware (required for agent routes)
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
 // Database Connection Management
 let pool;
 
@@ -55,9 +72,22 @@ let pool;
 if (process.env.DATABASE_URL) {
   pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+    // Connection pool configuration
+    max: 20, // Maximum number of clients in the pool
+    idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+    connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection cannot be established
   });
   console.log("✅ Database configured. Attempting to connect...");
+
+  // Test database connection
+  pool.query('SELECT NOW()', (err, res) => {
+    if (err) {
+      console.error('❌ Database connection failed:', err.message);
+    } else {
+      console.log('✅ Database connected successfully');
+    }
+  });
 } else {
   console.warn("⚠️ No DATABASE_URL found in .env file.");
 }
@@ -68,15 +98,22 @@ const chromaClient = await initChromaDB();
 app.set('chromaClient', chromaClient);
 app.set('db', pool);
 
+// Make pool available via app.locals for agent routes
+app.locals.pool = pool;
+
 
 
 // --- API Routes ---
 // New Agent and Context routes
 app.use('/api/context', contextRoutes);
 app.use('/api/agent', agentRoutes);
-app.use('/api/ideas', semanticSearchRoutes);
+app.use('/api/ideas', advancedSearchRoutes); // Advanced search with NLP
+app.use('/api/ideas', semanticSearchRoutes); // Legacy semantic search
 // --- Helpers ---
 
+// --- ADVANCED SCORING ALGORITHMS ---
+
+// Cosine Similarity for Vector Embeddings
 const cosineSimilarity = (vecA, vecB) => {
   if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
   let dot = 0;
@@ -91,38 +128,125 @@ const cosineSimilarity = (vecA, vecB) => {
   return magnitude === 0 ? 0 : dot / magnitude;
 };
 
-// Helper: Get Embedding
+// BM25+ Scoring Algorithm
+// BM25+ is an improved version of BM25 that handles edge cases better
+// Parameters:
+// - k1: Term frequency saturation parameter (typically 1.2-2.0)
+// - b: Length normalization parameter (typically 0.75)
+// - delta: Lower bound for term frequency normalization (typically 0.5-1.0)
+const calculateBM25Plus = (termFreq, docLength, avgDocLength, totalDocs, docsWithTerm, k1 = 1.5, b = 0.75, delta = 0.5) => {
+  // IDF (Inverse Document Frequency) calculation
+  // Using BM25+ variant which adds smoothing
+  const idf = Math.log((totalDocs - docsWithTerm + 0.5) / (docsWithTerm + 0.5) + 1);
+
+  // Length normalization
+  const lengthNorm = 1 - b + b * (docLength / avgDocLength);
+
+  // BM25+ formula with delta parameter for better handling of term frequency
+  const tfComponent = ((k1 + 1) * termFreq) / (k1 * lengthNorm + termFreq);
+  const bm25Plus = idf * (tfComponent + delta);
+
+  return Math.max(0, bm25Plus);
+};
+
+// Reciprocal Rank Fusion (RRF)
+// Combines multiple ranked lists into a single ranking
+// k parameter controls the impact of rank position (typically 60)
+const reciprocalRankFusion = (rankedLists, k = 60) => {
+  const scores = new Map();
+
+  rankedLists.forEach(rankedList => {
+    rankedList.forEach((item, index) => {
+      const rank = index + 1;
+      const rrfScore = 1 / (k + rank);
+
+      const currentScore = scores.get(item.id) || 0;
+      scores.set(item.id, currentScore + rrfScore);
+    });
+  });
+
+  return scores;
+};
+
+// Normalize scores to 0-1 range
+const normalizeScores = (scores) => {
+  const values = Array.from(scores.values());
+  if (values.length === 0) return scores;
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min;
+
+  if (range === 0) return scores;
+
+  const normalized = new Map();
+  scores.forEach((score, id) => {
+    normalized.set(id, (score - min) / range);
+  });
+
+  return normalized;
+};
+
+// Helper: Get Embedding (disabled for free tier - using Gemini 2.0 Flash for semantic scoring instead)
 async function getEmbedding(text) {
-  if (!ai || !aiAvailable || !text) return [];
+  // Free tier doesn't support text-embedding-004
+  // Return empty array - similar ideas will use keyword matching
+  return [];
+}
+
+// Helper: Get semantic similarity score using Gemini 2.0 Flash
+async function getSemanticScore(text1, text2) {
+  if (!ai || !aiAvailable || !text1 || !text2) return 0;
   try {
-    const model = ai.getGenerativeModel({ model: "text-embedding-004" });
-    const result = await model.embedContent(text);
-    if (result && result.embedding && result.embedding.values) {
-      return result.embedding.values;
-    }
-    return [];
+    const model = ai.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    const prompt = `Rate the semantic similarity between these two texts on a scale of 0-1.
+Text 1: "${text1.substring(0, 300)}"
+Text 2: "${text2.substring(0, 300)}"
+Return ONLY a decimal number between 0 and 1. Nothing else.`;
+    
+    const result = await model.generateContent(prompt);
+    const score = parseFloat(result.response.text().trim());
+    return isNaN(score) ? 0 : Math.min(1, Math.max(0, score));
   } catch (e) {
-    if (e.message.includes("403") || e.message.includes("PERMISSION_DENIED")) {
-      aiAvailable = false;
-    }
-    return [];
+    console.error('[SemanticScore] Error:', e.message);
+    return 0;
   }
 }
 
-// Helper: AI Query Refinement
+// Helper: Enhanced AI Query Refinement with NLP
 async function refineQueryWithAI(rawQuery) {
   if (!ai || !aiAvailable) return rawQuery;
   try {
-    const model = ai.getGenerativeModel({ model: "gemini-2.5-flash" });
-    const result = await model.generateContent(`
-      You are a search query optimizer.
-      Task: Correct spelling errors and standardize terms.
-      Input: "${rawQuery}"
-      Return ONLY the refined keywords separated by spaces.
-    `);
+    const model = ai.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    const prompt = `You are an intelligent search query optimizer for an innovation idea repository.
+
+Task: Analyze and enhance the user's search query to improve search results.
+
+User Query: "${rawQuery}"
+
+Instructions:
+1. Fix any spelling errors
+2. Expand abbreviations and acronyms (e.g., "AI" → "artificial intelligence", "ML" → "machine learning")
+3. Add relevant synonyms and related terms
+4. Identify the core intent and key concepts
+5. Normalize technical terms to standard industry terminology
+
+Return ONLY the enhanced search terms as a single line, separated by spaces. Include both the original corrected terms and relevant expansions.
+
+Example:
+Input: "AI chatbot for custmer support"
+Output: artificial intelligence AI chatbot conversational agent customer support service helpdesk
+
+Enhanced Query:`;
+
+    const result = await model.generateContent(prompt);
     if (!result || !result.response) return rawQuery;
-    return result.response.text().trim();
+
+    const refined = result.response.text().trim();
+    console.log(`[NLP] Original: "${rawQuery}" → Refined: "${refined}"`);
+    return refined || rawQuery;
   } catch (e) {
+    console.error("[NLP] Query refinement failed:", e.message);
     if (e.message.includes("403")) aiAvailable = false;
     return rawQuery;
   }
@@ -306,188 +430,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
     res.status(500).send('Server error');
   }
 });
-
-// --- CORE FEATURE: ROBUST HYBRID SEARCH ---
-app.get('/api/ideas/search', auth, async (req, res) => {
-  console.log("[Search] Request received");
-  if (!pool) return res.status(503).json({ error: 'No database connection' });
-
-  try {
-    const { q, themes, businessGroups, technologies } = req.query;
-    const userId = req.user ? req.user.user.emp_id : '';
-    console.log(`[Search] Query: "${q}", User: ${userId}`);
-
-    // Parse filters
-    const filterThemes = themes ? JSON.parse(themes) : [];
-    const filterBGs = businessGroups ? JSON.parse(businessGroups) : [];
-    const filterTech = technologies ? JSON.parse(technologies) : [];
-
-    if (!q) return res.redirect('/api/ideas');
-
-    // 1. Refine Query (Spelling correction & Concept extraction)
-    const refinedQuery = await refineQueryWithAI(q.toString());
-    console.log(`[Search] Refined Query: "${refinedQuery}"`);
-
-    // 2. Generate Query Embedding (for accurate Re-Ranking)
-    let queryEmbedding = [];
-    if (aiAvailable) {
-      queryEmbedding = await getEmbedding(q.toString());
-      console.log(`[Search] Embedding generated: ${queryEmbedding.length > 0}`);
-    }
-
-    // 3. Broad Retrieval (SQL FTS)
-    // We get top 50 candidates using keyword matching to filter irrelevant data fast.
-    const terms = refinedQuery.replace(/[^\w\s]/gi, '').split(/\s+/).filter(t => t.trim().length > 0);
-    const broadTsQuery = terms.length > 0 ? terms.join(' | ') : refinedQuery;
-
-    // Construct Filter Clauses
-    let filterClauses = '';
-    const filterParams = [refinedQuery, broadTsQuery];
-    let paramIdx = 3;
-
-    if (filterThemes.length > 0) {
-      filterClauses += ` AND i.challenge_opportunity = ANY($${paramIdx})`;
-      filterParams.push(filterThemes);
-      paramIdx++;
-    }
-    if (filterBGs.length > 0) {
-      filterClauses += ` AND i.business_group = ANY($${paramIdx})`;
-      filterParams.push(filterBGs);
-      paramIdx++;
-    }
-    // Technology filter (Text search within code_preference)
-    if (filterTech.length > 0) {
-      // This is a bit rough for CSV strings, but works for broad filtering
-      const techConditions = filterTech.map(() => `i.code_preference ILIKE $${paramIdx}`).join(' OR ');
-      filterClauses += ` AND (${techConditions})`;
-      filterTech.forEach(t => {
-        filterParams.push(`%${t}%`);
-        paramIdx++;
-      });
-    }
-
-    const hybridQuery = `
-      SELECT 
-        i.idea_id,
-        (
-          ts_rank_cd(to_tsvector('english', 
-            COALESCE(i.title, '') || ' ' || 
-            COALESCE(i.summary, '') || ' ' || 
-            COALESCE(i.challenge_opportunity, '') || ' ' || 
-            COALESCE(i.business_group, '')
-          ), websearch_to_tsquery('english', $1)) * 2.0
-          +
-          ts_rank(to_tsvector('english', 
-            COALESCE(i.title, '') || ' ' || 
-            COALESCE(i.summary, '') || ' ' || 
-            COALESCE(i.challenge_opportunity, '') || ' ' || 
-            COALESCE(i.code_preference, '')
-          ), to_tsquery('english', $2))
-        ) as rank_score
-      FROM ideas i
-      WHERE 
-        (
-            to_tsvector('english', 
-                COALESCE(i.title, '') || ' ' || 
-                COALESCE(i.summary, '') || ' ' || 
-                COALESCE(i.challenge_opportunity, '') || ' ' || 
-                COALESCE(i.code_preference, '') || ' ' || 
-                COALESCE(i.business_group, '')
-            ) @@ websearch_to_tsquery('english', $1)
-            OR
-            to_tsvector('english', 
-                COALESCE(i.title, '') || ' ' || 
-                COALESCE(i.summary, '') || ' ' || 
-                COALESCE(i.challenge_opportunity, '') || ' ' || 
-                COALESCE(i.code_preference, '')
-            ) @@ to_tsquery('english', $2)
-        )
-        ${filterClauses}
-      ORDER BY rank_score DESC
-      LIMIT 100
-    `;
-
-    const searchRes = await pool.query(hybridQuery, filterParams);
-    const ideaIds = searchRes.rows.map(r => r.idea_id);
-    console.log(`[Search] Broad retrieval found ${ideaIds.length} candidates`);
-
-    if (ideaIds.length === 0) return res.json({ results: [], facets: {} });
-
-    // 4. Fetch Full Data
-    const dataQuery = `
-      SELECT DISTINCT ON (i.idea_id)
-        i.score as idea_score, 
-        i.*,
-        i.business_group as idea_bg,
-        a.associate_id,
-        a.account,
-        a.parent_ou,
-        it.business_group as assoc_bg,
-        (SELECT COUNT(*) FROM likes WHERE idea_id = i.idea_id) as likes_count,
-        (EXISTS (SELECT 1 FROM likes WHERE idea_id = i.idea_id AND user_id = $1)) as is_liked
-      FROM ideas i
-      LEFT JOIN idea_team it ON i.idea_id = it.idea_id
-      LEFT JOIN associates a ON it.associate_id = a.associate_id
-      WHERE i.idea_id = ANY($2::int[])
-    `;
-
-    const dataRes = await pool.query(dataQuery, [userId, ideaIds]);
-    const candidates = dataRes.rows;
-
-    // 5. Semantic Re-Ranking (The Better Match Metric)
-    // If embeddings are available, calculate Cosine Similarity for each candidate.
-    // If not, fall back to normalized SQL Rank.
-    let scoredResults = [];
-
-    if (aiAvailable && queryEmbedding.length > 0) {
-      // Calculate Semantic Score for each
-      const resultsWithSemanticScore = await Promise.all(candidates.map(async (row) => {
-        const text = `${row.title}: ${row.challenge_opportunity || ''} ${row.summary || ''}`;
-        const docVec = await getEmbedding(text);
-
-        let similarity = 0;
-        if (docVec.length > 0) {
-          similarity = cosineSimilarity(queryEmbedding, docVec);
-        }
-
-        // Convert 0-1 to 0-100
-        const matchScore = Math.round(similarity * 100);
-        return { ...row, matchScore: Math.max(matchScore, 0) };
-      }));
-      scoredResults = resultsWithSemanticScore;
-    } else {
-      // Fallback to SQL Rank Normalization
-      scoredResults = candidates.map(row => {
-        const match = searchRes.rows.find(r => r.idea_id === row.idea_id);
-        // Rough normalization of TS_RANK (usually 0.1 to 1.0+)
-        const matchScore = match ? Math.min(Math.round(match.rank_score * 50), 90) : 0;
-        return { ...row, matchScore };
-      });
-    }
-
-    // Sort by Match Score
-    const finalResults = scoredResults
-      .map(row => mapDBToFrontend(row, row.matchScore))
-      .sort((a, b) => b.matchScore - a.matchScore);
-
-    // Facets Logic
-    const facets = { businessGroups: {}, technologies: {}, themes: {} };
-    finalResults.forEach(item => {
-      facets.businessGroups[item.businessGroup] = (facets.businessGroups[item.businessGroup] || 0) + 1;
-      facets.themes[item.domain] = (facets.themes[item.domain] || 0) + 1;
-      item.technologies.forEach(t => facets.technologies[t] = (facets.technologies[t] || 0) + 1);
-    });
-
-    console.log(`[Search] Returning ${finalResults.length} results`);
-    res.json({ results: finalResults, facets });
-
-  } catch (err) {
-    console.error("Hybrid Search Error:", err);
-    res.status(500).json({ error: 'Search failed' });
-  }
-});
-
-// --- SIMILAR IDEAS (Vector + Hybrid) ---
+// 5. Similar Ideas
 app.get('/api/ideas/:id/similar', auth, async (req, res) => {
   console.log(`[Similar] Request for idea: ${req.params.id}`);
   if (!pool) return res.status(503).json({ error: 'No database connection' });
@@ -598,7 +541,7 @@ app.get('/api/ideas/:id/similar', auth, async (req, res) => {
   }
 });
 
-// Standard Ideas List (Default View)
+// 6. Standard Ideas List (Default View)
 app.get('/api/ideas', auth, async (req, res) => {
   console.log("[Ideas] Fetching all ideas");
   if (!pool) return res.status(503).json({ error: 'No database connection' });
@@ -629,7 +572,7 @@ app.get('/api/ideas', auth, async (req, res) => {
   }
 });
 
-// Other Endpoints
+// 7. Other Endpoints
 app.get('/api/business-groups', auth, async (req, res) => {
   if (!pool) return res.status(503).json({ error: 'No database connection' });
   try {
@@ -683,14 +626,46 @@ app.post('/api/ideas/:id/like', auth, async (req, res) => {
   } catch (err) { res.status(500).send('Server Error'); }
 });
 
+// 404 Handler
 app.use('/api/*', (req, res) => res.status(404).json({ msg: 'API Endpoint not found' }));
-process.on('uncaughtException', (err) => console.error('UNCAUGHT EXCEPTION:', err));
-app.get('/', (req, res) => res.send('API Running. Use port 5173 for Frontend.'));
 
+// Global error handlers
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('UNHANDLED REJECTION:', err);
+  process.exit(1);
+});
+
+// Health check endpoint
+app.get('/', (req, res) => res.json({
+  status: 'ok',
+  message: 'IdeaFlow API Running',
+  version: '1.0.0',
+  timestamp: new Date().toISOString()
+}));
+
+// Start server
 try {
-  app.listen(port, () => console.log(`\n🚀 Server running on port ${port}`));
+  app.listen(port, () => {
+    console.log(`\n🚀 Server running on port ${port}`);
+    console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🔐 JWT Authentication: Enabled`);
+    console.log(`🤖 AI Features: ${aiAvailable ? 'Enabled' : 'Disabled'}`);
+  });
 } catch (e) {
   console.error('❌ Server startup error:', e);
   process.exit(1);
 }
+
+// Middleware imports moved to top - these are commented out for now
+// Uncomment when ready to use:
+// import logger from './backend/utils/logger.js';
+// import { errorHandler } from './backend/middleware/errorHandler.js';
+// import { apiLimiter, authLimiter } from './backend/middleware/rateLimiter.js';
+// app.use('/api/', apiLimiter);
+// app.use(errorHandler);
 

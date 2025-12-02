@@ -7,9 +7,10 @@ interface DocumentUploadProps {
     onUploadSuccess?: (response: ContextUploadResponse) => void;
     onReset?: () => void;
     onMatchingIdeasFound?: (response: MatchingIdeasResponse) => void;
+    onQuestionsGenerated?: (questions: string[]) => void;
 }
 
-const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUploadSuccess, onReset, onMatchingIdeasFound }) => {
+const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUploadSuccess, onReset, onMatchingIdeasFound, onQuestionsGenerated }) => {
     const [file, setFile] = useState<File | null>(null);
     const [uploading, setUploading] = useState(false);
     const [uploadedContext, setUploadedContext] = useState<ContextUploadResponse | null>(null);
@@ -94,6 +95,32 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
 
         setUploading(true);
         setError(null);
+        
+        try {
+            const response = await uploadContext(file, embeddingProvider);
+            setUploadedContext(response);
+            setFile(null);
+            onUploadSuccess?.(response);
+            
+            // Pass suggested questions to parent component
+            if (response.suggestedQuestions && response.suggestedQuestions.length > 0) {
+                onQuestionsGenerated?.(response.suggestedQuestions);
+            }
+            
+            // Try to find matching ideas based on extracted keywords
+            if (response.keywords && response.keywords.length > 0) {
+                try {
+                    const matchingIdeas = await findMatchingIdeas(embeddingProvider);
+                    onMatchingIdeasFound?.(matchingIdeas);
+                } catch (err) {
+                    console.warn('[DocumentUpload] Failed to find matching ideas:', err);
+                }
+            }
+        } catch (err: any) {
+            setError(err.message || 'Upload failed');
+        } finally {
+            setUploading(false);
+        }
     };
 
     const handleReset = async () => {
@@ -229,7 +256,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
 
                     {uploadedContext.themes && uploadedContext.themes.length > 0 && (
                         <div>
-                            <div className="text-xs font-medium text-slate-700 mb-2">Extracted Themes:</div>
+                            <div className="text-xs font-medium text-slate-700 mb-2">Extracted Topics:</div>
                             <div className="flex flex-wrap gap-1">
                                 {uploadedContext.themes.map((theme, index) => (
                                     <span
@@ -243,8 +270,41 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
                         </div>
                     )}
 
-                    <div className="text-xs text-slate-500">
-                        Your queries will now include context from this document
+                    {(uploadedContext as any).keywords && (uploadedContext as any).keywords.length > 0 && (
+                        <div>
+                            <div className="text-xs font-medium text-slate-700 mb-2">Keywords for Search:</div>
+                            <div className="flex flex-wrap gap-1">
+                                {(uploadedContext as any).keywords.slice(0, 8).map((keyword: string, index: number) => (
+                                    <span
+                                        key={index}
+                                        className="px-2 py-1 bg-purple-100 text-purple-700 text-xs rounded-full"
+                                    >
+                                        {keyword}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {(uploadedContext as any).suggestedQuestions && (uploadedContext as any).suggestedQuestions.length > 0 && (
+                        <div>
+                            <div className="text-xs font-medium text-slate-700 mb-2">💡 Suggested Questions:</div>
+                            <div className="space-y-1">
+                                {(uploadedContext as any).suggestedQuestions.slice(0, 5).map((question: string, index: number) => (
+                                    <div
+                                        key={index}
+                                        className="text-xs text-slate-600 bg-slate-50 px-2 py-1.5 rounded border border-slate-200 cursor-pointer hover:bg-indigo-50 hover:border-indigo-200 transition-colors"
+                                        onClick={() => onQuestionsGenerated?.([question])}
+                                    >
+                                        {question}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="text-xs text-slate-500 pt-2 border-t border-slate-100">
+                        ✨ Your queries will now include context from this document (RAG enabled)
                     </div>
                 </div>
             )}

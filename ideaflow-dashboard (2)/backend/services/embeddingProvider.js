@@ -100,6 +100,7 @@ async function generateGrokEmbedding(text, retryCount = 0) {
 
 /**
  * Factory function to get an embedding vector from the configured provider.
+ * Automatically falls back to Ollama if the selected provider fails.
  * @param {string} text - The text to embed.
  * @param {'llama' | 'grok'} [provider] - The embedding provider to use. Defaults to EMBEDDING_PROVIDER from .env.
  * @returns {Promise<number[]>} The embedding vector.
@@ -107,11 +108,20 @@ async function generateGrokEmbedding(text, retryCount = 0) {
 export async function getEmbeddingVector(text, provider) {
   const selectedProvider = provider || process.env.EMBEDDING_PROVIDER || 'llama';
 
-  console.log(`	-> Generating embedding for text snippet using [${selectedProvider}]...`);
+  console.log(`\t-> Generating embedding for text snippet using [${selectedProvider}]...`);
 
   switch (selectedProvider) {
     case 'grok':
-      return generateGrokEmbedding(text);
+      try {
+        return await generateGrokEmbedding(text);
+      } catch (error) {
+        // Check if it's an auth error - don't retry, fall back immediately
+        if (error.message.includes('401') || error.message.includes('Unauthorized') || error.message.includes('User not found')) {
+          console.warn(`⚠️  OpenRouter auth failed, falling back to Ollama (llama)...`);
+          return generateOllamaEmbedding(text);
+        }
+        throw error;
+      }
     case 'llama':
     default:
       return generateOllamaEmbedding(text);

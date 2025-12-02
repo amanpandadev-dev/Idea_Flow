@@ -5,7 +5,7 @@ const API_URL = '/api';
 // Helper to get tokens
 const getTokens = () => {
   return {
-    accessToken: localStorage.getItem('accessToken'), // Access Token
+    accessToken: localStorage.getItem('token'), // Access Token (using 'token' for backward compatibility)
     refreshToken: localStorage.getItem('refreshToken') // Refresh Token
   };
 };
@@ -224,14 +224,8 @@ export const queryAgent = async (
   filters?: { businessGroups?: string[]; themes?: string[] },
   synergyMode?: boolean
 ): Promise<AgentResponse> => {
-  const response = await fetch(`${API_URL}/agent/query`, {
-    method: 'POST',
-    headers: getTokens(),
-    body: JSON.stringify({ userQuery, embeddingProvider, filters, synergyMode })
-  });
   return fetchWithAuth(`${API_URL}/agent/query`, {
     method: 'POST',
-    headers: getTokens(),
     body: JSON.stringify({ userQuery, embeddingProvider, filters, synergyMode })
   });
 };
@@ -241,43 +235,37 @@ export const startAgentSession = async (
   embeddingProvider: 'llama' | 'grok',
   filters?: { businessGroups?: string[]; themes?: string[] }
 ): Promise<{ success: boolean; jobId: string; }> => {
-  const response = await fetch(`${API_URL}/agent/session`, {
+  return fetchWithAuth(`${API_URL}/agent/session`, {
     method: 'POST',
-    headers: getTokens(),
-    body: JSON.stringify({ userQuery, embeddingProvider, filters })
-  });
-  return fetchWithAuth(API_URL + '/agent/session', {
-    method: 'POST',
-    headers: getTokens(),
     body: JSON.stringify({ userQuery, embeddingProvider, filters })
   });
 };
 
 export const getAgentSessionStatus = async (jobId: string): Promise<AgentSession> => {
-  const response = await fetch(`${API_URL}/agent/session/${jobId}/status`, {
-    headers: getTokens()
-  });
-  return fetchWithAuth(API_URL + '/agent/session/' + jobId + '/status', {
-    headers: getTokens()
-  });
+  return fetchWithAuth(`${API_URL}/agent/session/${jobId}/status`);
 };
 
 export const stopAgentSession = async (jobId: string): Promise<{ success: boolean; message: string; }> => {
-  const response = await fetch(`${API_URL}/agent/session/${jobId}/stop`, {
-    method: 'POST',
-    headers: getTokens(),
-  });
-  return fetchWithAuth(API_URL + '/agent/session/' + jobId + '/stop', {
-    method: 'POST',
-    headers: getTokens(),
+  return fetchWithAuth(`${API_URL}/agent/session/${jobId}/stop`, {
+    method: 'POST'
   });
 };
 
-// Phase-2: Context Upload
+// Phase-2: Context Upload with RAG enhancements
 export interface ContextUploadResponse {
   success: boolean;
   chunksProcessed: number;
   themes: string[];
+  keywords?: string[];
+  suggestedQuestions?: string[];
+  ragData?: {
+    themes: string[];
+    keywords: string[];
+    suggestedQuestions: string[];
+    topics: string[];
+    techStack: string[];
+    industry: string[];
+  };
   sessionId: string;
   stats: {
     originalLength: number;
@@ -299,24 +287,19 @@ export const uploadContext = async (file: File, embeddingProvider: 'llama' | 'gr
     },
     body: formData
   });
-  return fetchWithAuth(API_URL + '/context/upload', {
-    method: 'POST',
-    headers: {
-      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-    },
-    body: formData
-  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || 'Upload failed');
+  }
+  
+  return response.json();
 };
 
 // Phase-2: Reset Context
 export const resetContext = async (): Promise<{ success: boolean; message: string }> => {
-  const response = await fetch(`${API_URL}/context/reset`, {
-    method: 'DELETE',
-    headers: getTokens()
-  });
-  return fetchWithAuth(API_URL + '/context/reset', {
-    method: 'DELETE',
-    headers: getTokens()
+  return fetchWithAuth(`${API_URL}/context/reset`, {
+    method: 'DELETE'
   });
 };
 
@@ -332,12 +315,7 @@ export interface ContextStatus {
 }
 
 export const getContextStatus = async (): Promise<ContextStatus> => {
-  const response = await fetch(`${API_URL}/context/status`, {
-    headers: getTokens()
-  });
-  return fetchWithAuth(API_URL + '/context/status', {
-    headers: getTokens()
-  });
+  return fetchWithAuth(`${API_URL}/context/status`);
 };
 
 // Find ideas matching uploaded document keywords
@@ -352,14 +330,8 @@ export interface MatchingIdeasResponse {
 }
 
 export const findMatchingIdeas = async (embeddingProvider: 'llama' | 'grok'): Promise<MatchingIdeasResponse> => {
-  const response = await fetch(`${API_URL}/context/find-matching-ideas`, {
+  const data = await fetchWithAuth(`${API_URL}/context/find-matching-ideas`, {
     method: 'POST',
-    headers: getTokens(),
-    body: JSON.stringify({ embeddingProvider })
-  });
-  const data = await fetchWithAuth(API_URL + '/context/find-matching-ideas', {
-    method: 'POST',
-    headers: getTokens(),
     body: JSON.stringify({ embeddingProvider })
   });
   return {
@@ -387,14 +359,8 @@ export const semanticSearchIdeas = async (
   embeddingProvider: 'llama' | 'grok',
   limit: number = 10
 ): Promise<SemanticSearchResult[]> => {
-  const response = await fetch(`${API_URL}/ideas/semantic-search`, {
+  const data = await fetchWithAuth(`${API_URL}/ideas/semantic-search`, {
     method: 'POST',
-    headers: getTokens(),
-    body: JSON.stringify({ query, embeddingProvider, limit })
-  });
-  const data = await fetchWithAuth(API_URL + '/ideas/semantic-search', {
-    method: 'POST',
-    headers: getTokens(),
     body: JSON.stringify({ query, embeddingProvider, limit })
   });
   return data.results || [];

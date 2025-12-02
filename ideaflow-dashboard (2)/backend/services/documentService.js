@@ -1,5 +1,9 @@
 import pdf from 'pdf-parse';
 import mammoth from 'mammoth';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+// Initialize Gemini API
+const genAI = process.env.API_KEY ? new GoogleGenerativeAI(process.env.API_KEY) : null;
 
 /**
  * Native text splitter - no LangChain dependency
@@ -79,10 +83,32 @@ class RecursiveTextSplitter {
  */
 export async function extractPDF(buffer) {
     try {
-        const data = await pdf(buffer);
+        // Configure pdf-parse with more lenient options
+        const options = {
+            // Disable strict mode for better compatibility with various PDF structures
+            max: 0, // No page limit
+            version: 'default'
+        };
+
+        const data = await pdf(buffer, options);
+
+        if (!data.text || data.text.trim().length === 0) {
+            throw new Error('No text content could be extracted from PDF');
+        }
+
         return data.text;
     } catch (error) {
         console.error('Error extracting PDF:', error.message);
+
+        // Provide more helpful error messages
+        if (error.message.includes('Invalid PDF structure')) {
+            throw new Error('The PDF file appears to be corrupted or has an unsupported structure. Try re-saving the PDF or using a different file.');
+        } else if (error.message.includes('encrypted')) {
+            throw new Error('The PDF file is encrypted or password-protected. Please provide an unprotected PDF.');
+        } else if (error.message.includes('No text content')) {
+            throw new Error('The PDF contains no extractable text. It may be a scanned image. Please use a PDF with selectable text.');
+        }
+
         throw new Error(`Failed to extract PDF: ${error.message}`);
     }
 }
@@ -146,19 +172,82 @@ export async function chunkText(text, chunkSize = 400, overlap = 50) {
 }
 
 /**
- * Extract key themes/topics from text chunks
- * Simple keyword extraction based on frequency
- * @param {string[]} chunks - Array of text chunks
- * @param {number} topN - Number of top themes to return
- * @returns {string[]} Array of themes
+ * Extract key themes/topics using Gemini 2.0 Flash (Free Tier - 1500 req/day)
+ * @param {string} text - The full document text (or a summary/subset)
+ * @returns {Promise<string[]>} Array of themes/insights
  */
-export function extractThemes(chunks, topN = 5) {
-    if (!chunks || chunks.length === 0) {
-        return [];
+export async function extractThemesWithAI(text) {
+    if (!genAI) {
+        console.warn('Gemini API not initialized, falling back to simple extraction');
+        return extractThemesSimple(text);
     }
 
-    // Combine all chunks
-    const allText = chunks.join(' ').toLowerCase();
+    try {
+        // Using Gemini 1.5 Flash - Free tier with 1500 requests/day
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+        // Truncate text if too long to avoid token limits (approx 10k chars is safe for Flash input context)
+        const inputContext = text.length > 15000 ? text.substring(0, 15000) + "..." : text;
+
+        const prompt = `
+        Analyze the following document text and extract key insights for a RAG (Retrieval Augmented Generation) system.
+        
+        Return a JSON object with exactly these 5 arrays:
+        1. "topics": Key topics discussed (max 5) - these will be used to find similar ideas
+        2. "techStack": Technologies, tools, or frameworks mentioned (max 5)
+        3. "industry": Industries or domains relevant to the content (max 3)
+        4. "keywords": Important keywords for search (max 10) - single words or short phrases
+        5. "suggestedQuestions": 3-5 questions a user might ask about this document
+        
+        Keep the items concise (1-3 words for topics/tech/industry, short phrases for keywords).
+        
+        Document Text:
+        "${inputContext}"
+        `;
+
+        const result = await model.generateContent({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+                responseMimeType: "application/json",
+                maxOutputTokens: 1000, // Keep token usage low as requested
+            }
+        });
+
+        const responseText = result.response.text();
+        const data = JSON.parse(responseText);
+
+        // Return structured data for RAG functionality
+        const themes = [
+            ...(data.topics || []),
+            ...(data.techStack || []),
+            ...(data.industry || [])
+        ];
+
+        console.log(`[AI Extraction] Extracted ${themes.length} insights using Gemini 2.0 Flash`);
+
+        // Return both themes and additional RAG data
+        return {
+            themes: themes.slice(0, 10),
+            keywords: data.keywords || [],
+            suggestedQuestions: data.suggestedQuestions || [],
+            topics: data.topics || [],
+            techStack: data.techStack || [],
+            industry: data.industry || []
+        };
+
+    } catch (error) {
+        console.error('AI Theme Extraction failed:', error.message);
+        return extractThemesSimple(text);
+    }
+}
+
+/**
+ * Fallback: Extract key themes/topics from text chunks based on frequency
+ * @param {string} text - Full text
+ * @returns {string[]} Array of themes
+ */
+export function extractThemesSimple(text) {
+    if (!text) return [];
 
     // Common stop words to filter out
     const stopWords = new Set([
@@ -170,7 +259,7 @@ export function extractThemes(chunks, topN = 5) {
     ]);
 
     // Extract words (alphanumeric sequences)
-    const words = allText.match(/\b[a-z]{3,}\b/g) || [];
+    const words = text.toLowerCase().match(/\b[a-z]{3,}\b/g) || [];
 
     // Count word frequencies
     const wordFreq = {};
@@ -180,10 +269,10 @@ export function extractThemes(chunks, topN = 5) {
         }
     });
 
-    // Sort by frequency and get top N
+    // Sort by frequency and get top 5
     const sortedWords = Object.entries(wordFreq)
         .sort((a, b) => b[1] - a[1])
-        .slice(0, topN)
+        .slice(0, 5)
         .map(([word]) => word);
 
     return sortedWords;
@@ -199,8 +288,7 @@ export function extractThemes(chunks, topN = 5) {
 export async function processDocument(buffer, mimetype, options = {}) {
     const {
         chunkSize = 400,
-        chunkOverlap = 50,
-        extractThemesCount = 5
+        chunkOverlap = 50
     } = options;
 
     try {
@@ -218,14 +306,22 @@ export async function processDocument(buffer, mimetype, options = {}) {
             throw new Error('Failed to create text chunks');
         }
 
-        // Extract themes
-        const themes = extractThemes(chunks, extractThemesCount);
+        // Extract themes and RAG data using AI (Gemini 2.0 Flash)
+        const ragData = await extractThemesWithAI(text);
+
+        // Handle both old format (array) and new format (object)
+        const themes = Array.isArray(ragData) ? ragData : (ragData.themes || []);
+        const keywords = Array.isArray(ragData) ? [] : (ragData.keywords || []);
+        const suggestedQuestions = Array.isArray(ragData) ? [] : (ragData.suggestedQuestions || []);
 
         return {
             success: true,
             text,
             chunks,
             themes,
+            keywords,
+            suggestedQuestions,
+            ragData: Array.isArray(ragData) ? { themes: ragData } : ragData,
             stats: {
                 originalLength: text.length,
                 chunkCount: chunks.length,
@@ -243,6 +339,6 @@ export default {
     extractDOCX,
     extractDocument,
     chunkText,
-    extractThemes,
+    extractThemesWithAI,
     processDocument
 };
