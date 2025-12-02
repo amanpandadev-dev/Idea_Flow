@@ -17,15 +17,10 @@ import ProSearchModal from './components/ProSearchModal';
 import { INITIAL_DATA } from './constants';
 import { fetchIdeas, fetchAssociateDetails, fetchBusinessGroups, fetchLikedIdeas, fetchCurrentUser, searchIdeas } from './services';
 import { Idea, Associate } from './types';
-<<<<<<< HEAD
-import { X, LayoutDashboard, FolderKanban, Loader2, Filter, BarChart3, Heart } from 'lucide-react';
-
-type TabType = 'dashboard' | 'filtered-analytics' | 'projects' | 'wishlist' | 'pro-search' | string;
-=======
-import { Loader2 } from 'lucide-react';
+import { Loader2, Filter, X } from 'lucide-react';
 import AgentChat from './components/AgentChat';
 
->>>>>>> aiagent
+type TabType = 'dashboard' | 'filtered-analytics' | 'projects' | 'wishlist' | 'pro-search' | 'agent' | string;
 type AuthView = 'login' | 'register' | 'forgot-password';
 
 interface UserProfile {
@@ -36,7 +31,6 @@ interface UserProfile {
   email?: string;
 }
 
-<<<<<<< HEAD
 // Pro Search State Interface
 interface ProSearchState {
   query: string;
@@ -45,21 +39,19 @@ interface ProSearchState {
   hasSearched: boolean;
 }
 
-=======
-// Main App component: Handles Authentication
->>>>>>> aiagent
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authView, setAuthView] = useState<AuthView>('login');
   const [user, setUser] = useState<UserProfile | null>(null);
-<<<<<<< HEAD
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [likedIdeas, setLikedIdeas] = useState<Idea[]>([]);
   const [allBusinessGroups, setAllBusinessGroups] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
 
-  // Added missing state
+  // Navigation State
+  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  const [previousTab, setPreviousTab] = useState<TabType>('dashboard');
+
   const [usingMockData, setUsingMockData] = useState(false);
 
   // Search State
@@ -83,8 +75,7 @@ const App: React.FC = () => {
   const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isWishlistOpen, setIsWishlistOpen] = useState(false);
-=======
->>>>>>> aiagent
+  const [isProSearchOpen, setIsProSearchOpen] = useState(false);
 
   useEffect(() => {
     if (window.location.hash === '#register') setAuthView('register');
@@ -93,9 +84,18 @@ const App: React.FC = () => {
     if (token) {
       setIsAuthenticated(true);
       if (storedUser) setUser(JSON.parse(storedUser));
-<<<<<<< HEAD
     } else {
       setLoading(false);
+    }
+  }, []);
+
+  // Helper to load wishlist
+  const loadWishlist = useCallback(async () => {
+    try {
+      const data = await fetchLikedIdeas();
+      setLikedIdeas(data);
+    } catch (err) {
+      console.error("Failed to load wishlist", err);
     }
   }, []);
 
@@ -136,16 +136,6 @@ const App: React.FC = () => {
     if (isAuthenticated) loadData();
   }, [isAuthenticated, loadData]);
 
-  // Helper to load wishlist
-  const loadWishlist = useCallback(async () => {
-    try {
-      const data = await fetchLikedIdeas();
-      setLikedIdeas(data);
-    } catch (err) {
-      console.error("Failed to load wishlist", err);
-    }
-  }, []);
-
   useEffect(() => {
     if (activeTab === 'wishlist') {
       loadWishlist();
@@ -184,15 +174,13 @@ const App: React.FC = () => {
     return Array.from(techSet).sort();
   }, [ideas]);
 
-=======
-    }
-  }, []);
-  
-  useEffect(() => {
-    if (window.location.hash === '#register') setAuthView('register');
-  }, []);
+  // --- Handlers ---
 
->>>>>>> aiagent
+  const handleTabChange = (newTab: TabType) => {
+    setPreviousTab(activeTab);
+    setActiveTab(newTab);
+  };
+
   const handleLogin = () => {
     setIsAuthenticated(true);
     const storedUser = localStorage.getItem('user');
@@ -205,7 +193,6 @@ const App: React.FC = () => {
     setIsAuthenticated(false); setUser(null); setAuthView('login');
   };
 
-<<<<<<< HEAD
   const handleViewAssociate = useCallback(async (associateId: number) => {
     setIsAssociateModalOpen(true); setAssociateLoading(true);
     try { setSelectedAssociate(await fetchAssociateDetails(associateId)); }
@@ -223,7 +210,6 @@ const App: React.FC = () => {
     loadWishlist();
   };
 
-  // Pro Search Handlers
   const handleOpenProSearch = () => {
     setProSearchState(prev => ({ ...prev, isOpen: true }));
   };
@@ -238,22 +224,23 @@ const App: React.FC = () => {
 
   const handleViewDetails = (idea: Idea) => {
     if (proSearchState.isOpen) {
+      setPreviousTab('pro-search');
       setProSearchState(prev => ({ ...prev, isOpen: false }));
+    } else {
+      setPreviousTab(activeTab);
     }
     setActiveTab(`detail:${idea.id}`);
   };
 
-  // Logic to handle "Back" button from IdeaDetails
   const handleBackFromDetails = () => {
-    // If we have search results in Pro Search state and it was recently used, re-open it
-    if (proSearchState.hasSearched && proSearchState.results.length > 0) {
+    if (previousTab === 'pro-search') {
       setProSearchState(prev => ({ ...prev, isOpen: true }));
-      setActiveTab('dashboard'); // Return to background view
+      setActiveTab('dashboard');
     } else if (activeTab.includes('wishlist')) {
       setIsWishlistOpen(true);
       setActiveTab('dashboard');
     } else {
-      setActiveTab('projects'); // Default back to list
+      setActiveTab(previousTab);
     }
   };
 
@@ -264,145 +251,80 @@ const App: React.FC = () => {
     }
   };
 
-=======
->>>>>>> aiagent
   if (!isAuthenticated) {
     if (authView === 'register') return <RegisterPage onNavigateToLogin={() => setAuthView('login')} />;
     if (authView === 'forgot-password') return <ForgotPasswordPage onNavigateToLogin={() => setAuthView('login')} />;
     return <LoginPage onLogin={handleLogin} onForgotPassword={() => setAuthView('forgot-password')} />;
   }
 
-<<<<<<< HEAD
   if (loading && !activeTab.startsWith('detail') && activeTab !== 'wishlist') return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-indigo-600" /></div>;
-=======
-  return <MainApp user={user} onLogout={handleLogout} />;
-};
->>>>>>> aiagent
 
-// Main application structure after login
-const MainApp: React.FC<{ user: UserProfile | null, onLogout: () => void }> = ({ user, onLogout }) => {
-  const [ideas, setIdeas] = useState<Idea[]>([]);
-  const [likedIdeas, setLikedIdeas] = useState<Idea[]>([]);
-  const [allBusinessGroups, setAllBusinessGroups] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  
-  const navigate = useNavigate();
-
-  // Modal states
-  const [isExploreOpen, setIsExploreOpen] = useState(false);
-  const [isAssociateModalOpen, setIsAssociateModalOpen] = useState(false);
-  const [selectedAssociate, setSelectedAssociate] = useState<Associate | null>(null);
-  const [associateLoading, setAssociateLoading] = useState(false);
-  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
-  const [currentUserProfile, setCurrentUserProfile] = useState<any>(null);
-  const [isWishlistOpen, setIsWishlistOpen] = useState(false);
-
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [ideasData, bgData, likedData] = await Promise.all([fetchIdeas(), fetchBusinessGroups(), fetchLikedIdeas()]);
-      setIdeas(ideasData.length > 0 ? ideasData : INITIAL_DATA);
-      setAllBusinessGroups(bgData);
-      setLikedIdeas(likedData);
-    } catch (err) {
-      console.warn("Backend connection failed, falling back to mock data:", err);
-      setIdeas(INITIAL_DATA);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  const handleViewDetails = (idea: Idea) => navigate(`/idea/${idea.id}`);
-  
-  const handleViewAssociate = async (associateId: number) => {
-    setIsAssociateModalOpen(true);
-    setAssociateLoading(true);
-    try {
-      setSelectedAssociate(await fetchAssociateDetails(associateId));
-    } finally {
-      setAssociateLoading(false);
-    }
-  };
-
-  const handleViewProfile = async () => {
-    setIsProfileModalOpen(true);
-    try {
-      setCurrentUserProfile(await fetchCurrentUser());
-    } catch (err) { console.error("Failed to fetch user profile", err); }
-  };
-  
-  const handleOpenWishlist = async () => {
-    setIsWishlistOpen(true);
-    try {
-      setLikedIdeas(await fetchLikedIdeas());
-    } catch (e) { console.error(e); }
-  };
+  const activeFiltersCount = globalFilters.themes.length + globalFilters.businessGroups.length + globalFilters.technologies.length;
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex flex-col">
       <Header
         user={user}
-<<<<<<< HEAD
         onLogout={handleLogout}
         onExplore={() => setIsExploreOpen(true)}
-=======
-        onLogout={onLogout}
->>>>>>> aiagent
         onOpenWishlist={handleOpenWishlist}
         onOpenProfile={handleViewProfile}
         onOpenProSearch={handleOpenProSearch}
         likedCount={likedIdeas.length}
         ideaCount={ideas.length}
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
       />
+
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-<<<<<<< HEAD
-        {!activeTab.startsWith('detail') && !activeTab.startsWith('chart') && (
-          <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex p-1 bg-white border border-slate-200 rounded-xl shadow-sm">
-              <button onClick={() => setActiveTab('dashboard')} className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium ${activeTab === 'dashboard' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}><LayoutDashboard className="h-4 w-4" /> Global Dashboard</button>
-              <button onClick={() => setActiveTab('projects')} className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium ${activeTab === 'projects' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}><FolderKanban className="h-4 w-4" /> Ideas Submissions <span className="bg-slate-100 text-slate-600 text-xs px-1.5 py-0.5 rounded-full">{displayIdeas.length}</span></button>
-              {activeFiltersCount > 0 && (
-                <button onClick={() => setActiveTab('filtered-analytics')} className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium ${activeTab === 'filtered-analytics' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-500 hover:bg-slate-50'}`}><BarChart3 className="h-4 w-4" /> Filtered Analytics</button>
-              )}
+
+        {/* Active Filter Bar (Only show if filters active and not in details/chart) */}
+        {activeFiltersCount > 0 && !activeTab.startsWith('detail') && !activeTab.startsWith('chart') && (
+          <div className="mb-6 flex justify-end">
+            <div className="flex items-center gap-2 text-sm text-slate-500 bg-white px-3 py-1.5 rounded-lg border shadow-sm">
+              <Filter className="h-3 w-3" /> <span>Filters Active: {activeFiltersCount}</span>
+              <button onClick={() => { setGlobalFilters({ themes: [], businessGroups: [], technologies: [] }); handleTabChange('projects'); }} className="ml-2 hover:text-red-500"><X className="h-3 w-3" /></button>
             </div>
-            {activeFiltersCount > 0 && (
-              <div className="flex items-center gap-2 text-sm text-slate-500 bg-white px-3 py-1.5 rounded-lg border shadow-sm">
-                <Filter className="h-3 w-3" /> <span>Filters: {activeFiltersCount}</span>
-                <button onClick={() => { setGlobalFilters({ themes: [], businessGroups: [], technologies: [] }); setActiveTab('projects'); }} className="ml-2 hover:text-red-500"><X className="h-3 w-3" /></button>
-              </div>
-            )}
           </div>
         )}
 
         <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-          {activeTab === 'dashboard' && <StatsSection data={ideas} onOpenChart={(id) => setActiveTab(`chart:${id}:global`)} />}
+
+          {/* DASHBOARD VIEW */}
+          {activeTab === 'dashboard' && (
+            <StatsSection data={ideas} onOpenChart={(id) => handleTabChange(`chart:${id}:global`)} />
+          )}
+
+          {/* IDEAS VIEW */}
           {activeTab === 'projects' && (
             <IdeaTable
               data={displayIdeas}
-              onViewDetails={(idea) => setActiveTab(`detail:${idea.id}`)}
+              onViewDetails={handleViewDetails}
               onOpenExplore={() => setIsExploreOpen(true)}
               isGlobalFilterActive={activeFiltersCount > 0}
-              onRefreshData={loadData}
+              onRefreshData={handleRefreshData}
               onSearch={handleSearch}
               isSearching={isSearching}
             />
           )}
-          {activeTab === 'filtered-analytics' && (
-            <div className="space-y-4">
-              <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl flex items-center gap-3 text-emerald-800"><Filter className="h-5 w-5" /><h3 className="font-semibold">Filtered Analytics View</h3></div>
-              <StatsSection data={displayIdeas} onOpenChart={(id) => setActiveTab(`chart:${id}:filtered`)} />
-            </div>
+
+          {/* AI AGENT VIEW */}
+          {activeTab === 'agent' && (
+            <AgentChat />
           )}
 
-          {/* Details View */}
+          {/* CHART DETAIL VIEW */}
+          {activeTab.startsWith('chart:') && (
+            (() => {
+              const [, chartId, context] = activeTab.split(':');
+              return <ChartDetail chartId={chartId} data={context === 'filtered' ? displayIdeas : ideas} onBack={() => handleTabChange('dashboard')} />;
+            })()
+          )}
+
+          {/* IDEA DETAILS VIEW */}
           {activeTab.startsWith('detail:') && (
             (() => {
               const ideaId = activeTab.split(':')[1];
-              // Find idea in any available list
               const idea = ideas.find(i => i.id === ideaId)
                 || likedIdeas.find(i => i.id === ideaId)
                 || (searchResults || []).find(i => i.id === ideaId)
@@ -419,17 +341,10 @@ const MainApp: React.FC<{ user: UserProfile | null, onLogout: () => void }> = ({
               ) : <div>Idea not found</div>;
             })()
           )}
-
-          {activeTab.startsWith('chart:') && (
-            (() => {
-              const [, chartId, context] = activeTab.split(':');
-              return <ChartDetail chartId={chartId} data={context === 'filtered' ? displayIdeas : ideas} onBack={() => setActiveTab(context === 'filtered' ? 'filtered-analytics' : 'dashboard')} />;
-            })()
-          )}
         </div>
       </main>
 
-      <ExploreModal isOpen={isExploreOpen} onClose={() => setIsExploreOpen(false)} onApplyFilters={(f) => { setGlobalFilters(f); setActiveTab('projects'); }} initialFilters={globalFilters} availableTechnologies={allTechnologies} availableThemes={allThemes} availableBusinessGroups={allBusinessGroups} />
+      <ExploreModal isOpen={isExploreOpen} onClose={() => setIsExploreOpen(false)} onApplyFilters={(f) => { setGlobalFilters(f); handleTabChange('projects'); }} initialFilters={globalFilters} availableTechnologies={allTechnologies} availableThemes={allThemes} availableBusinessGroups={allBusinessGroups} />
       {isAssociateModalOpen && <AssociateModal associate={selectedAssociate} loading={associateLoading} onClose={() => setIsAssociateModalOpen(false)} />}
       {isProfileModalOpen && <UserProfileModal user={currentUserProfile} isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} />}
 
@@ -452,47 +367,10 @@ const MainApp: React.FC<{ user: UserProfile | null, onLogout: () => void }> = ({
           initialQuery={proSearchState.query}
           initialResults={proSearchState.results}
           onSearchComplete={handleProSearchComplete}
-          availableTechnologies={allTechnologies}
-          availableThemes={allThemes}
-          availableBusinessGroups={allBusinessGroups}
         />
       )}
-=======
-         {loading ? (
-            <div className="flex items-center justify-center pt-20"><Loader2 className="h-10 w-10 animate-spin text-indigo-600" /></div>
-         ) : (
-            <Routes>
-                <Route path="/" element={<StatsSection data={ideas} onOpenChart={(id) => navigate(`/chart/${id}`)} />} />
-                <Route path="/ideas" element={<IdeaTable data={ideas} onViewDetails={handleViewDetails} onOpenExplore={() => setIsExploreOpen(true)} onRefreshData={loadData} isGlobalFilterActive={false}/>} />
-                <Route path="/agent" element={<AgentChat onNavigateToIdea={(ideaId) => navigate(`/idea/${ideaId}`)} />} />
-                <Route path="/idea/:ideaId" element={<IdeaDetailsWrapper ideas={ideas.concat(likedIdeas)} onViewAssociate={handleViewAssociate} onNavigateToIdea={(idea) => navigate(`/idea/${idea.id}`)} onRefreshData={loadData} />} />
-                <Route path="/chart/:chartId" element={<ChartDetailWrapper ideas={ideas} />} />
-            </Routes>
-         )}
-      </main>
-
-      {/* Global Modals */}
-      <ExploreModal isOpen={isExploreOpen} onClose={() => setIsExploreOpen(false)} onApplyFilters={() => {}} initialFilters={{themes: [], businessGroups: [], technologies: []}} availableTechnologies={[]} availableThemes={[]} availableBusinessGroups={allBusinessGroups} />
-      {isAssociateModalOpen && <AssociateModal associate={selectedAssociate} loading={associateLoading} onClose={() => setIsAssociateModalOpen(false)} />}
-      {isProfileModalOpen && <UserProfileModal user={currentUserProfile} isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} />}
-      {isWishlistOpen && <WishlistModal isOpen={isWishlistOpen} onClose={() => setIsWishlistOpen(false)} likedIdeas={likedIdeas} onViewDetails={handleViewDetails} onRefreshData={loadData} />}
->>>>>>> aiagent
     </div>
   );
-};
-
-// Wrapper components to handle URL params
-const IdeaDetailsWrapper = (props: any) => {
-  const { ideaId } = useParams<{ ideaId: string }>();
-  const navigate = useNavigate();
-  const idea = props.ideas.find((i: Idea) => i.id === ideaId);
-  return idea ? <IdeaDetails {...props} idea={idea} onBack={() => navigate('/ideas')} /> : <div>Idea not found</div>;
-};
-
-const ChartDetailWrapper = (props: any) => {
-  const { chartId } = useParams<{ chartId: string }>();
-  const navigate = useNavigate();
-  return <ChartDetail {...props} chartId={chartId} onBack={() => navigate('/')} />;
 };
 
 export default App;
