@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { X, Search, Sparkles, ArrowRight, Loader2 } from 'lucide-react';
 import IdeaTable from './IdeaTable';
@@ -178,14 +177,18 @@ const ProSearchModal: React.FC<ProSearchModalProps> = ({
                {isSearching ? (
                   <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
                      <Loader2 className="h-10 w-10 animate-spin mb-4 text-violet-500" />
-                     <p>Analyzing semantic relevance...</p>
+                     <p className="text-lg font-medium">Analyzing semantic relevance...</p>
+                     <p className="text-sm mt-2">Using AI to understand your query</p>
                   </div>
                ) : hasSearched ? (
                   results.length > 0 ? (
                      <div className="flex-1 overflow-y-auto custom-scrollbar bg-white rounded-xl border border-slate-200 shadow-sm">
-                        <div className="p-4 border-b border-slate-100 text-sm text-slate-500 bg-slate-50/50 flex justify-between items-center">
-                           <span>Found {results.length} relevant ideas</span>
-                           <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">AI Ranked</span>
+                        <div className="p-4 border-b border-slate-100 text-sm text-slate-500 bg-gradient-to-r from-violet-50 to-indigo-50 flex justify-between items-center">
+                           <div className="flex items-center gap-2">
+                              <span className="font-medium text-slate-700">Found {results.length} relevant ideas</span>
+                              <span className="text-xs bg-violet-100 text-violet-700 px-2 py-1 rounded-full font-semibold border border-violet-200">✨ AI Ranked</span>
+                           </div>
+                           <span className="text-xs text-slate-500">Sorted by semantic relevance</span>
                         </div>
                         {/* Reuse IdeaTable but customized for this view */}
                         <IdeaTable
@@ -196,6 +199,7 @@ const ProSearchModal: React.FC<ProSearchModalProps> = ({
                            }}
                            isGlobalFilterActive={activeFilterCount > 0}
                            showExplore={true} // Enable explore button
+                           showSearch={false} // Disable search bar - search is handled at modal level
                            onOpenExplore={() => setIsExploreOpen(true)}
                            onRefreshData={onRefreshData}
                            onSearch={() => { }}
@@ -224,7 +228,8 @@ const ProSearchModal: React.FC<ProSearchModalProps> = ({
                ) : (
                   <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
                      <Sparkles className="h-16 w-16 mb-4 text-slate-200" />
-                     <p>Enter a description to start semantic search</p>
+                     <p className="text-lg font-medium text-slate-600">Enter a description to start semantic search</p>
+                     <p className="text-sm mt-2">Our AI will understand your intent and find relevant ideas</p>
                   </div>
                )}
             </div>

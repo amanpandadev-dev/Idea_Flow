@@ -308,7 +308,7 @@ const App: React.FC = () => {
 
           {/* AI AGENT VIEW */}
           {activeTab === 'agent' && (
-            <AgentChat />
+            <AgentChat onNavigateToIdea={(ideaId) => handleViewDetails(ideas.find(i => i.id === ideaId) || { id: ideaId } as Idea)} />
           )}
 
           {/* CHART DETAIL VIEW */}

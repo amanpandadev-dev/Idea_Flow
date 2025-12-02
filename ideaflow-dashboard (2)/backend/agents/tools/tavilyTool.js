@@ -81,4 +81,5 @@ Input should be a search query. For example: "latest advancements in AI".`
     }
 }
 
+export { TavilySearchTool as TavilyTool };
 export default TavilySearchTool;
