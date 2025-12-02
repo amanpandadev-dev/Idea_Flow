@@ -105,8 +105,8 @@ const ExploreModal: React.FC<ExploreModalProps> = ({
                   <label
                     key={theme}
                     className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all ${filters.themes.includes(theme)
-                        ? 'bg-indigo-50 border-indigo-200 shadow-sm'
-                        : 'bg-white border-slate-200 hover:bg-slate-50'
+                      ? 'bg-indigo-50 border-indigo-200 shadow-sm'
+                      : 'bg-white border-slate-200 hover:bg-slate-50'
                       }`}
                   >
                     <span className={`text-sm ${filters.themes.includes(theme) ? 'text-indigo-700 font-medium' : 'text-slate-700'}`}>
@@ -139,8 +139,8 @@ const ExploreModal: React.FC<ExploreModalProps> = ({
                   <label
                     key={bg}
                     className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${filters.businessGroups.includes(bg)
-                        ? 'bg-blue-50 border-blue-200 shadow-sm'
-                        : 'bg-white border-slate-200 hover:bg-slate-50'
+                      ? 'bg-blue-50 border-blue-200 shadow-sm'
+                      : 'bg-white border-slate-200 hover:bg-slate-50'
                       }`}
                   >
                     <div className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${filters.businessGroups.includes(bg) ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'
@@ -185,8 +185,8 @@ const ExploreModal: React.FC<ExploreModalProps> = ({
                       key={tech}
                       onClick={() => toggleFilter('technologies', tech)}
                       className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${filters.technologies.includes(tech)
-                          ? 'bg-emerald-100 text-emerald-800 border-emerald-200 shadow-sm'
-                          : 'bg-white text-slate-600 border-slate-200 hover:bg-emerald-50 hover:border-emerald-200'
+                        ? 'bg-emerald-100 text-emerald-800 border-emerald-200 shadow-sm'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-emerald-50 hover:border-emerald-200'
                         }`}
                     >
                       {tech}
@@ -232,3 +232,4 @@ const ExploreModal: React.FC<ExploreModalProps> = ({
 };
 
 export default ExploreModal;
+export type { ExploreFilters };

@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Lightbulb, Bell, UserCircle, LogOut, Heart, Sparkles, Bot, LayoutDashboard, FolderKanban } from 'lucide-react';
 
@@ -14,22 +13,23 @@ interface HeaderProps {
   onTabChange?: (tab: string) => void;
 }
 
-const Header: React.FC<HeaderProps> = ({
-  user,
-  onLogout,
-  onOpenWishlist,
-  onOpenProfile,
-  onOpenProSearch,
+const Header: React.FC<HeaderProps> = ({ 
+  user, 
+  onLogout, 
+  onOpenWishlist, 
+  onOpenProfile, 
+  onOpenProSearch, 
   likedCount = 0,
   ideaCount = 0,
   activeTab,
   onTabChange
 }) => {
-
-  const getNavClass = (tabName: string) =>
-    `flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all ${activeTab === tabName
-      ? 'bg-indigo-50 text-indigo-700'
-      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+  
+  const getNavClass = (tabName: string) => 
+    `flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all ${
+      activeTab === tabName 
+        ? 'bg-indigo-50 text-indigo-700' 
+        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
     }`;
 
   return (
@@ -38,8 +38,8 @@ const Header: React.FC<HeaderProps> = ({
         <div className="flex justify-between h-16">
           <div className="flex items-center gap-8">
             {/* Logo */}
-            <div
-              className="flex items-center gap-3 cursor-pointer"
+            <div 
+              className="flex items-center gap-3 cursor-pointer" 
               onClick={() => onTabChange && onTabChange('dashboard')}
             >
               <div className="bg-indigo-600 p-2 rounded-lg">
@@ -53,15 +53,15 @@ const Header: React.FC<HeaderProps> = ({
             {/* Primary Navigation - Centered if possible or next to logo */}
             {onTabChange && (
               <nav className="hidden md:flex items-center gap-1">
-                <button
+                <button 
                   onClick={() => onTabChange('dashboard')}
                   className={getNavClass('dashboard')}
                 >
                   <LayoutDashboard className="h-4 w-4" />
                   Dashboard
                 </button>
-
-                <button
+                
+                <button 
                   onClick={() => onTabChange('projects')}
                   className={getNavClass('projects')}
                 >
@@ -74,7 +74,7 @@ const Header: React.FC<HeaderProps> = ({
                   )}
                 </button>
 
-                <button
+                <button 
                   onClick={() => onTabChange('agent')}
                   className={getNavClass('agent')}
                 >
@@ -84,23 +84,23 @@ const Header: React.FC<HeaderProps> = ({
               </nav>
             )}
           </div>
-
+          
           <div className="flex items-center gap-3">
-
+            
             {/* Pro Search Button */}
             {onOpenProSearch && (
-              <button
-                onClick={onOpenProSearch}
-                className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-full text-xs font-medium hover:shadow-md transition-all hover:-translate-y-0.5 mr-2"
-              >
-                <Sparkles className="h-3 w-3" />
-                Pro Search
-              </button>
+               <button 
+                 onClick={onOpenProSearch}
+                 className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-violet-600 to-indigo-600 text-white rounded-full text-xs font-medium hover:shadow-md transition-all hover:-translate-y-0.5 mr-2"
+               >
+                 <Sparkles className="h-3 w-3" />
+                 Pro Search
+               </button>
             )}
 
             {/* Wishlist / My Likes */}
             {onOpenWishlist && (
-              <button
+              <button 
                 onClick={onOpenWishlist}
                 className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all relative group"
                 title="My Like List"
@@ -119,7 +119,7 @@ const Header: React.FC<HeaderProps> = ({
 
             {/* User Profile */}
             <div className="flex items-center gap-2 pl-1">
-              <button
+              <button 
                 onClick={onOpenProfile}
                 className="flex items-center gap-2 hover:bg-slate-50 p-1.5 rounded-lg transition-colors group text-left"
                 title="View Profile"
@@ -130,9 +130,9 @@ const Header: React.FC<HeaderProps> = ({
                   <p className="text-[10px] text-slate-500 capitalize">{user?.role || 'Viewer'}</p>
                 </div>
               </button>
-
+              
               {onLogout && (
-                <button
+                <button 
                   onClick={onLogout}
                   className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
                   title="Sign Out"

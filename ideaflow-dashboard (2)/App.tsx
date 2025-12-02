@@ -1,5 +1,5 @@
+
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { Routes, Route, useNavigate, useParams, Outlet, useLocation } from 'react-router-dom';
 import Header from './components/Header';
 import StatsSection from './components/StatsSection';
 import IdeaTable from './components/IdeaTable';
@@ -10,8 +10,7 @@ import RegisterPage from './components/RegisterPage';
 import ForgotPasswordPage from './components/ForgotPasswordPage';
 import AssociateModal from './components/AssociateModal';
 import UserProfileModal from './components/UserProfileModal';
-import ExploreModal from './components/ExploreModal';
-import { ExploreFilters } from './types';
+import ExploreModal, { ExploreFilters } from './components/ExploreModal';
 import WishlistModal from './components/WishListModal';
 import ProSearchModal from './components/ProSearchModal';
 import { INITIAL_DATA } from './constants';
@@ -266,7 +265,6 @@ const App: React.FC = () => {
       <Header
         user={user}
         onLogout={handleLogout}
-        onExplore={() => setIsExploreOpen(true)}
         onOpenWishlist={handleOpenWishlist}
         onOpenProfile={handleViewProfile}
         onOpenProSearch={handleOpenProSearch}
@@ -278,7 +276,7 @@ const App: React.FC = () => {
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
 
-        {/* Active Filter Bar (Only show if filters active and not in details/chart) */}
+        {/* Active Filter Bar */}
         {activeFiltersCount > 0 && !activeTab.startsWith('detail') && !activeTab.startsWith('chart') && (
           <div className="mb-6 flex justify-end">
             <div className="flex items-center gap-2 text-sm text-slate-500 bg-white px-3 py-1.5 rounded-lg border shadow-sm">
@@ -367,6 +365,9 @@ const App: React.FC = () => {
           initialQuery={proSearchState.query}
           initialResults={proSearchState.results}
           onSearchComplete={handleProSearchComplete}
+          availableTechnologies={allTechnologies}
+          availableThemes={allThemes}
+          availableBusinessGroups={allBusinessGroups}
         />
       )}
     </div>
