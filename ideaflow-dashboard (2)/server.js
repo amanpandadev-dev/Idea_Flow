@@ -7,10 +7,20 @@ import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import session from 'express-session';
+
+import { initChromaDB } from './backend/config/chroma.js';
+
+// Import Routers
+import contextRoutes from './backend/routes/contextRoutes.js';
+import agentRoutes from './backend/routes/agentRoutes.js';
+import semanticSearchRoutes from './backend/routes/semanticSearchRoutes.js';
 
 const { Pool } = pg;
 const app = express();
 const port = process.env.PORT || 3001;
+
+// --- Environment Variable Validation ---
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey123';
 const REFRESH_SECRET = process.env.REFRESH_SECRET || 'refreshsecretkey456'; // New Secret
 
@@ -33,12 +43,14 @@ if (process.env.API_KEY) {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Middleware
-app.use(cors());
+// --- Middleware ---
+app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
 app.use(express.json());
 
 // Database Connection Management
 let pool;
+
+
 
 if (process.env.DATABASE_URL) {
   pool = new Pool({
@@ -50,6 +62,19 @@ if (process.env.DATABASE_URL) {
   console.warn("⚠️ No DATABASE_URL found in .env file.");
 }
 
+const chromaClient = await initChromaDB();
+
+// Make ChromaDB and DB available to routes
+app.set('chromaClient', chromaClient);
+app.set('db', pool);
+
+
+
+// --- API Routes ---
+// New Agent and Context routes
+app.use('/api/context', contextRoutes);
+app.use('/api/agent', agentRoutes);
+app.use('/api/ideas', semanticSearchRoutes);
 // --- Helpers ---
 
 const cosineSimilarity = (vecA, vecB) => {
@@ -114,10 +139,13 @@ const mapDBToFrontend = (row, matchScore = 0) => {
     domain: row.challenge_opportunity || 'Other',
     status: row.build_phase || 'Submitted',
     businessGroup: row.idea_bg || 'Corporate Functions',
+    businessGroup: row.idea_bg || 'Corporate Functions',
     buildType: row.build_preference || 'New Solution / IP',
+    technologies: row.code_preference ? (row.code_preference.includes(',') ? row.code_preference.split(',').map(s => s.trim()) : [row.code_preference]) : [],
     technologies: row.code_preference ? (row.code_preference.includes(',') ? row.code_preference.split(',').map(s => s.trim()) : [row.code_preference]) : [],
     submissionDate: row.created_at,
     associateId: row.associate_id,
+    associateAccount: row.account || 'Unknown',
     associateAccount: row.account || 'Unknown',
     associateBusinessGroup: row.assoc_bg || 'Unknown',
     score: row.idea_score !== undefined && row.idea_score !== null ? safeInt(row.idea_score) : 0,
@@ -663,5 +691,6 @@ try {
   app.listen(port, () => console.log(`\n🚀 Server running on port ${port}`));
 } catch (e) {
   console.error('❌ Server startup error:', e);
+  process.exit(1);
 }
 

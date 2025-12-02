@@ -5,7 +5,7 @@ const API_URL = '/api';
 // Helper to get tokens
 const getTokens = () => {
   return {
-    accessToken: localStorage.getItem('token'), // Access Token
+    accessToken: localStorage.getItem('accessToken'), // Access Token
     refreshToken: localStorage.getItem('refreshToken') // Refresh Token
   };
 };
@@ -180,3 +180,223 @@ export const updateIdeaStatus = async (id: string, status: Status): Promise<void
 export const toggleLikeIdea = async (id: string): Promise<{ liked: boolean }> => {
   return fetchWithAuth(`${API_URL}/ideas/${id}/like`, { method: 'POST' });
 };
+
+// Phase-2: Agent Query
+export interface AgentResponse {
+  answer: string;
+  citations: {
+    internal: Array<{
+      ideaId: string;
+      title: string;
+      snippet: string;
+      domain?: string;
+      relevance: number;
+    }>;
+    external: Array<{
+      title: string;
+      url: string;
+      snippet: string;
+    }>;
+  };
+  reasoning?: string;
+  usedEphemeralContext: boolean;
+  processingTime: number;
+}
+
+export interface AgentSession {
+  id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  query: string;
+  history: string[];
+  result: AgentResponse | null;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+
+/**
+ * @deprecated Use session-based functions instead.
+ */
+export const queryAgent = async (
+  userQuery: string,
+  embeddingProvider: 'llama' | 'grok',
+  filters?: { businessGroups?: string[]; themes?: string[] },
+  synergyMode?: boolean
+): Promise<AgentResponse> => {
+  const response = await fetch(`${API_URL}/agent/query`, {
+    method: 'POST',
+    headers: getTokens(),
+    body: JSON.stringify({ userQuery, embeddingProvider, filters, synergyMode })
+  });
+  return fetchWithAuth(`${API_URL}/agent/query`, {
+    method: 'POST',
+    headers: getTokens(),
+    body: JSON.stringify({ userQuery, embeddingProvider, filters, synergyMode })
+  });
+};
+
+export const startAgentSession = async (
+  userQuery: string,
+  embeddingProvider: 'llama' | 'grok',
+  filters?: { businessGroups?: string[]; themes?: string[] }
+): Promise<{ success: boolean; jobId: string; }> => {
+  const response = await fetch(`${API_URL}/agent/session`, {
+    method: 'POST',
+    headers: getTokens(),
+    body: JSON.stringify({ userQuery, embeddingProvider, filters })
+  });
+  return fetchWithAuth(API_URL + '/agent/session', {
+    method: 'POST',
+    headers: getTokens(),
+    body: JSON.stringify({ userQuery, embeddingProvider, filters })
+  });
+};
+
+export const getAgentSessionStatus = async (jobId: string): Promise<AgentSession> => {
+  const response = await fetch(`${API_URL}/agent/session/${jobId}/status`, {
+    headers: getTokens()
+  });
+  return fetchWithAuth(API_URL + '/agent/session/' + jobId + '/status', {
+    headers: getTokens()
+  });
+};
+
+export const stopAgentSession = async (jobId: string): Promise<{ success: boolean; message: string; }> => {
+  const response = await fetch(`${API_URL}/agent/session/${jobId}/stop`, {
+    method: 'POST',
+    headers: getTokens(),
+  });
+  return fetchWithAuth(API_URL + '/agent/session/' + jobId + '/stop', {
+    method: 'POST',
+    headers: getTokens(),
+  });
+};
+
+// Phase-2: Context Upload
+export interface ContextUploadResponse {
+  success: boolean;
+  chunksProcessed: number;
+  themes: string[];
+  sessionId: string;
+  stats: {
+    originalLength: number;
+    chunkCount: number;
+    avgChunkLength: number;
+  };
+}
+
+export const uploadContext = async (file: File, embeddingProvider: 'llama' | 'grok'): Promise<ContextUploadResponse> => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('embeddingProvider', embeddingProvider);
+
+  const token = localStorage.getItem('token');
+  const response = await fetch(`${API_URL}/context/upload`, {
+    method: 'POST',
+    headers: {
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    },
+    body: formData
+  });
+  return fetchWithAuth(API_URL + '/context/upload', {
+    method: 'POST',
+    headers: {
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    },
+    body: formData
+  });
+};
+
+// Phase-2: Reset Context
+export const resetContext = async (): Promise<{ success: boolean; message: string }> => {
+  const response = await fetch(`${API_URL}/context/reset`, {
+    method: 'DELETE',
+    headers: getTokens()
+  });
+  return fetchWithAuth(API_URL + '/context/reset', {
+    method: 'DELETE',
+    headers: getTokens()
+  });
+};
+
+// Phase-2: Get Context Status
+export interface ContextStatus {
+  hasContext: boolean;
+  sessionId: string | null;
+  stats?: {
+    sessionId: string;
+    documentCount: number;
+    collectionName: string;
+  };
+}
+
+export const getContextStatus = async (): Promise<ContextStatus> => {
+  const response = await fetch(`${API_URL}/context/status`, {
+    headers: getTokens()
+  });
+  return fetchWithAuth(API_URL + '/context/status', {
+    headers: getTokens()
+  });
+};
+
+// Find ideas matching uploaded document keywords
+export interface MatchingIdea extends SemanticSearchResult {
+  matchedKeywords?: string[];
+}
+
+export interface MatchingIdeasResponse {
+  keywords: string[];
+  count: number;
+  ideas: MatchingIdea[];
+}
+
+export const findMatchingIdeas = async (embeddingProvider: 'llama' | 'grok'): Promise<MatchingIdeasResponse> => {
+  const response = await fetch(`${API_URL}/context/find-matching-ideas`, {
+    method: 'POST',
+    headers: getTokens(),
+    body: JSON.stringify({ embeddingProvider })
+  });
+  const data = await fetchWithAuth(API_URL + '/context/find-matching-ideas', {
+    method: 'POST',
+    headers: getTokens(),
+    body: JSON.stringify({ embeddingProvider })
+  });
+  return {
+    keywords: data.keywords || [],
+    count: data.count || 0,
+    ideas: data.ideas || []
+  };
+};
+
+// Semantic search for similar idea submissions
+export interface SemanticSearchResult {
+  id: string;
+  title: string;
+  description: string;
+  team: string;
+  tags: string[];
+  similarity: number;
+  createdAt: string;
+  category?: string;
+  status?: string;
+}
+
+export const semanticSearchIdeas = async (
+  query: string,
+  embeddingProvider: 'llama' | 'grok',
+  limit: number = 10
+): Promise<SemanticSearchResult[]> => {
+  const response = await fetch(`${API_URL}/ideas/semantic-search`, {
+    method: 'POST',
+    headers: getTokens(),
+    body: JSON.stringify({ query, embeddingProvider, limit })
+  });
+  const data = await fetchWithAuth(API_URL + '/ideas/semantic-search', {
+    method: 'POST',
+    headers: getTokens(),
+    body: JSON.stringify({ query, embeddingProvider, limit })
+  });
+  return data.results || [];
+};
+
