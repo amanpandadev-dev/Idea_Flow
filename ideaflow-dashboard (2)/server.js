@@ -16,6 +16,8 @@ import contextRoutes from './backend/routes/contextRoutes.js';
 import agentRoutes from './backend/routes/agentRoutes.js';
 import semanticSearchRoutes from './backend/routes/semanticSearchRoutes.js';
 import advancedSearchRoutes from './backend/routes/advancedSearchRoutes.js';
+import conversationalSearchRoutes from './backend/routes/conversationalSearchRoutes.js';
+import chatHistoryRoutes from './backend/routes/chatHistoryRoutes.js';
 
 const { Pool } = pg;
 const app = express();
@@ -107,8 +109,10 @@ app.locals.pool = pool;
 // New Agent and Context routes
 app.use('/api/context', contextRoutes);
 app.use('/api/agent', agentRoutes);
+app.use('/api/search', conversationalSearchRoutes); // Conversational search with chat interface
 app.use('/api/ideas', advancedSearchRoutes); // Advanced search with NLP
 app.use('/api/ideas', semanticSearchRoutes); // Legacy semantic search
+app.use('/api/chat', chatHistoryRoutes); // Chat history for Pro Search
 // --- Helpers ---
 
 // --- ADVANCED SCORING ALGORITHMS ---
@@ -203,7 +207,7 @@ async function getSemanticScore(text1, text2) {
 Text 1: "${text1.substring(0, 300)}"
 Text 2: "${text2.substring(0, 300)}"
 Return ONLY a decimal number between 0 and 1. Nothing else.`;
-    
+
     const result = await model.generateContent(prompt);
     const score = parseFloat(result.response.text().trim());
     return isNaN(score) ? 0 : Math.min(1, Math.max(0, score));
