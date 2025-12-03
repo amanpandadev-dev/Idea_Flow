@@ -50,8 +50,8 @@ export async function advancedHybridSearch({
 
   // STEP 1: NLP Query Enhancement (Spell Correction + Expansion)
   console.log(`[AdvancedSearch] 🧠 Applying NLP processing...`);
-  // Use Gemini 1.5 Flash (assuming user meant 1.5 when they said 2.5, or latest stable)
-  const nlpResult = await enhanceQuery(rawQuery, { useAI, apiKey, model: "gemini-1.5-flash" });
+  // Use Gemini 2.5 Flash (assuming user meant 2.5 when they said 2.5, or latest stable)
+  const nlpResult = await enhanceQuery(rawQuery, { useAI, apiKey, model: "gemini-2.5-flash" });
 
   console.log(`[AdvancedSearch] ✅ NLP Results:`);
   console.log(`  - Original: "${nlpResult.original}"`);

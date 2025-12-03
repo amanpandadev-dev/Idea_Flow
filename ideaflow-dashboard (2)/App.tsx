@@ -368,6 +368,7 @@ const App: React.FC = () => {
           availableTechnologies={allTechnologies}
           availableThemes={allThemes}
           availableBusinessGroups={allBusinessGroups}
+          userId={user?.emp_id || user?.id?.toString() || 'anonymous'}
         />
       )}
     </div>

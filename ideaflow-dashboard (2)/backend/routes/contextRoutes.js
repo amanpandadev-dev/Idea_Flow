@@ -91,21 +91,21 @@ router.post('/upload', upload.single('file'), async (req, res) => {
             return res.status(413).json({ error: true, message: 'File size exceeds 10MB limit' });
         }
         if (error.message.includes('Invalid PDF structure') || error.message.includes('corrupted')) {
-            return res.status(400).json({ 
-                error: true, 
-                message: 'The PDF file appears to be corrupted or has an unsupported structure. Try re-saving the PDF or using a different file.' 
+            return res.status(400).json({
+                error: true,
+                message: 'The PDF file appears to be corrupted or has an unsupported structure. Try re-saving the PDF or using a different file.'
             });
         }
         if (error.message.includes('encrypted') || error.message.includes('password')) {
-            return res.status(400).json({ 
-                error: true, 
-                message: 'The PDF file is encrypted or password-protected. Please provide an unprotected PDF.' 
+            return res.status(400).json({
+                error: true,
+                message: 'The PDF file is encrypted or password-protected. Please provide an unprotected PDF.'
             });
         }
         if (error.message.includes('No text content') || error.message.includes('no extractable text')) {
-            return res.status(400).json({ 
-                error: true, 
-                message: 'The PDF contains no extractable text. It may be a scanned image. Please use a PDF with selectable text.' 
+            return res.status(400).json({
+                error: true,
+                message: 'The PDF contains no extractable text. It may be a scanned image. Please use a PDF with selectable text.'
             });
         }
         res.status(500).json({ error: true, message: 'Failed to process document', details: error.message });
