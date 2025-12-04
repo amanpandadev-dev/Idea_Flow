@@ -183,8 +183,8 @@ export async function extractThemesWithAI(text) {
     }
 
     try {
-        // Using Gemini 1.5 Flash - Free tier with 1500 requests/day
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        // Using Gemini 2.0 Flash - Free tier with 1500 requests/day
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
         // Truncate text if too long to avoid token limits (approx 10k chars is safe for Flash input context)
         const inputContext = text.length > 15000 ? text.substring(0, 15000) + "..." : text;
