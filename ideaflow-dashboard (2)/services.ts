@@ -287,12 +287,12 @@ export const uploadContext = async (file: File, embeddingProvider: 'llama' | 'gr
     },
     body: formData
   });
-  
+
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.message || 'Upload failed');
   }
-  
+
   return response.json();
 };
 

@@ -34,8 +34,6 @@ const SPELL_CORRECTIONS = {
   'programm': 'program',
   'databse': 'database',
   'databas': 'database',
-  'api': 'API',
-  'apis': 'APIs',
 
   // Business
   'custmer': 'customer',
@@ -56,6 +54,20 @@ const SPELL_CORRECTIONS = {
   'seperate': 'separate',
   'occured': 'occurred',
   'sucessful': 'successful',
+  'realted': 'related',
+  'releted': 'related',
+  'diferent': 'different',
+  'diffrent': 'different',
+  'similiar': 'similar',
+  'simular': 'similar',
+  'definately': 'definitely',
+  'definate': 'definite',
+  'occassion': 'occasion',
+  'occassional': 'occasional',
+  'necesary': 'necessary',
+  'neccessary': 'necessary',
+  'recomend': 'recommend',
+  'reccommend': 'recommend'
 };
 
 // Domain-specific query expansions
@@ -207,7 +219,7 @@ export function processQuery(rawQuery) {
 /**
  * AI-powered query refinement using Gemini 2.0 Flash (Free Tier - 1500 req/day)
  */
-export async function refineQueryWithAI(rawQuery, apiKey, modelName = "gemini-2.0-flash-exp") {
+export async function refineQueryWithAI(rawQuery, apiKey, modelName = "gemini-2.5-flash") {
   if (!apiKey) {
     console.warn('[NLP] No API key provided, skipping AI refinement');
     return processQuery(rawQuery);
@@ -275,7 +287,7 @@ Enhanced Query:`;
  */
 export async function enhanceQuery(rawQuery, options = {}) {
   // Using Gemini 2.0 Flash - Free tier with 1500 requests/day
-  const { useAI = true, apiKey = null, model = "gemini-1.5-flash" } = options;
+  const { useAI = true, apiKey = null, model = "gemini-2.5-flash" } = options;
 
   console.log(`[NLP] Processing query: "${rawQuery}"`);
 
@@ -292,12 +304,320 @@ export async function enhanceQuery(rawQuery, options = {}) {
   return result;
 }
 
+/**
+ * CONVERSATIONAL SEARCH ENHANCEMENTS
+ */
+
+/**
+ * Detect query intent (search, filter, sort, refine)
+ */
+export function detectIntent(query) {
+  const lowerQuery = query.toLowerCase();
+
+  // Sort intent
+  if (lowerQuery.match(/\b(latest|recent|newest|oldest|top|best|highest|lowest)\b/)) {
+    return 'sort';
+  }
+
+  // Filter intent
+  if (lowerQuery.match(/\b(filter|only|just|show me|from|in|by)\b/)) {
+    return 'filter';
+  }
+
+  // Refine intent (follow-up)
+  if (lowerQuery.match(/\b(more|less|exclude|without|except|also)\b/)) {
+    return 'refine';
+  }
+
+  // Default: search
+  return 'search';
+}
+
+/**
+ * Parse temporal expressions (latest, recent, 2024, etc.)
+ */
+export function parseTemporalExpression(query) {
+  const lowerQuery = query.toLowerCase();
+  const currentYear = new Date().getFullYear();
+
+  const temporal = {
+    sortBy: null,
+    order: null,
+    year: null,
+    timeframe: null
+  };
+
+  // Latest/Recent
+  if (lowerQuery.match(/\b(latest|newest|recent)\b/)) {
+    temporal.sortBy = 'created_at';
+    temporal.order = 'desc';
+    temporal.timeframe = 'recent';
+  }
+
+  // Oldest
+  if (lowerQuery.match(/\b(oldest|earliest)\b/)) {
+    temporal.sortBy = 'created_at';
+    temporal.order = 'asc';
+  }
+
+  // Specific year (2024, 2023, etc.)
+  const yearMatch = query.match(/\b(20\d{2})\b/);
+  if (yearMatch) {
+    temporal.year = parseInt(yearMatch[1]);
+  }
+
+  // "This year"
+  if (lowerQuery.match(/\b(this year|current year)\b/)) {
+    temporal.year = currentYear;
+  }
+
+  // "Last year"
+  if (lowerQuery.match(/\b(last year)\b/)) {
+    temporal.year = currentYear - 1;
+  }
+
+  return temporal;
+}
+
+/**
+ * Extract entities (business group, domain, tech stack, build phase, etc.)
+ */
+export function extractEntities(query) {
+  const lowerQuery = query.toLowerCase();
+
+  const entities = {
+    businessGroup: null,
+    domain: null,
+    techStack: [],
+    buildPhase: null,
+    buildPreference: null,
+    scalability: null,
+    novelty: null,
+    participationWeek: null,
+    timeline: null,
+    sortBy: null
+  };
+
+  // Business Groups
+  const businessGroups = [
+    'Corporate Functions', 'Operations', 'Technology', 'Sales', 'Marketing',
+    'Finance', 'HR', 'Legal', 'Customer Service', 'Product'
+  ];
+  for (const bg of businessGroups) {
+    if (lowerQuery.includes(bg.toLowerCase())) {
+      entities.businessGroup = bg;
+      break;
+    }
+  }
+
+  // Domains/Industries
+  const domains = [
+    'Healthcare', 'Finance', 'Fintech', 'Banking', 'Insurance',
+    'Retail', 'E-commerce', 'Education', 'Manufacturing', 'Logistics',
+    'Transportation', 'Energy', 'Telecommunications', 'Media', 'Entertainment'
+  ];
+  for (const domain of domains) {
+    if (lowerQuery.includes(domain.toLowerCase())) {
+      entities.domain = domain;
+      break;
+    }
+  }
+
+  // Tech Stack
+  const techKeywords = [
+    'React', 'Angular', 'Vue', 'Node', 'Python', 'Java', 'JavaScript',
+    'TypeScript', 'Go', 'Rust', 'C++', 'C#', 'Ruby', 'PHP',
+    'Docker', 'Kubernetes', 'AWS', 'Azure', 'GCP', 'MongoDB', 'PostgreSQL',
+    'MySQL', 'Redis', 'Kafka', 'RabbitMQ', 'GraphQL', 'REST',
+    'Blockchain', 'AI', 'ML', 'Machine Learning', 'Deep Learning'
+  ];
+  for (const tech of techKeywords) {
+    if (lowerQuery.includes(tech.toLowerCase())) {
+      entities.techStack.push(tech);
+    }
+  }
+
+  // Build Phase
+  const buildPhaseMap = {
+    'submitted': 'Submitted',
+    'in progress': 'In Progress',
+    'ongoing': 'In Progress',
+    'active': 'In Progress',
+    'completed': 'Completed',
+    'finished': 'Completed',
+    'done': 'Completed',
+    'under review': 'Under Review',
+    'reviewing': 'Under Review'
+  };
+  for (const [keyword, phase] of Object.entries(buildPhaseMap)) {
+    if (lowerQuery.includes(keyword)) {
+      entities.buildPhase = phase;
+      break;
+    }
+  }
+
+  // Build Preference
+  const buildPreferenceMap = {
+    'new solution': 'New Solution / IP',
+    'new ip': 'New Solution / IP',
+    'enhancement': 'Enhancement',
+    'improve': 'Enhancement',
+    'poc': 'POC',
+    'proof of concept': 'POC',
+    'prototype': 'POC'
+  };
+  for (const [keyword, preference] of Object.entries(buildPreferenceMap)) {
+    if (lowerQuery.includes(keyword)) {
+      entities.buildPreference = preference;
+      break;
+    }
+  }
+
+  // Scalability
+  if (lowerQuery.match(/\b(high|highly|very)\s+(scalable|scalability)\b/)) {
+    entities.scalability = 'high';
+  } else if (lowerQuery.match(/\b(scalable|scalability)\b/)) {
+    entities.scalability = 'any';
+  }
+
+  // Novelty
+  if (lowerQuery.match(/\b(innovative|novel|unique|groundbreaking|cutting.?edge|revolutionary)\b/)) {
+    entities.novelty = 'high';
+  }
+
+  // Participation Week
+  const weekMatch = lowerQuery.match(/\b(?:week|wk)\s*(\d+)\b/);
+  if (weekMatch) {
+    entities.participationWeek = parseInt(weekMatch[1]);
+  }
+
+  // Timeline
+  const timelineMap = {
+    'short term': 'short',
+    'quick': 'short',
+    'fast': 'short',
+    'long term': 'long',
+    'extended': 'long',
+    'medium term': 'medium',
+    'moderate': 'medium'
+  };
+  for (const [keyword, timeline] of Object.entries(timelineMap)) {
+    if (lowerQuery.includes(keyword)) {
+      entities.timeline = timeline;
+      break;
+    }
+  }
+
+  // Sort criteria
+  if (lowerQuery.match(/\b(high|highest|top|best)\s+(score|rated|rating)\b/)) {
+    entities.sortBy = 'score';
+  } else if (lowerQuery.match(/\b(high|highest|top)\\s+(impact|score)\b/)) {
+    entities.sortBy = 'impactScore';
+  } else if (lowerQuery.match(/\b(most|highest)\\s+liked\b/)) {
+    entities.sortBy = 'likesCount';
+  }
+
+  return entities;
+}
+
+/**
+ * Parse conversational query with full context
+ */
+export function parseConversationalQuery(query, previousContext = {}) {
+  const intent = detectIntent(query);
+  const temporal = parseTemporalExpression(query);
+  const entities = extractEntities(query);
+  const processed = processQuery(query);
+
+  // Build filters from entities and temporal data
+  const filters = {};
+
+  if (entities.businessGroup) filters.businessGroup = entities.businessGroup;
+  if (entities.domain) filters.domain = entities.domain;
+  if (entities.techStack.length > 0) filters.techStack = entities.techStack;
+  if (entities.buildPhase) filters.buildPhase = entities.buildPhase;
+  if (entities.buildPreference) filters.buildPreference = entities.buildPreference;
+  if (entities.scalability) filters.scalability = entities.scalability;
+  if (entities.novelty) filters.novelty = entities.novelty;
+  if (entities.participationWeek) filters.participationWeek = entities.participationWeek;
+  if (entities.timeline) filters.timeline = entities.timeline;
+  if (temporal.year) filters.year = temporal.year;
+
+  // Determine sort order
+  let sortBy = entities.sortBy || temporal.sortBy || previousContext.sortBy;
+  let sortOrder = temporal.order || previousContext.sortOrder || 'desc';
+
+  // Merge with previous context for refinement
+  if (intent === 'refine' && previousContext.filters) {
+    Object.assign(filters, previousContext.filters, filters);
+  }
+
+  return {
+    intent,
+    query: processed.corrected,
+    keywords: processed.expanded,
+    filters,
+    sortBy,
+    sortOrder,
+    temporal,
+    entities,
+    raw: query
+  };
+}
+
+/**
+ * Generate AI response message for search results
+ */
+export function generateAIResponse(parsedQuery, resultCount, context = {}) {
+  const { intent, filters, temporal, entities } = parsedQuery;
+
+  let response = '';
+
+  // Greeting based on intent
+  if (intent === 'search') {
+    response = `Found ${resultCount} ideas`;
+  } else if (intent === 'filter') {
+    response = `Showing ${resultCount} results`;
+  } else if (intent === 'refine') {
+    response = `Refined to ${resultCount} ideas`;
+  } else if (intent === 'sort') {
+    response = `Sorted ${resultCount} ideas`;
+  }
+
+  // Add filter details
+  const filterDetails = [];
+  if (filters.domain) filterDetails.push(`in ${filters.domain}`);
+  if (filters.businessGroup) filterDetails.push(`from ${filters.businessGroup}`);
+  if (filters.techStack && filters.techStack.length > 0) {
+    filterDetails.push(`using ${filters.techStack.join(', ')}`);
+  }
+  if (filters.year) filterDetails.push(`from ${filters.year}`);
+
+  if (filterDetails.length > 0) {
+    response += ` ${filterDetails.join(' ')}`;
+  }
+
+  // Add temporal context
+  if (temporal.timeframe === 'recent') {
+    response += '. Showing most recent first';
+  }
+
+  response += '.';
+
+  return response;
+}
+
 export default {
   correctSpelling,
   expandQuery,
   processQuery,
   refineQueryWithAI,
   enhanceQuery,
+  detectIntent,
+  parseTemporalExpression,
+  extractEntities,
+  parseConversationalQuery,
+  generateAIResponse,
   SPELL_CORRECTIONS,
   QUERY_EXPANSIONS
 };

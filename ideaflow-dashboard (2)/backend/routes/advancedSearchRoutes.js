@@ -37,7 +37,7 @@ async function getSemanticRelevanceScore(ai, query, docText) {
   if (!ai || !query || !docText) return 0;
 
   try {
-    const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = ai.getGenerativeModel({ model: "gemini-2.5-flash" });
     const prompt = `Rate the semantic relevance of the following document to the search query on a scale of 0-100.
     
 Query: "${query}"

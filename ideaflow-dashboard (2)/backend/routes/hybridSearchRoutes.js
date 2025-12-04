@@ -40,7 +40,7 @@ router.get('/hybrid', async (req, res) => {
         let refinedQuery = q.toString();
         if (aiAvailable && ai) {
             try {
-                const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+                const model = ai.getGenerativeModel({ model: "gemini-2.5-flash" });
                 const prompt = `You are an intelligent search query optimizer for an innovation idea repository.
 
 Task: Analyze and enhance the user's search query to improve search results.
@@ -123,7 +123,12 @@ Enhanced Query:`;
         i.summary,
         i.challenge_opportunity,
         i.code_preference,
-        i.business_group
+        i.business_group,
+        i.scalability,
+        i.novelty,
+        i.benefits,
+        i.risks,
+        i.responsible_ai
       FROM ideas i
       WHERE 
         (
@@ -132,14 +137,22 @@ Enhanced Query:`;
                 COALESCE(i.summary, '') || ' ' || 
                 COALESCE(i.challenge_opportunity, '') || ' ' || 
                 COALESCE(i.code_preference, '') || ' ' || 
-                COALESCE(i.business_group, '')
+                COALESCE(i.business_group, '') || ' ' ||
+                COALESCE(i.scalability, '') || ' ' ||
+                COALESCE(i.novelty, '') || ' ' ||
+                COALESCE(i.benefits, '') || ' ' ||
+                COALESCE(i.risks, '') || ' ' ||
+                COALESCE(i.responsible_ai, '')
             ) @@ websearch_to_tsquery('english', $1)
             OR
             to_tsvector('english', 
                 COALESCE(i.title, '') || ' ' || 
                 COALESCE(i.summary, '') || ' ' || 
                 COALESCE(i.challenge_opportunity, '') || ' ' || 
-                COALESCE(i.code_preference, '')
+                COALESCE(i.code_preference, '') || ' ' ||
+                COALESCE(i.scalability, '') || ' ' ||
+                COALESCE(i.novelty, '') || ' ' ||
+                COALESCE(i.benefits, '')
             ) @@ to_tsquery('english', $2)
         )
         ${filterClauses}
@@ -157,7 +170,7 @@ Enhanced Query:`;
 
         // STEP 5: Apply Hybrid Search Algorithm
         const getDocText = (doc) => {
-            return `${doc.title || ''} ${doc.summary || ''} ${doc.challenge_opportunity || ''} ${doc.code_preference || ''}`;
+            return `${doc.title || ''} ${doc.summary || ''} ${doc.challenge_opportunity || ''} ${doc.code_preference || ''} ${doc.scalability || ''} ${doc.novelty || ''} ${doc.benefits || ''} ${doc.risks || ''} ${doc.responsible_ai || ''}`;
         };
 
         const getEmbedding = async (doc) => {
