@@ -17,6 +17,8 @@ import agentRoutes from './backend/routes/agentRoutes.js';
 import semanticSearchRoutes from './backend/routes/semanticSearchRoutes.js';
 import advancedSearchRoutes from './backend/routes/advancedSearchRoutes.js';
 import conversationRoutes from './backend/routes/conversationRoutes.js';
+import proSearchRoutes from './backend/routes/proSearchRoutes.js';
+import chatHistoryRoutes from './backend/routes/chatHistoryRoutes.js';
 const { Pool } = pg;
 const app = express();
 const port = process.env.PORT || 3001;
@@ -115,6 +117,8 @@ app.locals.pool = pool;
 // New Agent and Context routes
 app.use('/api/context', contextRoutes);
 app.use('/api/agent', agentRoutes);
+app.use('/api/search', proSearchRoutes); // Pro Search with ChromaDB
+app.use('/api/chat', chatHistoryRoutes); // Chat history for Pro Search
 app.use('/api/ideas', advancedSearchRoutes); // Advanced search with NLP
 app.use('/api/ideas', semanticSearchRoutes); // Legacy semantic search
 // --- Helpers ---
@@ -206,7 +210,7 @@ async function getEmbedding(text) {
 async function getSemanticScore(text1, text2) {
   if (!ai || !aiAvailable || !text1 || !text2) return 0;
   try {
-    const model = ai.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    const model = ai.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
     const prompt = `Rate the semantic similarity between these two texts on a scale of 0-1.
 Text 1: "${text1.substring(0, 300)}"
 Text 2: "${text2.substring(0, 300)}"
@@ -225,7 +229,7 @@ Return ONLY a decimal number between 0 and 1. Nothing else.`;
 async function refineQueryWithAI(rawQuery) {
   if (!ai || !aiAvailable) return rawQuery;
   try {
-    const model = ai.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    const model = ai.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
     const prompt = `You are an intelligent search query optimizer for an innovation idea repository.
 
 Task: Analyze and enhance the user's search query to improve search results.

@@ -30,10 +30,11 @@ initializeGemini();
 // Cache for ideas collection
 let ideasCollection = null;
 let lastIndexTime = null;
-const INDEX_REFRESH_INTERVAL = 10 * 60 * 1000; // 10 minutes
+let isIndexing = false; // Prevent concurrent indexing
+const INDEX_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
 
 /**
- * Generate embedding using Gemini (with fallback)
+ * Generate embedding using Gemini (with robust fallback)
  */
 async function getEmbedding(text) {
     if (!text || text.trim().length === 0) {
@@ -41,68 +42,129 @@ async function getEmbedding(text) {
     }
 
     // Truncate to avoid token limits
-    const truncatedText = text.substring(0, 2000);
+    const truncatedText = text.substring(0, 1500);
 
+    // Try Gemini first, but with quick timeout
     if (isGeminiAvailable()) {
         try {
-            return await generateGeminiEmbeddingWithRetry(truncatedText);
+            const embedding = await Promise.race([
+                generateGeminiEmbeddingWithRetry(truncatedText, 2), // Max 2 retries
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Embedding timeout')), 10000)
+                )
+            ]);
+            return embedding;
         } catch (error) {
-            console.warn('[Pro Search] Gemini embedding failed, using fallback:', error.message);
+            console.warn('[Pro Search] Gemini embedding failed, using local fallback');
         }
     }
 
-    // Fallback: Simple hash-based embedding (for when Gemini is unavailable)
-    return generateSimpleEmbedding(truncatedText);
+    // Fallback: TF-IDF style embedding (more meaningful than simple hash)
+    return generateLocalEmbedding(truncatedText);
 }
 
 /**
- * Fallback embedding generator (deterministic hash-based)
+ * Local TF-IDF style embedding generator (no external API needed)
  */
-function generateSimpleEmbedding(text) {
-    const keywords = text.toLowerCase().split(/\s+/);
-    const embedding = new Array(768).fill(0); // Match Gemini dimension
+function generateLocalEmbedding(text) {
+    const EMBEDDING_DIM = 768;
+    const embedding = new Array(EMBEDDING_DIM).fill(0);
+    
+    // Tokenize and clean
+    const words = text.toLowerCase()
+        .replace(/[^\w\s]/g, ' ')
+        .split(/\s+/)
+        .filter(w => w.length > 2);
+    
+    if (words.length === 0) {
+        return embedding;
+    }
 
-    keywords.forEach((word, idx) => {
-        const hash = word.split('').reduce((acc, char, i) => 
-            acc + char.charCodeAt(0) * (i + 1), 0);
-        const index = hash % embedding.length;
-        embedding[index] += 1 / (idx + 1);
+    // Word frequency
+    const wordFreq = {};
+    words.forEach(word => {
+        wordFreq[word] = (wordFreq[word] || 0) + 1;
     });
 
-    // Normalize
+    // Generate embedding using multiple hash functions for better distribution
+    Object.entries(wordFreq).forEach(([word, freq]) => {
+        // Multiple hash positions for each word
+        for (let h = 0; h < 3; h++) {
+            const hash = word.split('').reduce((acc, char, i) => 
+                acc + char.charCodeAt(0) * (i + 1) * (h + 1), h * 1000);
+            const index = Math.abs(hash) % EMBEDDING_DIM;
+            
+            // TF-IDF style weighting
+            const tf = freq / words.length;
+            const idf = Math.log(1 + 1 / (freq + 1));
+            embedding[index] += tf * idf * (h === 0 ? 1 : 0.5);
+        }
+    });
+
+    // Normalize to unit vector
     const magnitude = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0));
-    return embedding.map(val => magnitude > 0 ? val / magnitude : 0);
+    if (magnitude > 0) {
+        for (let i = 0; i < EMBEDDING_DIM; i++) {
+            embedding[i] /= magnitude;
+        }
+    }
+
+    return embedding;
 }
 
+
+
+// Track if we've already checked the index this session
+let indexChecked = false;
+
 /**
- * Index ideas from database to ChromaDB
+ * Ensure ChromaDB index exists (index only once per server session)
  */
 async function indexIdeasToChroma(pool) {
-    if (lastIndexTime && (Date.now() - lastIndexTime) < INDEX_REFRESH_INTERVAL) {
-        return; // Skip if recently indexed
+    // FAST PATH: Already indexed this session - skip everything
+    if (indexChecked) {
+        return;
+    }
+
+    // Prevent concurrent indexing
+    if (isIndexing) {
+        return;
     }
 
     try {
         const chromaClient = getChromaClient();
         
-        // Check if already indexed
-        if (chromaClient.hasCollection('ideas_search')) {
-            const stats = chromaClient.getStats('ideas_search');
-            if (stats && stats.documentCount > 0) {
-                lastIndexTime = Date.now();
-                console.log(`[Pro Search] Using existing index with ${stats.documentCount} ideas`);
-                return;
-            }
+        // Check if collection already has data (loaded from disk)
+        const hasCollection = chromaClient.hasCollection('ideas_search');
+        const stats = hasCollection ? chromaClient.getStats('ideas_search') : null;
+        
+        if (hasCollection && stats && stats.documentCount > 0) {
+            // Collection exists with data - mark as checked and skip indexing
+            lastIndexTime = Date.now();
+            indexChecked = true;
+            console.log(`[Pro Search] ✅ Using existing index with ${stats.documentCount} ideas (loaded from disk)`);
+            return;
         }
+        
+        // Set indexing flag to prevent concurrent runs
+        isIndexing = true;
 
         console.log('[Pro Search] Indexing ideas to ChromaDB...');
         
+        // Fetch ALL fields from ideas table for comprehensive indexing
         const result = await pool.query(`
-            SELECT idea_id, title, summary, challenge_opportunity, 
-                   business_group, code_preference, score, created_at
+            SELECT 
+                idea_id, title, summary, challenge_opportunity,
+                scalability, novelty, benefits, risks,
+                responsible_ai, additional_info, prototype_url,
+                timeline, success_metrics, expected_outcomes,
+                scalability_potential, business_model, competitive_analysis,
+                risk_mitigation, participation_week, build_phase,
+                build_preference, code_preference, business_group,
+                score, created_at, updated_at
             FROM ideas
             ORDER BY created_at DESC
-            LIMIT 500
+            LIMIT 1000
         `);
 
         if (result.rows.length === 0) {
@@ -111,7 +173,7 @@ async function indexIdeasToChroma(pool) {
         }
 
         // Process in batches
-        const batchSize = 20;
+        const batchSize = 25;
         let indexed = 0;
 
         for (let i = 0; i < result.rows.length; i += batchSize) {
@@ -122,20 +184,37 @@ async function indexIdeasToChroma(pool) {
             const metadatas = [];
 
             for (const idea of batch) {
-                const text = [
+                // Create comprehensive searchable text from ALL fields
+                const textParts = [
                     idea.title,
-                    idea.summary || '',
-                    idea.challenge_opportunity || '',
-                    idea.code_preference || ''
-                ].join(' ').trim();
+                    idea.summary,
+                    idea.challenge_opportunity,
+                    idea.benefits,
+                    idea.risks,
+                    idea.additional_info,
+                    idea.success_metrics,
+                    idea.expected_outcomes,
+                    idea.business_model,
+                    idea.competitive_analysis,
+                    idea.risk_mitigation,
+                    idea.code_preference,
+                    idea.build_preference,
+                    idea.scalability,
+                    idea.novelty,
+                    idea.timeline,
+                    idea.responsible_ai
+                ].filter(Boolean).join(' ').trim();
 
-                if (!text) continue;
+                if (!textParts || textParts.length < 10) continue;
 
                 try {
-                    const embedding = await getEmbedding(text);
+                    // Truncate for embedding but keep it comprehensive
+                    const embedding = await getEmbedding(textParts.substring(0, 3000));
                     
-                    documents.push(text);
+                    documents.push(textParts);
                     embeddings.push(embedding);
+                    
+                    // Store comprehensive metadata for filtering and display
                     metadatas.push({
                         idea_id: idea.idea_id,
                         title: idea.title || '',
@@ -143,8 +222,18 @@ async function indexIdeasToChroma(pool) {
                         domain: idea.challenge_opportunity || '',
                         businessGroup: idea.business_group || '',
                         technologies: idea.code_preference || '',
+                        buildPhase: idea.build_phase || '',
+                        buildPreference: idea.build_preference || '',
+                        scalability: idea.scalability || '',
+                        novelty: idea.novelty || '',
+                        timeline: idea.timeline || '',
+                        participationWeek: idea.participation_week || '',
                         score: idea.score || 0,
-                        created_at: idea.created_at?.toISOString() || ''
+                        created_at: idea.created_at?.toISOString() || '',
+                        // Additional searchable fields in metadata
+                        benefits: (idea.benefits || '').substring(0, 300),
+                        risks: (idea.risks || '').substring(0, 300),
+                        successMetrics: (idea.success_metrics || '').substring(0, 300)
                     });
                     indexed++;
                 } catch (embError) {
@@ -158,15 +247,20 @@ async function indexIdeasToChroma(pool) {
 
             // Small delay to avoid rate limits
             if (i + batchSize < result.rows.length) {
-                await new Promise(r => setTimeout(r, 100));
+                await new Promise(r => setTimeout(r, 50));
             }
         }
 
         lastIndexTime = Date.now();
-        console.log(`✅ [Pro Search] Indexed ${indexed} ideas to ChromaDB`);
+        indexChecked = true; // Mark as indexed for this session
+        console.log(`✅ [Pro Search] Indexed ${indexed} ideas to ChromaDB (will not re-index this session)`);
 
     } catch (error) {
         console.error('[Pro Search] Indexing error:', error.message);
+        // Still mark as checked to prevent retry loops
+        indexChecked = true;
+    } finally {
+        isIndexing = false; // Always reset the flag
     }
 }
 
@@ -196,9 +290,11 @@ async function semanticSearch(query, filters = {}, topK = 25) {
             const metadata = results.metadatas[idx] || {};
             const distance = results.distances[idx] || 1;
             const similarity = Math.max(0, Math.round((1 - distance) * 100));
+            const dbId = metadata.idea_id;
 
             return {
-                id: metadata.idea_id,
+                id: `IDEA-${dbId}`, // Format as string ID for frontend
+                dbId: dbId, // Keep numeric ID for database operations
                 title: metadata.title || 'Untitled',
                 description: metadata.summary || doc.substring(0, 300),
                 domain: metadata.domain || 'General',
@@ -401,6 +497,22 @@ router.post('/conversational', async (req, res) => {
 
         // STEP 1: Context Validation - Block off-topic/confidential queries
         const validation = validateQuery(trimmedQuery);
+        
+        // Handle greetings specially
+        if (validation.isGreeting) {
+            console.log(`[Pro Search] Greeting detected: "${trimmedQuery}"`);
+            return res.json({
+                results: [],
+                aiResponse: "Hi there! 👋 I'm your Pro Search assistant. I can help you discover innovation ideas and projects. Try asking me things like:\n\n• \"Show me latest AI projects\"\n• \"Find healthcare innovations\"\n• \"Search for React applications\"\n\nWhat would you like to explore today?",
+                suggestions: ['Show me latest ideas', 'Find AI projects', 'Healthcare innovations', 'Cloud solutions'],
+                metadata: { 
+                    intent: 'greeting', 
+                    filters: {}, 
+                    totalResults: 0 
+                }
+            });
+        }
+        
         if (!validation.valid) {
             console.log(`[Pro Search] Rejected query: "${trimmedQuery}" - ${validation.reason}`);
             const errorMsg = generateErrorMessage(validation.reason, validation.suggestion);
@@ -436,7 +548,7 @@ router.post('/conversational', async (req, res) => {
         const nlpResult = await enhanceQuery(trimmedQuery, { 
             useAI: !!apiKey && isGeminiAvailable(), 
             apiKey,
-            model: 'gemini-2.0-flash-exp'
+            model: 'gemini-2.5-flash-lite'
         });
 
         console.log(`[Pro Search] NLP: "${trimmedQuery}" → "${nlpResult.corrected}"`);
@@ -450,26 +562,57 @@ router.post('/conversational', async (req, res) => {
 
         // STEP 6: Fallback to database if no semantic results
         if (results.length === 0) {
-            console.log('[Pro Search] No semantic results, trying database...');
+            console.log('[Pro Search] No semantic results, trying keyword search...');
             
-            const searchTerms = nlpResult.tokens || [trimmedQuery];
-            const likePattern = `%${searchTerms[0]}%`;
+            // Use multiple search terms from NLP processing
+            const searchTerms = nlpResult.tokens || trimmedQuery.split(/\s+/);
+            const primaryTerm = searchTerms[0] || trimmedQuery;
+            
+            // Build dynamic OR conditions for better matching
+            let whereConditions = [];
+            let params = [];
+            let paramIndex = 1;
+            
+            // Add conditions for each significant term (max 3)
+            const significantTerms = searchTerms.filter(t => t.length > 2).slice(0, 3);
+            
+            for (const term of significantTerms) {
+                whereConditions.push(`(title ILIKE $${paramIndex} OR summary ILIKE $${paramIndex} OR challenge_opportunity ILIKE $${paramIndex} OR code_preference ILIKE $${paramIndex})`);
+                params.push(`%${term}%`);
+                paramIndex++;
+            }
+            
+            // Fallback if no terms
+            if (whereConditions.length === 0) {
+                whereConditions.push(`(title ILIKE $1 OR summary ILIKE $1)`);
+                params.push(`%${primaryTerm}%`);
+            }
             
             const dbResult = await pool.query(`
-                SELECT idea_id as id, title, summary as description,
+                SELECT idea_id, title, summary as description,
                        challenge_opportunity as domain, business_group as "businessGroup",
                        COALESCE(code_preference, '') as technologies,
                        created_at as "submissionDate", score
                 FROM ideas
-                WHERE title ILIKE $1 OR summary ILIKE $1 OR challenge_opportunity ILIKE $1
+                WHERE ${whereConditions.join(' OR ')}
                 ORDER BY score DESC, created_at DESC
                 LIMIT 20
-            `, [likePattern]);
+            `, params);
 
             results = dbResult.rows.map(row => ({
-                ...row,
-                matchScore: 60 // Default score for DB results
+                id: `IDEA-${row.idea_id}`, // Format as string ID for frontend
+                dbId: row.idea_id, // Keep numeric ID for database operations
+                title: row.title,
+                description: row.description,
+                domain: row.domain || 'General',
+                businessGroup: row.businessGroup || 'Unknown',
+                technologies: row.technologies || '',
+                submissionDate: row.submissionDate,
+                score: row.score || 0,
+                matchScore: 65 // Default score for keyword results
             }));
+            
+            console.log(`[Pro Search] Keyword search found ${results.length} results`);
         }
 
         // Limit results

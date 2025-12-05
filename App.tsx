@@ -224,7 +224,14 @@ const App: React.FC = () => {
   const handleViewDetails = (idea: Idea) => {
     if (proSearchState.isOpen) {
       setPreviousTab('pro-search');
-      setProSearchState(prev => ({ ...prev, isOpen: false }));
+      // Store the idea in proSearchState.results so it can be found when rendering details
+      setProSearchState(prev => ({
+        ...prev,
+        isOpen: false,
+        results: prev.results.some(r => r.id === idea.id) 
+          ? prev.results 
+          : [...prev.results, idea]
+      }));
     } else {
       setPreviousTab(activeTab);
     }
