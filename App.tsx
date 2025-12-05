@@ -221,6 +221,23 @@ const App: React.FC = () => {
     setProSearchState({ query, results, isOpen: true, hasSearched: true });
   };
 
+  // Handle like toggle to update liked ideas count dynamically
+  const handleLikeToggle = useCallback((ideaId: string, isNowLiked: boolean) => {
+    setLikedIdeas(prev => {
+      if (isNowLiked) {
+        // Add to liked ideas
+        const idea = ideas.find(i => i.id === ideaId);
+        if (idea && !prev.some(i => i.id === ideaId)) {
+          return [...prev, idea];
+        }
+      } else {
+        // Remove from liked ideas
+        return prev.filter(i => i.id !== ideaId);
+      }
+      return prev;
+    });
+  }, [ideas]);
+
   const handleViewDetails = (idea: Idea) => {
     if (proSearchState.isOpen) {
       setPreviousTab('pro-search');
@@ -228,8 +245,8 @@ const App: React.FC = () => {
       setProSearchState(prev => ({
         ...prev,
         isOpen: false,
-        results: prev.results.some(r => r.id === idea.id) 
-          ? prev.results 
+        results: prev.results.some(r => r.id === idea.id)
+          ? prev.results
           : [...prev.results, idea]
       }));
     } else {
@@ -307,7 +324,7 @@ const App: React.FC = () => {
               onViewDetails={handleViewDetails}
               onOpenExplore={() => setIsExploreOpen(true)}
               isGlobalFilterActive={activeFiltersCount > 0}
-              onRefreshData={handleRefreshData}
+              onLikeToggle={handleLikeToggle}
               onSearch={handleSearch}
               isSearching={isSearching}
             />

@@ -20,14 +20,14 @@ const API_KEY = process.env.API_KEY;
  */
 export async function executeAgent(jobId, userQuery, pool, httpSessionId = null, options = {}) {
     const startTime = Date.now();
-    const { embeddingProvider = 'gemini' } = options;
+    const { embeddingProvider = 'gemini', userId = null } = options;
 
     try {
         console.log(`[Agent Job ${jobId}] Starting...`);
         sessionManager.updateSession(jobId, { status: 'running', stage: 'starting' });
 
-        // Initialize tools
-        const internalTool = new InternalRAGTool(pool, httpSessionId, embeddingProvider);
+        // Initialize tools - pass userId instead of httpSessionId for context isolation
+        const internalTool = new InternalRAGTool(pool, userId, embeddingProvider);
         const tavilyTool = new TavilyTool();
 
         // --- Step 1: Execute tools in parallel ---

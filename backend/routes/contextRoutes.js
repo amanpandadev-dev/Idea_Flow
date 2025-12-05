@@ -3,8 +3,12 @@ import multer from 'multer';
 import { processDocument } from '../services/documentService.js';
 import { generateEmbeddings } from '../services/embeddingService.js';
 import { addDocuments, deleteCollection, getCollectionStats } from '../services/vectorStoreService.js';
+import auth from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Apply auth middleware to all context routes
+router.use(auth);
 
 // Configure multer for file uploads
 const upload = multer({
@@ -36,20 +40,22 @@ router.post('/upload', upload.single('file'), async (req, res) => {
             return res.status(400).json({ error: true, message: 'No file uploaded' });
         }
 
-        const sessionId = req.session?.id;
-        if (!sessionId) {
-            return res.status(400).json({ error: true, message: 'Session not available' });
+        // Get user ID from JWT token
+        const userId = req.user?.user?.emp_id;
+        if (!userId) {
+            return res.status(401).json({ error: true, message: 'User not authenticated' });
         }
 
         const { embeddingProvider = 'llama' } = req.body;
+        const collectionId = `user_${userId}`;
 
         // --- Vector Mismatch Prevention ---
         if (req.session.contextProvider && req.session.contextProvider !== embeddingProvider) {
             console.warn(`[Context] Provider changed from [${req.session.contextProvider}] to [${embeddingProvider}]. Resetting existing context to prevent dimension mismatch.`);
-            await deleteCollection(sessionId);
+            await deleteCollection(collectionId);
         }
 
-        console.log(`📤 Document upload for session ${sessionId} using [${embeddingProvider}]: ${req.file.originalname}`);
+        console.log(`📤 Document upload for user ${userId} using [${embeddingProvider}]: ${req.file.originalname}`);
 
         const processed = await processDocument(req.file.buffer, req.file.mimetype);
         if (!processed.success) {
@@ -57,18 +63,46 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         }
 
         console.log(`🔢 Generating embeddings for ${processed.chunks.length} chunks...`);
-        const embeddings = await generateEmbeddings(processed.chunks, embeddingProvider);
 
-        const metadatas = processed.chunks.map((chunk, index) => ({
-            index,
-            chunkLength: chunk.length,
-            filename: req.file.originalname,
-            uploadedAt: new Date().toISOString()
-        }));
-        await addDocuments(sessionId, processed.chunks, embeddings, metadatas);
+        let embeddings;
+        let actualProvider = embeddingProvider;
 
-        // Store the provider used to create this context
-        req.session.contextProvider = embeddingProvider;
+        try {
+            embeddings = await generateEmbeddings(processed.chunks, embeddingProvider);
+        } catch (error) {
+            // If Grok fails, automatically fallback to Gemini
+            if (embeddingProvider === 'grok') {
+                console.warn(`⚠️  Grok embeddings failed: ${error.message}`);
+                console.log(`🔄 Falling back to Gemini embeddings...`);
+                actualProvider = 'gemini';
+                embeddings = await generateEmbeddings(processed.chunks, 'gemini');
+            } else {
+                throw error;
+            }
+        }
+
+        const metadatas = processed.chunks.map((chunk, index) => {
+            const baseMetadata = {
+                index,
+                chunkLength: chunk.length,
+                filename: req.file.originalname,
+                uploadedAt: new Date().toISOString(),
+                userId
+            };
+
+            // Store suggested questions and keywords in the first chunk's metadata
+            if (index === 0) {
+                baseMetadata.suggestedQuestions = processed.suggestedQuestions || [];
+                baseMetadata.keywords = processed.keywords || [];
+                baseMetadata.themes = processed.themes || [];
+            }
+
+            return baseMetadata;
+        });
+        await addDocuments(collectionId, processed.chunks, embeddings, metadatas);
+
+        // Store the provider used to create this context (may be different if fallback occurred)
+        req.session.contextProvider = actualProvider;
 
         // Store enhanced context metadata in session for later retrieval
         req.session.contextMetadata = {
@@ -86,8 +120,10 @@ router.post('/upload', upload.single('file'), async (req, res) => {
             keywords: processed.keywords || [],
             suggestedQuestions: processed.suggestedQuestions || [],
             ragData: processed.ragData || { themes: processed.themes },
-            sessionId,
-            stats: processed.stats
+            userId,
+            collectionId,
+            stats: processed.stats,
+            embeddingProvider: actualProvider // Return the actual provider used
         });
 
     } catch (error) {
@@ -99,21 +135,21 @@ router.post('/upload', upload.single('file'), async (req, res) => {
             return res.status(413).json({ error: true, message: 'File size exceeds 10MB limit' });
         }
         if (error.message.includes('Invalid PDF structure') || error.message.includes('corrupted')) {
-            return res.status(400).json({ 
-                error: true, 
-                message: 'The PDF file appears to be corrupted or has an unsupported structure. Try re-saving the PDF or using a different file.' 
+            return res.status(400).json({
+                error: true,
+                message: 'The PDF file appears to be corrupted or has an unsupported structure. Try re-saving the PDF or using a different file.'
             });
         }
         if (error.message.includes('encrypted') || error.message.includes('password')) {
-            return res.status(400).json({ 
-                error: true, 
-                message: 'The PDF file is encrypted or password-protected. Please provide an unprotected PDF.' 
+            return res.status(400).json({
+                error: true,
+                message: 'The PDF file is encrypted or password-protected. Please provide an unprotected PDF.'
             });
         }
         if (error.message.includes('No text content') || error.message.includes('no extractable text')) {
-            return res.status(400).json({ 
-                error: true, 
-                message: 'The PDF contains no extractable text. It may be a scanned image. Please use a PDF with selectable text.' 
+            return res.status(400).json({
+                error: true,
+                message: 'The PDF contains no extractable text. It may be a scanned image. Please use a PDF with selectable text.'
             });
         }
         res.status(500).json({ error: true, message: 'Failed to process document', details: error.message });
@@ -126,13 +162,14 @@ router.post('/upload', upload.single('file'), async (req, res) => {
  */
 router.delete('/reset', async (req, res) => {
     try {
-        const sessionId = req.session?.id;
-        if (!sessionId) {
-            return res.status(400).json({ error: true, message: 'No active session' });
+        const userId = req.user?.user?.emp_id;
+        if (!userId) {
+            return res.status(401).json({ error: true, message: 'User not authenticated' });
         }
 
-        console.log(`🗑️  Resetting context for session ${sessionId}`);
-        const deleted = await deleteCollection(sessionId);
+        const collectionId = `user_${userId}`;
+        console.log(`🗑️  Resetting context for user ${userId}`);
+        const deleted = await deleteCollection(collectionId);
 
         // Also clear the provider and metadata from the session
         delete req.session.contextProvider;
@@ -141,7 +178,8 @@ router.delete('/reset', async (req, res) => {
         res.json({
             success: deleted,
             message: deleted ? 'Context cleared successfully' : 'No context to clear',
-            sessionId
+            userId,
+            collectionId
         });
 
     } catch (error) {
@@ -156,28 +194,61 @@ router.delete('/reset', async (req, res) => {
  */
 router.get('/status', async (req, res) => {
     try {
-        const sessionId = req.session?.id;
+        const userId = req.user?.user?.emp_id;
 
-        if (!sessionId) {
-            return res.json({
-                hasContext: false,
-                sessionId: null
-            });
+        if (!userId) {
+            return res.status(401).json({ error: true, message: 'User not authenticated' });
         }
 
-        const stats = await getCollectionStats(sessionId);
+        const collectionId = `user_${userId}`;
+        const stats = await getCollectionStats(collectionId);
         const hasContext = stats !== null;
 
-        // Include themes and keywords from session metadata if available
-        const contextMetadata = req.session.contextMetadata || {};
+        // Try to get suggested questions from ChromaDB metadata (first document)
+        let suggestedQuestions = [];
+        let keywords = [];
+        let themes = [];
+        let filename = null;
+
+        if (hasContext && stats.documentCount > 0) {
+            try {
+                // Import queryCollection to get the first document's metadata
+                const { queryCollection } = await import('../services/vectorStoreService.js');
+                const { generateSingleEmbedding } = await import('../services/embeddingService.js');
+
+                // Query with a simple text to get the first document's metadata
+                // We just need any valid embedding to retrieve the metadata
+                const queryEmbedding = await generateSingleEmbedding('document', 'gemini');
+                const results = await queryCollection(collectionId, queryEmbedding, 1);
+
+                if (results.metadatas && results.metadatas.length > 0) {
+                    const firstMetadata = results.metadatas[0];
+                    suggestedQuestions = firstMetadata.suggestedQuestions || [];
+                    keywords = firstMetadata.keywords || [];
+                    themes = firstMetadata.themes || [];
+                    filename = firstMetadata.filename || null;
+                    console.log(`[Context Status] Retrieved ${suggestedQuestions.length} suggested questions from ChromaDB`);
+                }
+            } catch (err) {
+                console.warn('[Context Status] Failed to retrieve suggested questions from ChromaDB:', err.message);
+                // Fall back to session metadata if available
+                const contextMetadata = req.session.contextMetadata || {};
+                suggestedQuestions = contextMetadata.suggestedQuestions || [];
+                keywords = contextMetadata.keywords || [];
+                themes = contextMetadata.themes || [];
+            }
+        }
 
         res.json({
             hasContext,
-            sessionId,
+            userId,
+            collectionId,
             stats: hasContext ? {
                 ...stats,
-                themes: contextMetadata.themes || [],
-                keywords: contextMetadata.keywords || []
+                themes,
+                keywords,
+                suggestedQuestions,
+                filename
             } : null
         });
 
@@ -196,15 +267,16 @@ router.get('/status', async (req, res) => {
  */
 router.post('/find-matching-ideas', async (req, res) => {
     try {
-        const sessionId = req.session?.id;
-        if (!sessionId) {
-            return res.status(400).json({ error: true, message: 'Session not available' });
+        const userId = req.user?.user?.emp_id;
+        if (!userId) {
+            return res.status(401).json({ error: true, message: 'User not authenticated' });
         }
 
         const { embeddingProvider = 'llama' } = req.body;
+        const collectionId = `user_${userId}`;
 
         // Get context stats to extract themes/keywords
-        const stats = await getCollectionStats(sessionId);
+        const stats = await getCollectionStats(collectionId);
 
         if (!stats || !stats.themes) {
             return res.status(404).json({
@@ -213,7 +285,7 @@ router.post('/find-matching-ideas', async (req, res) => {
             });
         }
 
-        console.log(`[Context] Finding matching ideas for session ${sessionId}`);
+        console.log(`[Context] Finding matching ideas for user ${userId}`);
 
         // Import keyword matcher
         const { findIdeasFromDocumentKeywords } = await import('../services/keywordMatcher.js');

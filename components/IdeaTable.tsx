@@ -10,6 +10,7 @@ interface IdeaTableProps {
   onOpenExplore?: () => void;
   isGlobalFilterActive: boolean;
   onRefreshData?: () => void;
+  onLikeToggle?: (ideaId: string, isLiked: boolean) => void; // New callback for like updates
   showExplore?: boolean;
   showSearch?: boolean; // New Prop
   // External Search Props
@@ -28,6 +29,7 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
   onOpenExplore,
   isGlobalFilterActive,
   onRefreshData,
+  onLikeToggle,
   showExplore = true,
   showSearch = true, // Default to true
   onSearch,
@@ -38,6 +40,12 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [likingId, setLikingId] = useState<string | null>(null);
+  const [localIdeas, setLocalIdeas] = useState<Idea[]>([]);
+
+  // Initialize local ideas when data changes
+  useEffect(() => {
+    setLocalIdeas(data);
+  }, [data]);
 
   // Reset page when data changes
   useEffect(() => {
@@ -70,14 +78,14 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
 
   // 1. Filter Logic (Local Search Fallback)
   const filteredData = useMemo(() => {
-    if (onSearch) return data; // If external search managed by parent
-    if (!searchQuery.trim()) return data;
+    if (onSearch) return localIdeas; // If external search managed by parent
+    if (!searchQuery.trim()) return localIdeas;
     const query = searchQuery.toLowerCase();
-    return data.filter(idea =>
+    return localIdeas.filter(idea =>
       idea.title.toLowerCase().includes(query) ||
       idea.domain.toLowerCase().includes(query)
     );
-  }, [data, searchQuery, onSearch]);
+  }, [localIdeas, searchQuery, onSearch]);
 
   // 2. Sort Logic
   const sortedData = useMemo(() => {
@@ -115,11 +123,43 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
     e.stopPropagation();
     if (likingId) return;
     setLikingId(idea.id);
+
+    // Optimistically update the UI
+    setLocalIdeas(prevIdeas =>
+      prevIdeas.map(i =>
+        i.id === idea.id
+          ? {
+            ...i,
+            isLiked: !i.isLiked,
+            likesCount: i.isLiked ? (i.likesCount || 0) - 1 : (i.likesCount || 0) + 1
+          }
+          : i
+      )
+    );
+
     try {
       await toggleLikeIdea(idea.id);
-      if (onRefreshData) onRefreshData();
-    } catch (err) { console.error("Like failed", err); }
-    finally { setLikingId(null); }
+      // Notify parent of like toggle for dynamic updates
+      if (onLikeToggle) {
+        onLikeToggle(idea.id, !idea.isLiked);
+      }
+    } catch (err) {
+      console.error("Like failed", err);
+      // Revert optimistic update on error
+      setLocalIdeas(prevIdeas =>
+        prevIdeas.map(i =>
+          i.id === idea.id
+            ? {
+              ...i,
+              isLiked: !i.isLiked,
+              likesCount: i.isLiked ? (i.likesCount || 0) + 1 : (i.likesCount || 0) - 1
+            }
+            : i
+        )
+      );
+    } finally {
+      setLikingId(null);
+    }
   };
 
   const getStatusColor = (status: Status) => {
@@ -208,22 +248,22 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
         <table className="min-w-full divide-y divide-slate-200">
           <thead className="bg-slate-50">
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider w-1/3">Idea Title</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider min-w-[200px] max-w-[380px]">Idea Title</th>
               {hasExternalSearch && (
                 <th
-                  className="px-6 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-700 w-28"
+                  className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-700 w-20"
                   onClick={() => handleSort('match')}
                 >
                   <div className="flex items-center justify-center gap-1">
-                    <Zap className="h-3 w-3 text-amber-500" /> AI Match
+                    <Zap className="h-3 w-3 text-amber-500" /> Match
                     {sortField === 'match' && (sortOrder === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
                   </div>
                 </th>
               )}
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('domain')}>Theme</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('status')}>Status</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-24" onClick={() => handleSort('likes')}><Heart className="h-3 w-3 inline mr-1" /> Likes</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-24" onClick={() => handleSort('score')}><Trophy className="h-3 w-3 inline mr-1" /> Score</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-32" onClick={() => handleSort('domain')}>Theme</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-32" onClick={() => handleSort('status')}>Status</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-20" onClick={() => handleSort('likes')}><Heart className="h-3 w-3 inline mr-1" /> Likes</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-20" onClick={() => handleSort('score')}><Trophy className="h-3 w-3 inline mr-1" /> Score</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-slate-200">
@@ -236,25 +276,25 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
             ) : (
               displayData.map((idea) => (
                 <tr key={idea.id} className="hover:bg-slate-50 transition-colors group">
-                  <td className="px-6 py-4">
-                    <div className="flex flex-col">
-                      <span className="text-sm font-medium text-indigo-600 cursor-pointer hover:underline truncate" onClick={() => onViewDetails(idea)}>{idea.title}</span>
-                      <div className="flex items-center gap-2 mt-1 text-xs text-slate-500"><User className="h-3 w-3" /> {idea.associateAccount}</div>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col max-w-[380px]">
+                      <span className="text-sm font-medium text-indigo-600 cursor-pointer hover:underline line-clamp-2" onClick={() => onViewDetails(idea)}>{idea.title}</span>
+                      <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 truncate"><User className="h-3 w-3 shrink-0" /> <span className="truncate">{idea.associateAccount}</span></div>
                     </div>
                   </td>
                   {hasExternalSearch && (
-                    <td className="px-6 py-4 whitespace-nowrap text-center">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${(idea.matchScore || 0) > 80 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>{(idea.matchScore || 0)}%</span>
+                    <td className="px-4 py-3 whitespace-nowrap text-center">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${(idea.matchScore || 0) > 80 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>{(idea.matchScore || 0)}%</span>
                     </td>
                   )}
-                  <td className="px-6 py-4"><span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border bg-white text-slate-800" style={{ borderColor: DOMAIN_COLORS[idea.domain] || '#ccc' }}>{idea.domain}</span></td>
-                  <td className="px-6 py-4"><span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${getStatusColor(idea.status)}`}>{idea.status}</span></td>
-                  <td className="px-6 py-4 text-center">
-                    <button onClick={(e) => handleLike(e, idea)} disabled={likingId === idea.id} className={`flex items-center justify-center gap-1 px-2 py-1 rounded-full border text-xs font-medium mx-auto ${idea.isLiked ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-500'}`}>
+                  <td className="px-4 py-3"><span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-white text-slate-800 truncate max-w-[120px]" style={{ borderColor: DOMAIN_COLORS[idea.domain] || '#ccc' }}>{idea.domain}</span></td>
+                  <td className="px-4 py-3"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border truncate max-w-[120px] ${getStatusColor(idea.status)}`}>{idea.status}</span></td>
+                  <td className="px-4 py-3 text-center">
+                    <button onClick={(e) => handleLike(e, idea)} disabled={likingId === idea.id} className={`flex items-center justify-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium mx-auto ${idea.isLiked ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-500'}`}>
                       <Heart className={`h-3 w-3 ${idea.isLiked ? 'fill-red-600' : ''}`} /> {idea.likesCount}
                     </button>
                   </td>
-                  <td className="px-6 py-4 text-center"><span className={`text-lg ${getScoreColor(idea.score || 0)}`}>{idea.score || 0}</span></td>
+                  <td className="px-4 py-3 text-center"><span className={`text-base ${getScoreColor(idea.score || 0)}`}>{idea.score || 0}</span></td>
                 </tr>
               ))
             )}

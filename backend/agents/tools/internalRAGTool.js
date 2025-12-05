@@ -27,7 +27,7 @@ class BaseTool {
  * Combines PostgreSQL search with optional ephemeral context
  */
 export class InternalRAGTool extends BaseTool {
-    constructor(pool, sessionId = null, embeddingProvider = 'gemini') {
+    constructor(pool, userId = null, embeddingProvider = 'gemini') {
         super(
             'internal_rag',
             `Search the internal idea repository for relevant innovations and projects.
@@ -41,7 +41,7 @@ Input should be a search query describing what you're looking for.`
         );
 
         this.pool = pool;
-        this.sessionId = sessionId;
+        this.userId = userId;
         this.embeddingProvider = embeddingProvider;
     }
 
@@ -74,28 +74,43 @@ Input should be a search query describing what you're looking for.`
      * @returns {Promise<Array>} Ephemeral context results
      */
     async searchEphemeralContext(query) {
-        if (!this.sessionId) {
+        // Return early if no user ID (no uploaded context)
+        if (!this.userId) {
+            console.log('[InternalRAG] No user ID - skipping ephemeral context search');
             return [];
         }
 
+        const collectionId = `user_${this.userId}`;
+
         try {
-            const collection = await getEphemeralCollection(this.sessionId);
+            const collection = await getEphemeralCollection(collectionId);
             if (!collection) {
+                console.log(`[InternalRAG] No ephemeral collection found for user: ${this.userId}`);
                 return [];
             }
 
             // Generate query embedding
             const queryEmbedding = await generateEmbedding(query, this.embeddingProvider);
 
+            if (!queryEmbedding || queryEmbedding.length === 0) {
+                console.warn('[InternalRAG] Failed to generate query embedding');
+                return [];
+            }
+
             // Query collection
-            const results = await queryCollection(this.sessionId, queryEmbedding, 3);
+            const results = await queryCollection(collectionId, queryEmbedding, 3);
+
+            if (!results || !results.documents || results.documents.length === 0) {
+                console.log('[InternalRAG] No documents found in ephemeral context');
+                return [];
+            }
 
             // Calculate relevance scores (normalize distance to 0-1 similarity)
             return results.documents.map((doc, index) => {
                 const distance = results.distances[index] || 0;
                 // Convert L2 distance to similarity score (0-1, higher is better)
                 const relevance = 1 / (1 + distance);
-                
+
                 return {
                     source: 'ephemeral_context',
                     content: doc,
@@ -104,7 +119,7 @@ Input should be a search query describing what you're looking for.`
                 };
             });
         } catch (error) {
-            console.warn('Ephemeral context search failed:', error.message);
+            console.warn('[InternalRAG] Ephemeral context search failed:', error.message);
             return [];
         }
     }
@@ -171,23 +186,23 @@ Input should be a search query describing what you're looking for.`
         if (ephemeralResults.length > 0) {
             output += '📄 FROM UPLOADED DOCUMENT CONTEXT:\n';
             output += '─'.repeat(50) + '\n';
-            
+
             // Sort by relevance (highest first)
             const sortedEphemeral = [...ephemeralResults].sort((a, b) => b.relevance - a.relevance);
-            
+
             sortedEphemeral.forEach((result, index) => {
                 const relevancePercent = (result.relevance * 100).toFixed(0);
                 output += `\n[Document Chunk ${index + 1}] Relevance: ${relevancePercent}%\n`;
-                
+
                 if (result.metadata?.filename) {
                     output += `Source: ${result.metadata.filename}\n`;
                 }
-                
+
                 // Show more content for highly relevant chunks
                 const contentLength = result.relevance > 0.7 ? 300 : 200;
                 output += `${result.content.substring(0, contentLength)}${result.content.length > contentLength ? '...' : ''}\n`;
             });
-            
+
             output += '\n' + '─'.repeat(50) + '\n\n';
         }
 
@@ -195,7 +210,7 @@ Input should be a search query describing what you're looking for.`
         if (dbResults.length > 0) {
             output += '💡 FROM IDEA REPOSITORY:\n';
             output += '─'.repeat(50) + '\n';
-            
+
             dbResults.forEach((idea, index) => {
                 output += `\n[${index + 1}] ${idea.ideaId}: ${idea.title}\n`;
                 output += `   Domain: ${idea.domain || 'N/A'}\n`;
@@ -203,7 +218,7 @@ Input should be a search query describing what you're looking for.`
                 output += `   Summary: ${idea.summary.substring(0, 150)}${idea.summary.length > 150 ? '...' : ''}\n`;
                 output += `   Score: ${idea.score}/10\n`;
             });
-            
+
             output += '\n' + '─'.repeat(50) + '\n';
         } else if (ephemeralResults.length === 0) {
             output += 'No matching ideas found in repository.\n';
