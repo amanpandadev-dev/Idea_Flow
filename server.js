@@ -116,7 +116,7 @@ app.locals.pool = pool;
 // --- API Routes ---
 // New Agent and Context routes
 app.use('/api/context', contextRoutes);
-app.use('/api/agent', agentRoutes);
+app.use('/api/agent', agentRoutes); // Auth will be added after middleware definition
 app.use('/api/search', proSearchRoutes); // Pro Search with ChromaDB
 app.use('/api/chat', chatHistoryRoutes); // Chat history for Pro Search
 app.use('/api/ideas', advancedSearchRoutes); // Advanced search with NLP

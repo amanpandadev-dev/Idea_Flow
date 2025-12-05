@@ -1,24 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Loader2, Bot, ChevronDown, ChevronUp, Sparkles, StopCircle, RefreshCcw, History, Trash2, X, Search, MessageSquare } from 'lucide-react';
-import { startAgentSession, getAgentSessionStatus, stopAgentSession, semanticSearchIdeas, type AgentSession, type SemanticSearchResult } from '../services';
+import { startAgentSession, getAgentSessionStatus, stopAgentSession, semanticSearchIdeas, fetchAgentHistory, clearAgentHistory, type AgentSession, type SemanticSearchResult, type AgentHistoryItem } from '../services';
 import CitationDisplay from './CitationDisplay';
 import DocumentUpload from './DocumentUpload';
 
 const SESSION_STORAGE_KEY = 'agent_session_job_id';
-const HISTORY_STORAGE_KEY = 'agent_search_history';
-const SEMANTIC_RESULTS_KEY = 'agent_semantic_results';
-const SEMANTIC_PAGINATION_KEY = 'agent_semantic_pagination';
+const SEMANTIC_RESULTS_KEY_PREFIX = 'agent_semantic_results_';
+const SEMANTIC_PAGINATION_KEY_PREFIX = 'agent_semantic_pagination_';
+const CURRENT_USER_KEY = 'agent_current_user';
+const QUERY_STORAGE_KEY_PREFIX = 'agent_last_query_';
 
 interface AgentChatProps {
     onNavigateToIdea?: (ideaId: string) => void;
 }
 
-interface SearchHistoryItem {
-    id: string;
-    query: string;
-    timestamp: number;
-    session: AgentSession;
-}
+// SearchHistoryItem is now imported from services.ts as AgentHistoryItem
 
 type SearchMode = 'agent' | 'semantic';
 
@@ -30,7 +26,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     const [showReasoning, setShowReasoning] = useState(false);
     const [embeddingProvider, setEmbeddingProvider] = useState<'llama' | 'grok'>('grok');
     const [isReconnecting, setIsReconnecting] = useState(false);
-    const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
+    const [searchHistory, setSearchHistory] = useState<AgentHistoryItem[]>([]);
     const [showHistory, setShowHistory] = useState(false);
     const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
     const [searchMode, setSearchMode] = useState<SearchMode>('agent');
@@ -41,40 +37,98 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     const [totalPages, setTotalPages] = useState(0);
     const [totalResults, setTotalResults] = useState(0);
     const [currentQuery, setCurrentQuery] = useState('');
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+    const [showHistoryModal, setShowHistoryModal] = useState(false);
+    const [selectedHistoryItem, setSelectedHistoryItem] = useState<AgentHistoryItem | null>(null);
+
+    // Helper functions to get user-specific storage keys
+    const getSemanticResultsKey = () => currentUserId ? `${SEMANTIC_RESULTS_KEY_PREFIX}${currentUserId}` : null;
+    const getSemanticPaginationKey = () => currentUserId ? `${SEMANTIC_PAGINATION_KEY_PREFIX}${currentUserId}` : null;
 
 
     const pollingInterval = useRef<NodeJS.Timeout | null>(null);
 
     const isRunning = session?.status === 'running' || session?.status === 'queued' || session?.status === 'starting';
 
-    // Load search history from localStorage on mount
+    // Load search history from database and detect user changes
     useEffect(() => {
-        const loadHistory = () => {
+        const loadHistory = async () => {
             try {
-                const stored = localStorage.getItem(HISTORY_STORAGE_KEY);
-                if (stored) {
-                    const history: SearchHistoryItem[] = JSON.parse(stored);
-                    setSearchHistory(history);
-                    console.log(`[AgentChat] Loaded ${history.length} items from search history`);
+                const history = await fetchAgentHistory();
+                setSearchHistory(history);
+                console.log(`[AgentChat] Loaded ${history.length} items from database`);
+
+                // Get current user from localStorage (set during login)
+                const currentUser = localStorage.getItem('user');
+                const newUserId = currentUser ? JSON.parse(currentUser).id : null;
+                const storedUserId = sessionStorage.getItem(CURRENT_USER_KEY);
+
+                // If user changed, clear old data INCLUDING search input and document context
+                if (storedUserId && storedUserId !== String(newUserId)) {
+                    console.log('[AgentChat] User changed, clearing old search data, input, and suggested questions');
+                    
+                    // Clear all semantic search data from sessionStorage
+                    Object.keys(sessionStorage).forEach(key => {
+                        if (key.startsWith(SEMANTIC_RESULTS_KEY_PREFIX) ||
+                            key.startsWith(SEMANTIC_PAGINATION_KEY_PREFIX)) {
+                            sessionStorage.removeItem(key);
+                        }
+                    });
+                    
+                    // Clear user-specific localStorage data
+                    const userSpecificKeys = [
+                        `agent_last_query_${storedUserId}`,
+                        `agent_last_query`, // Legacy key
+                        SESSION_STORAGE_KEY
+                    ];
+                    userSpecificKeys.forEach(key => localStorage.removeItem(key));
+                    
+                    // PRIVACY FIX: Clear all state when user changes
+                    setQuery('');
+                    setSemanticResults([]);
+                    setCurrentPage(1);
+                    setTotalPages(0);
+                    setTotalResults(0);
+                    setCurrentQuery('');
+                    setSuggestedQuestions([]);
+                    setSession(null);
+                    setJobId(null);
+                    setError(null);
+                }
+
+                // Store current user ID
+                if (newUserId) {
+                    sessionStorage.setItem(CURRENT_USER_KEY, String(newUserId));
+                    setCurrentUserId(String(newUserId));
+                    
+                    // Load user-specific search input
+                    const userSpecificQuery = localStorage.getItem(`agent_last_query_${newUserId}`);
+                    if (userSpecificQuery) {
+                        setQuery(userSpecificQuery);
+                    }
                 }
             } catch (err) {
                 console.error('[AgentChat] Failed to load search history:', err);
+                // Clear semantic search data on error (likely auth issue)
+                Object.keys(sessionStorage).forEach(key => {
+                    if (key.startsWith(SEMANTIC_RESULTS_KEY_PREFIX) ||
+                        key.startsWith(SEMANTIC_PAGINATION_KEY_PREFIX)) {
+                        sessionStorage.removeItem(key);
+                    }
+                });
+                // PRIVACY FIX: Clear search input on auth error
+                setQuery('');
+                setSuggestedQuestions([]);
             }
         };
         loadHistory();
-    }, []);
 
-    // Save search history to localStorage whenever it changes
-    useEffect(() => {
-        if (searchHistory.length > 0) {
-            try {
-                localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(searchHistory));
-                console.log(`[AgentChat] Saved ${searchHistory.length} items to search history`);
-            } catch (err) {
-                console.error('[AgentChat] Failed to save search history:', err);
-            }
-        }
-    }, [searchHistory]);
+        // PRIVACY FIX: Cleanup function to clear search input on unmount
+        return () => {
+            console.log('[AgentChat] Component unmounting, clearing search input');
+            setQuery('');
+        };
+    }, []);
 
     // Polling effect
     useEffect(() => {
@@ -86,15 +140,11 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                     if (status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled') {
                         if (pollingInterval.current) clearInterval(pollingInterval.current);
 
-                        // Add to history if completed successfully
+                        // Reload history from database if completed successfully
                         if (status.status === 'completed' && status.result) {
-                            const historyItem: SearchHistoryItem = {
-                                id: jobId,
-                                query: status.query,
-                                timestamp: Date.now(),
-                                session: status
-                            };
-                            setSearchHistory(prev => [historyItem, ...prev].slice(0, 20));
+                            fetchAgentHistory()
+                                .then(history => setSearchHistory(history))
+                                .catch(err => console.error('[AgentChat] Failed to reload history:', err));
                         }
 
                         localStorage.removeItem(SESSION_STORAGE_KEY);
@@ -142,17 +192,11 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                     if (status.status === 'completed' || status.status === 'failed' || status.status === 'cancelled') {
                         console.log(`[AgentChat] Session ${storedJobId} already finished with status: ${status.status}`);
 
+                        // Reload history from database if completed
                         if (status.status === 'completed' && status.result) {
-                            const exists = searchHistory.some(item => item.id === storedJobId);
-                            if (!exists) {
-                                const historyItem: SearchHistoryItem = {
-                                    id: storedJobId,
-                                    query: status.query,
-                                    timestamp: Date.now(),
-                                    session: status
-                                };
-                                setSearchHistory(prev => [historyItem, ...prev].slice(0, 20));
-                            }
+                            fetchAgentHistory()
+                                .then(history => setSearchHistory(history))
+                                .catch(err => console.error('[AgentChat] Failed to reload history:', err));
                         }
 
                         localStorage.removeItem(SESSION_STORAGE_KEY);
@@ -176,10 +220,17 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
         }
     }, []);
 
-    // Restore preserved search results if available
+    // Restore preserved search results if available (user-specific)
     useEffect(() => {
-        const storedResults = sessionStorage.getItem(SEMANTIC_RESULTS_KEY);
-        const storedPagination = sessionStorage.getItem(SEMANTIC_PAGINATION_KEY);
+        if (!currentUserId) return;
+
+        const resultsKey = getSemanticResultsKey();
+        const paginationKey = getSemanticPaginationKey();
+
+        if (!resultsKey || !paginationKey) return;
+
+        const storedResults = sessionStorage.getItem(resultsKey);
+        const storedPagination = sessionStorage.getItem(paginationKey);
 
         if (storedResults && storedPagination) {
             try {
@@ -194,7 +245,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                 console.error('Failed to restore semantic search state', e);
             }
         }
-    }, []);
+    }, [currentUserId]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -204,9 +255,11 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
         setSelectedHistoryId(null);
         localStorage.setItem('agent_last_query', query.trim());
 
-        // Clear preserved state on new search
-        sessionStorage.removeItem(SEMANTIC_RESULTS_KEY);
-        sessionStorage.removeItem(SEMANTIC_PAGINATION_KEY);
+        // Clear preserved state on new search (user-specific)
+        const resultsKey = getSemanticResultsKey();
+        const paginationKey = getSemanticPaginationKey();
+        if (resultsKey) sessionStorage.removeItem(resultsKey);
+        if (paginationKey) sessionStorage.removeItem(paginationKey);
 
         if (searchMode === 'semantic') {
             // Semantic search mode
@@ -266,8 +319,11 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
         setSemanticResults([]);
         localStorage.removeItem(SESSION_STORAGE_KEY);
         localStorage.removeItem('agent_last_query');
-        sessionStorage.removeItem(SEMANTIC_RESULTS_KEY);
-        sessionStorage.removeItem(SEMANTIC_PAGINATION_KEY);
+        // Clear user-specific semantic search data
+        const resultsKey = getSemanticResultsKey();
+        const paginationKey = getSemanticPaginationKey();
+        if (resultsKey) sessionStorage.removeItem(resultsKey);
+        if (paginationKey) sessionStorage.removeItem(paginationKey);
     };
 
     const handleClearQuery = () => {
@@ -308,21 +364,22 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     };
 
 
-    const handleViewHistoryItem = (item: SearchHistoryItem) => {
-        setSession(item.session);
-        setQuery(item.query);
-        setSelectedHistoryId(item.id);
-        setShowHistory(false);
-        setShowReasoning(false);
-        setSearchMode('agent');
-        setSemanticResults([]);
+    const handleViewHistoryItem = (item: AgentHistoryItem) => {
+        // MODAL FIX: Open modal instead of replacing main view
+        setSelectedHistoryItem(item);
+        setShowHistoryModal(true);
+        console.log('[AgentChat] Opening history modal for item:', item.id);
     };
 
-    const handleClearHistory = () => {
+    const handleClearHistory = async () => {
         if (confirm('Are you sure you want to clear all search history?')) {
-            setSearchHistory([]);
-            localStorage.removeItem(HISTORY_STORAGE_KEY);
-            console.log('[AgentChat] Search history cleared');
+            try {
+                await clearAgentHistory();
+                setSearchHistory([]);
+                console.log('[AgentChat] Search history cleared');
+            } catch (err) {
+                console.error('[AgentChat] Failed to clear history:', err);
+            }
         }
     };
 
@@ -332,15 +389,19 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     };
 
     const handleNavigate = (ideaId: string) => {
-        // Preserve current search state before navigating
-        if (semanticResults.length > 0) {
-            sessionStorage.setItem(SEMANTIC_RESULTS_KEY, JSON.stringify(semanticResults));
-            sessionStorage.setItem(SEMANTIC_PAGINATION_KEY, JSON.stringify({
-                page: currentPage,
-                total: totalResults,
-                totalPages: totalPages,
-                query: currentQuery
-            }));
+        // Preserve current search state before navigating (user-specific)
+        if (semanticResults.length > 0 && currentUserId) {
+            const resultsKey = getSemanticResultsKey();
+            const paginationKey = getSemanticPaginationKey();
+            if (resultsKey && paginationKey) {
+                sessionStorage.setItem(resultsKey, JSON.stringify(semanticResults));
+                sessionStorage.setItem(paginationKey, JSON.stringify({
+                    page: currentPage,
+                    total: totalResults,
+                    totalPages: totalPages,
+                    query: currentQuery
+                }));
+            }
         }
         if (onNavigateToIdea) onNavigateToIdea(ideaId);
     };
@@ -744,6 +805,85 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                         {['What are the latest trends in AI for healthcare?', 'Show me innovations related to customer service automation', 'What AI solutions are we building for retail?', 'How can we use AI to improve operational efficiency?'].map((example, index) => (
                             <button key={index} onClick={() => setQuery(example)} className="text-left p-4 bg-white border border-slate-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 transition-colors text-sm text-slate-700 h-full">{example}</button>
                         ))}
+                    </div>
+                </div>
+            )}
+
+            {/* History Detail Modal */}
+            {showHistoryModal && selectedHistoryItem && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={() => setShowHistoryModal(false)}>
+                    <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between p-6 border-b border-slate-200">
+                            <div className="flex-1 min-w-0">
+                                <h2 className="text-xl font-bold text-slate-900 truncate">{selectedHistoryItem.query}</h2>
+                                <p className="text-sm text-slate-500 mt-1">
+                                    {new Date(selectedHistoryItem.created_at).toLocaleString()}
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowHistoryModal(false)}
+                                className="ml-4 p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                                aria-label="Close modal"
+                            >
+                                <X className="h-5 w-5 text-slate-500" />
+                            </button>
+                        </div>
+
+                        {/* Modal Content */}
+                        <div className="p-6 overflow-y-auto max-h-[calc(90vh-100px)]">
+                            {selectedHistoryItem.session?.status === 'completed' && selectedHistoryItem.session?.result ? (
+                                <div className="space-y-6">
+                                    {/* Answer Section */}
+                                    <div>
+                                        <h3 className="font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                                            <Bot className="h-5 w-5 text-indigo-600" />
+                                            Answer
+                                        </h3>
+                                        <div className="bg-slate-50 rounded-lg p-4">
+                                            <p className="text-slate-700 whitespace-pre-wrap leading-relaxed">
+                                                {selectedHistoryItem.session.result.answer}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Citations Section */}
+                                    {selectedHistoryItem.session.result.citations && selectedHistoryItem.session.result.citations.length > 0 && (
+                                        <div>
+                                            <h3 className="font-semibold text-slate-900 mb-3">Citations</h3>
+                                            <CitationDisplay citations={selectedHistoryItem.session.result.citations} />
+                                        </div>
+                                    )}
+
+                                    {/* Reasoning Section */}
+                                    {selectedHistoryItem.session.result.reasoning && (
+                                        <div>
+                                            <button
+                                                onClick={() => setShowReasoning(!showReasoning)}
+                                                className="font-semibold text-slate-900 mb-3 flex items-center gap-2 hover:text-indigo-600 transition-colors"
+                                            >
+                                                {showReasoning ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                                                View Reasoning Process
+                                            </button>
+                                            {showReasoning && (
+                                                <div className="bg-slate-50 rounded-lg p-4">
+                                                    <pre className="text-xs text-slate-600 whitespace-pre-wrap font-mono">
+                                                        {selectedHistoryItem.session.result.reasoning}
+                                                    </pre>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="text-center py-8 text-slate-500">
+                                    <p>Session status: {selectedHistoryItem.session?.status || 'Unknown'}</p>
+                                    {selectedHistoryItem.session?.error && (
+                                        <p className="text-red-600 mt-2">{selectedHistoryItem.session.error}</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}

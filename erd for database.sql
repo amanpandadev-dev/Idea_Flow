@@ -80,8 +80,7 @@ CREATE TABLE IF NOT EXISTS public.likes
     CONSTRAINT idea_likes_idea_user_unique UNIQUE (idea_id, user_id)
 );
 
---
- 6) Chat Sessions Table (Pro Search History)
+--6) Chat Sessions Table (Pro Search History)
 CREATE TABLE IF NOT EXISTS public.chat_sessions
 (
     id SERIAL PRIMARY KEY,
@@ -106,3 +105,22 @@ CREATE TABLE IF NOT EXISTS public.chat_messages
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated_at ON chat_sessions(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
+
+
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    id SERIAL PRIMARY KEY,
+    user_id VARCHAR(64) NOT NULL,
+    job_id VARCHAR(255) NOT NULL UNIQUE,
+    query TEXT NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'queued',
+    result JSONB,
+    embedding_provider VARCHAR(20) DEFAULT 'grok',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(emp_id) ON DELETE CASCADE
+);
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_user_id ON agent_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_created_at ON agent_sessions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_job_id ON agent_sessions(job_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_status ON agent_sessions(status);

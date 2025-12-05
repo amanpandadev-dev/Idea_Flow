@@ -28,17 +28,27 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
                 if (status.hasContext && status.stats) {
                     console.log('[DocumentUpload] Found existing context, restoring state');
                     // Reconstruct the uploadedContext from status
-                    setUploadedContext({
+                    const restoredContext = {
                         success: true,
                         chunksProcessed: status.stats.documentCount,
-                        themes: [], // Themes not available from status endpoint
-                        sessionId: status.sessionId || '',
+                        themes: status.stats.themes || [],
+                        keywords: status.stats.keywords || [],
+                        suggestedQuestions: status.stats.suggestedQuestions || [],
+                        sessionId: status.userId || '',
+                        filename: status.stats.filename || 'Uploaded Document', // Get filename from stats
                         stats: {
                             originalLength: 0,
                             chunkCount: status.stats.documentCount,
                             avgChunkLength: 0
                         }
-                    });
+                    };
+                    setUploadedContext(restoredContext);
+
+                    // Pass suggested questions to parent component if they exist
+                    if (status.stats.suggestedQuestions && status.stats.suggestedQuestions.length > 0) {
+                        console.log(`[DocumentUpload] Restoring ${status.stats.suggestedQuestions.length} suggested questions`);
+                        onQuestionsGenerated?.(status.stats.suggestedQuestions);
+                    }
                 } else {
                     console.log('[DocumentUpload] No existing context found');
                 }
@@ -51,7 +61,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
         };
 
         checkExistingContext();
-    }, []);
+    }, []); // Empty dependency array - only run once on mount
 
     const handleDrag = useCallback((e: React.DragEvent) => {
         e.preventDefault();
@@ -98,9 +108,14 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
 
         try {
             const response = await uploadContext(file, embeddingProvider);
-            setUploadedContext(response);
+            // Add filename to the response
+            const contextWithFilename = {
+                ...response,
+                filename: file.name
+            };
+            setUploadedContext(contextWithFilename);
             setFile(null);
-            onUploadSuccess?.(response);
+            onUploadSuccess?.(contextWithFilename);
 
             // Pass suggested questions to parent component
             if (response.suggestedQuestions && response.suggestedQuestions.length > 0) {
@@ -156,10 +171,15 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
     return (
         <div className="bg-white rounded-xl border border-slate-200 p-4">
             <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-slate-900 flex items-center gap-2">
-                    <FileText className="h-5 w-5 text-indigo-600" />
-                    Document Context
-                </h3>
+                <div className="flex-1">
+                    <h3 className="font-semibold text-slate-900 flex items-center gap-2">
+                        <FileText className="h-5 w-5 text-indigo-600" />
+                        Document Context
+                    </h3>
+                    {uploadedContext && uploadedContext.filename && (
+                        <p className="text-xs text-slate-500 mt-1 ml-7">{uploadedContext.filename}</p>
+                    )}
+                </div>
                 {uploadedContext && (
                     <button
                         onClick={handleReset}

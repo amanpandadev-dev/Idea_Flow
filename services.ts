@@ -251,6 +251,31 @@ export const stopAgentSession = async (jobId: string): Promise<{ success: boolea
   });
 };
 
+// Agent History Management
+export interface AgentHistoryItem {
+  id: string;
+  query: string;
+  timestamp: number;
+  session: AgentSession;
+}
+
+export const fetchAgentHistory = async (): Promise<AgentHistoryItem[]> => {
+  const response = await fetchWithAuth(`${API_URL}/agent/history`);
+  return response.history || [];
+};
+
+export const clearAgentHistory = async (): Promise<{ success: boolean; message: string; count: number; }> => {
+  return fetchWithAuth(`${API_URL}/agent/history`, {
+    method: 'DELETE'
+  });
+};
+
+export const deleteAgentSession = async (jobId: string): Promise<{ success: boolean; message: string; }> => {
+  return fetchWithAuth(`${API_URL}/agent/history/${jobId}`, {
+    method: 'DELETE'
+  });
+};
+
 // Phase-2: Context Upload with RAG enhancements
 export interface ContextUploadResponse {
   success: boolean;
