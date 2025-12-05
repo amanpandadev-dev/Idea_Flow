@@ -48,7 +48,7 @@ const SPELL_CORRECTIONS = {
   'programm': 'program',
   'databse': 'database',
   'databas': 'database',
-  'api': 'API',
+  // Removed 'api': 'API' - causes false positives with short words like 'hi'
   'apis': 'APIs',
   'frontend': 'front-end',
   'backedn': 'backend',
@@ -179,23 +179,57 @@ function levenshteinDistance(str1, str2) {
   return matrix[len1][len2];
 }
 
+// Words to skip (greetings, common words that shouldn't be corrected)
+const SKIP_WORDS = new Set([
+  'hi', 'hello', 'hey', 'bye', 'yes', 'no', 'ok', 'okay',
+  'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
+  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
+  'can', 'could', 'should', 'may', 'might', 'must',
+  'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her',
+  'my', 'your', 'his', 'its', 'our', 'their',
+  'this', 'that', 'these', 'those', 'what', 'which', 'who', 'whom',
+  'and', 'or', 'but', 'if', 'then', 'else', 'when', 'where', 'why', 'how',
+  'all', 'any', 'some', 'no', 'not', 'only', 'just', 'more', 'most',
+  'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'about',
+  'show', 'find', 'get', 'list', 'search', 'filter', 'sort'
+]);
+
 /**
  * Correct spelling using dictionary and fuzzy matching
  */
 export function correctSpelling(word) {
   const lowerWord = word.toLowerCase();
 
+  // Skip common words and greetings - don't try to correct them
+  if (SKIP_WORDS.has(lowerWord)) {
+    return word;
+  }
+
+  // Skip very short words (2 chars or less) - too risky for fuzzy matching
+  if (lowerWord.length <= 2) {
+    return word;
+  }
+
   // Direct match in dictionary
   if (SPELL_CORRECTIONS[lowerWord]) {
     return SPELL_CORRECTIONS[lowerWord];
   }
 
-  // Fuzzy match with threshold
+  // Fuzzy match with threshold - only for words 4+ chars
+  if (lowerWord.length < 4) {
+    return word; // Don't fuzzy match short words
+  }
+
   const threshold = 2; // Max edit distance
   let bestMatch = word;
   let bestDistance = threshold + 1;
 
   for (const [misspelled, correct] of Object.entries(SPELL_CORRECTIONS)) {
+    // Only compare with similar length words to avoid false positives
+    if (Math.abs(misspelled.length - lowerWord.length) > 2) {
+      continue;
+    }
+    
     const distance = levenshteinDistance(lowerWord, misspelled);
     if (distance < bestDistance) {
       bestDistance = distance;

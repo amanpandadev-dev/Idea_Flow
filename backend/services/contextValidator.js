@@ -10,7 +10,7 @@
 
 // Off-topic patterns that should be rejected
 const OFF_TOPIC_PATTERNS = [
-    // Personal questions
+    // Personal questions about the AI
     /who am i/i,
     /what'?s my name/i,
     /who are you/i,
@@ -20,6 +20,22 @@ const OFF_TOPIC_PATTERNS = [
     /are you (a |an )?(human|robot|ai|bot)/i,
     /how old are you/i,
     /where (do you|are you) (live|from)/i,
+    /why are you/i,  // "why are you weird/here/etc"
+    /how are you/i,
+    /are you (okay|ok|good|fine|happy|sad|angry|weird|stupid|smart|dumb)/i,
+    /you are (weird|stupid|dumb|smart|cool|bad|good|nice|mean)/i,
+    /do you have (feelings|emotions|a soul|consciousness)/i,
+    /can you (feel|think|dream|sleep|eat)/i,
+    /what do you look like/i,
+    /describe yourself/i,
+    
+    // Conversational/casual chat (not search related)
+    /^(how'?s it going|what'?s going on|sup|yo|wassup)/i,
+    /^(thanks|thank you|thx|ty)[\s!.,?]*$/i,
+    /^(bye|goodbye|see you|later|cya)[\s!.,?]*$/i,
+    /^(yes|no|yeah|nope|yep|nah|ok|okay|sure|fine)[\s!.,?]*$/i,
+    /^(lol|haha|hehe|rofl|lmao)/i,
+    /^(wow|omg|oh|ah|hmm|huh|meh)/i,
     
     // General knowledge questions
     /where (is|are) (the )?(taj mahal|eiffel tower|great wall|statue of liberty|pyramids)/i,
@@ -31,6 +47,8 @@ const OFF_TOPIC_PATTERNS = [
     /current (time|date|news)/i,
     /what time is it/i,
     /what day is (it|today)/i,
+    /translate .* (to|into)/i,
+    /how (tall|big|old|long|far|much|many) is/i,
     
     // Homework/assignment requests
     /solve (this|my) (problem|homework|assignment|equation)/i,
@@ -44,6 +62,7 @@ const OFF_TOPIC_PATTERNS = [
     /play (a )?game/i,
     /what'?s (your )?favorite/i,
     /do you (like|love|hate)/i,
+    /recommend (me )?(a )?(movie|book|song|show|game)/i,
     
     // Harmful/inappropriate
     /how to (hack|steal|cheat|lie|hurt)/i,
@@ -57,6 +76,12 @@ const OFF_TOPIC_PATTERNS = [
     /pretend (to be|you are)/i,
     /act as (a |an )?/i,
     /you are now/i,
+    /forget (everything|all|your)/i,
+    /new (persona|personality|character)/i,
+    
+    // Random/nonsense
+    /^[a-z]{1,3}[\s!.,?]*$/i,  // Single letters or very short nonsense
+    /asdf|qwerty|test123/i,
 ];
 
 // Confidential/internal information patterns
@@ -101,10 +126,18 @@ const SEARCH_INTENTS = [
     /(ideas?|projects?) (about|for|in|with|using|related)/i,
 ];
 
+// Greeting patterns
+const GREETING_PATTERNS = [
+    /^(hi|hello|hey|hola|greetings|good morning|good afternoon|good evening)[\s!.,?]*$/i,
+    /^(hi|hello|hey) there[\s!.,?]*$/i,
+    /^what'?s up[\s!.,?]*$/i,
+    /^howdy[\s!.,?]*$/i,
+];
+
 /**
  * Validate if a query is contextually appropriate
  * @param {string} query - User query to validate
- * @returns {Object} - { valid: boolean, reason?: string, suggestion?: string }
+ * @returns {Object} - { valid: boolean, reason?: string, suggestion?: string, isGreeting?: boolean }
  */
 export function validateQuery(query) {
     if (!query || typeof query !== 'string') {
@@ -126,13 +159,24 @@ export function validateQuery(query) {
         };
     }
 
-    // Check for off-topic patterns FIRST
+    // Check for greetings FIRST - these are valid but need special handling
+    for (const pattern of GREETING_PATTERNS) {
+        if (pattern.test(normalizedQuery)) {
+            return {
+                valid: true,
+                isGreeting: true,
+                greeting: true
+            };
+        }
+    }
+
+    // Check for off-topic patterns
     for (const pattern of OFF_TOPIC_PATTERNS) {
         if (pattern.test(normalizedQuery)) {
             return {
                 valid: false,
                 reason: 'Off-topic query',
-                suggestion: 'I specialize in helping you discover innovation ideas and projects. Try asking about specific technologies, business domains, or search for ideas using keywords like "AI projects" or "healthcare innovations".'
+                suggestion: "That's outside my knowledge area. I can only help you search for innovation ideas and projects stored in our database. Try asking things like \"show me AI projects\" or \"find healthcare innovations\"."
             };
         }
     }
@@ -143,7 +187,7 @@ export function validateQuery(query) {
             return {
                 valid: false,
                 reason: 'Confidential information request',
-                suggestion: 'I cannot provide confidential or sensitive information. I can help you search for publicly available innovation ideas and projects.'
+                suggestion: "I cannot provide confidential or sensitive information. I can help you search for publicly available innovation ideas and projects."
             };
         }
     }
@@ -275,15 +319,14 @@ export function extractEntities(query) {
  * @returns {string} - User-friendly error message
  */
 export function generateErrorMessage(reason, suggestion) {
-    const prefixes = {
-        'Off-topic query': "🤔 I'm designed to help you discover innovation ideas and projects.",
-        'Confidential information request': '🔒 I cannot access or provide confidential information.',
-        'Invalid query format': '❓ I need a valid search query to help you.',
-        'Query too short': '📝 Please provide more details about what you\'re looking for.'
+    const messages = {
+        'Off-topic query': "🤔 That's outside my knowledge area. I can only help you search for innovation ideas and projects stored in our database.\n\nTry asking things like:\n• \"Show me AI projects\"\n• \"Find healthcare innovations\"\n• \"Latest cloud solutions\"",
+        'Confidential information request': '🔒 I cannot provide confidential or sensitive information. I can help you search for publicly available innovation ideas and projects.\n\nTry searching for ideas by technology, domain, or business group.',
+        'Invalid query format': '❓ I need a valid search query to help you. Try asking about specific technologies, domains, or search for ideas.',
+        'Query too short': '📝 Please provide more details about what you\'re looking for. For example: "AI projects in healthcare" or "latest React applications".'
     };
 
-    const prefix = prefixes[reason] || '💡 Let me help you find great ideas!';
-    return `${prefix}\n\n${suggestion}`;
+    return messages[reason] || suggestion || '💡 I can help you discover innovation ideas. Try searching for specific technologies or domains!';
 }
 
 export default {

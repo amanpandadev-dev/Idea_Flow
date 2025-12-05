@@ -37,7 +37,8 @@ business_groups = [
 associates = [{"associate_id": i, "name": fake.name(), "role": random.choice(["Developer", "Project Manager"])} for i in range(1, 301)]
 
 # Function to generate random data for the `ideas` table
-def generate_idea_data():
+def generate_idea_data(idea_id):
+    submitter_id = random.randint(1, 300)  # Submitter must be an associate
     business_opportunity = random.choice(business_opportunities)
     business_group = random.choice(business_groups)
     title = f"{business_opportunity} for {business_group}"
@@ -66,10 +67,12 @@ def generate_idea_data():
     updated_at = created_at
     score = random.randint(1, 100)
     
-    return [title, summary, challenge_opportunity, scalability, novelty, benefits, risks, responsible_ai, 
-            additional_info, prototype_url, timeline, success_metrics, expected_outcomes, scalability_potential, 
-            business_model, competitive_analysis, risk_mitigation, second_file_url, participation_week, 
-            build_phase, build_preference, code_preference, created_at, updated_at, business_group, score]
+    return [
+        idea_id, submitter_id, title, summary, challenge_opportunity, scalability, novelty, benefits, risks, responsible_ai, 
+        additional_info, prototype_url, timeline, success_metrics, expected_outcomes, scalability_potential, 
+        business_model, competitive_analysis, risk_mitigation, second_file_url, participation_week, 
+        build_phase, build_preference, code_preference, created_at, updated_at, business_group, score
+    ]
 
 # Generate data for `idea_team` table
 def generate_idea_team_data(idea_id):
@@ -85,14 +88,14 @@ def generate_ideas_csv():
     with open("ideas.csv", mode="w", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
         writer.writerow([
-            "title", "summary", "challenge_opportunity", "scalability", "novelty", "benefits", "risks", 
+            "idea_id", "submitter_id", "title", "summary", "challenge_opportunity", "scalability", "novelty", "benefits", "risks", 
             "responsible_ai", "additional_info", "prototype_url", "timeline", "success_metrics", "expected_outcomes", 
             "scalability_potential", "business_model", "competitive_analysis", "risk_mitigation", "second_file_url", 
             "participation_week", "build_phase", "build_preference", "code_preference", "created_at", "updated_at", 
             "business_group", "score"
         ])
-        for _ in range(5000):
-            writer.writerow(generate_idea_data())
+        for idea_id in range(1, 5001):  # Generating 5000 ideas
+            writer.writerow(generate_idea_data(idea_id))
 
 # Generate CSV for `idea_team` table
 def generate_idea_team_csv():
@@ -100,7 +103,7 @@ def generate_idea_team_csv():
         writer = csv.writer(file)
         writer.writerow(["idea_id", "associate_id", "is_primary", "role", "business_group"])
         
-        # Idea ids start from 1 to 5000
+        # Idea ids start from 1 to 5000 (matching the ideas table)
         for idea_id in range(1, 5001):
             for _ in range(random.randint(1, 5)):  # Each idea can have 1 to 5 team members
                 writer.writerow(generate_idea_team_data(idea_id))

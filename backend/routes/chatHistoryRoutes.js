@@ -1,11 +1,18 @@
+/**
+ * Chat History Routes for Pro Search
+ * Stores and retrieves chat sessions and messages
+ */
+
 import express from 'express';
 
 const router = express.Router();
 
-// Middleware to get pool from app
+// Get pool from app
 const getPool = (req) => req.app.get('db');
 
-// Get all chat sessions for a user (grouped by date)
+/**
+ * GET /api/chat/sessions - Get all chat sessions for a user
+ */
 router.get('/sessions', async (req, res) => {
     const pool = getPool(req);
     if (!pool) return res.status(503).json({ error: 'Database not connected' });
@@ -25,25 +32,29 @@ router.get('/sessions', async (req, res) => {
             WHERE cs.user_id = $1
             GROUP BY cs.id
             ORDER BY cs.updated_at DESC
+            LIMIT 50
         `, [userId]);
 
         // Group sessions by date
         const grouped = {};
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const lastWeek = new Date(today);
+        lastWeek.setDate(lastWeek.getDate() - 7);
+
         result.rows.forEach(session => {
             const date = new Date(session.created_at);
-            const today = new Date();
-            const yesterday = new Date(today);
-            yesterday.setDate(yesterday.getDate() - 1);
+            date.setHours(0, 0, 0, 0);
 
             let dateKey;
-            if (date.toDateString() === today.toDateString()) {
+            if (date.getTime() === today.getTime()) {
                 dateKey = 'Today';
-            } else if (date.toDateString() === yesterday.toDateString()) {
+            } else if (date.getTime() === yesterday.getTime()) {
                 dateKey = 'Yesterday';
-            } else if (date > new Date(today.setDate(today.getDate() - 7))) {
+            } else if (date > lastWeek) {
                 dateKey = 'Last 7 Days';
-            } else if (date > new Date(today.setDate(today.getDate() - 30))) {
-                dateKey = 'Last 30 Days';
             } else {
                 dateKey = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
             }
@@ -65,7 +76,9 @@ router.get('/sessions', async (req, res) => {
     }
 });
 
-// Create a new chat session
+/**
+ * POST /api/chat/sessions - Create a new chat session
+ */
 router.post('/sessions', async (req, res) => {
     const pool = getPool(req);
     if (!pool) return res.status(503).json({ error: 'Database not connected' });
@@ -87,7 +100,9 @@ router.post('/sessions', async (req, res) => {
     }
 });
 
-// Get messages for a specific session
+/**
+ * GET /api/chat/sessions/:sessionId/messages - Get messages for a session
+ */
 router.get('/sessions/:sessionId/messages', async (req, res) => {
     const pool = getPool(req);
     if (!pool) return res.status(503).json({ error: 'Database not connected' });
@@ -117,7 +132,9 @@ router.get('/sessions/:sessionId/messages', async (req, res) => {
     }
 });
 
-// Add a message to a session
+/**
+ * POST /api/chat/sessions/:sessionId/messages - Add a message to a session
+ */
 router.post('/sessions/:sessionId/messages', async (req, res) => {
     const pool = getPool(req);
     if (!pool) return res.status(503).json({ error: 'Database not connected' });
@@ -126,14 +143,31 @@ router.post('/sessions/:sessionId/messages', async (req, res) => {
         const { sessionId } = req.params;
         const { role, content, metadata } = req.body;
 
+        // Limit results stored to prevent huge payloads (store top 10 only)
+        let processedMetadata = metadata;
+        if (metadata?.results && Array.isArray(metadata.results)) {
+            processedMetadata = {
+                ...metadata,
+                results: metadata.results.slice(0, 10).map((r) => ({
+                    id: r.id,
+                    title: r.title,
+                    description: r.description?.substring(0, 200),
+                    domain: r.domain,
+                    businessGroup: r.businessGroup,
+                    technologies: r.technologies,
+                    matchScore: r.matchScore
+                }))
+            };
+        }
+
         // Insert message
         const msgResult = await pool.query(`
             INSERT INTO chat_messages (session_id, role, content, metadata)
             VALUES ($1, $2, $3, $4)
             RETURNING id, role, content, metadata, created_at
-        `, [sessionId, role, content, metadata ? JSON.stringify(metadata) : null]);
+        `, [sessionId, role, content, processedMetadata ? JSON.stringify(processedMetadata) : null]);
 
-        // Update session title if it's the first user message
+        // Update session title if first user message
         if (role === 'user') {
             const countResult = await pool.query(
                 'SELECT COUNT(*) FROM chat_messages WHERE session_id = $1 AND role = $2',
@@ -141,14 +175,12 @@ router.post('/sessions/:sessionId/messages', async (req, res) => {
             );
             
             if (parseInt(countResult.rows[0].count) === 1) {
-                // First user message - use it as title (truncated)
                 const title = content.length > 50 ? content.substring(0, 47) + '...' : content;
                 await pool.query(
                     'UPDATE chat_sessions SET title = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
                     [title, sessionId]
                 );
             } else {
-                // Just update the timestamp
                 await pool.query(
                     'UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = $1',
                     [sessionId]
@@ -171,7 +203,9 @@ router.post('/sessions/:sessionId/messages', async (req, res) => {
     }
 });
 
-// Delete a chat session
+/**
+ * DELETE /api/chat/sessions/:sessionId - Delete a chat session
+ */
 router.delete('/sessions/:sessionId', async (req, res) => {
     const pool = getPool(req);
     if (!pool) return res.status(503).json({ error: 'Database not connected' });
@@ -180,10 +214,7 @@ router.delete('/sessions/:sessionId', async (req, res) => {
         const { sessionId } = req.params;
         const userId = req.session?.userId || req.headers['x-user-id'] || 'anonymous';
 
-        // Delete messages first (cascade should handle this, but being explicit)
         await pool.query('DELETE FROM chat_messages WHERE session_id = $1', [sessionId]);
-        
-        // Delete session
         await pool.query(
             'DELETE FROM chat_sessions WHERE id = $1 AND user_id = $2',
             [sessionId, userId]
@@ -196,7 +227,9 @@ router.delete('/sessions/:sessionId', async (req, res) => {
     }
 });
 
-// Rename a chat session
+/**
+ * PATCH /api/chat/sessions/:sessionId - Rename a chat session
+ */
 router.patch('/sessions/:sessionId', async (req, res) => {
     const pool = getPool(req);
     if (!pool) return res.status(503).json({ error: 'Database not connected' });

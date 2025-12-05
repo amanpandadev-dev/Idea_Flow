@@ -9,6 +9,11 @@ interface Message {
     role: 'user' | 'assistant';
     content: string;
     timestamp: string;
+    metadata?: {
+        results?: Idea[];
+        searchMetadata?: SearchMetadata;
+        resultsCount?: number;
+    };
 }
 
 interface SearchMetadata {
@@ -52,6 +57,22 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     const [metadata, setMetadata] = useState<SearchMetadata | null>(null);
     const [isSearching, setIsSearching] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [activeResultMessageId, setActiveResultMessageId] = useState<string | null>(null);
+    const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
+
+    // Fun loading messages that rotate while searching
+    const loadingMessages = [
+        "🔍 Searching through ideas...",
+        "🧠 Analyzing your query...",
+        "⚡ Processing with AI magic...",
+        "📊 Matching relevant results...",
+        "🎯 Almost there...",
+        "✨ Preparing your results...",
+        "🚀 Just a moment...",
+        "💡 Finding the best matches...",
+        "🔮 Working on it...",
+        "📚 Scanning the database..."
+    ];
 
     // Chat History State
     const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
@@ -73,6 +94,20 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
+    // Rotate loading messages while searching
+    useEffect(() => {
+        let interval: NodeJS.Timeout;
+        if (isSearching) {
+            setLoadingMessageIndex(0);
+            interval = setInterval(() => {
+                setLoadingMessageIndex(prev => (prev + 1) % loadingMessages.length);
+            }, 2000); // Change message every 2 seconds
+        }
+        return () => {
+            if (interval) clearInterval(interval);
+        };
+    }, [isSearching, loadingMessages.length]);
+
     // Initialize with welcome message
     const initializeNewChat = () => {
         setMessages([{
@@ -90,6 +125,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
         setResults([]);
         setMetadata(null);
         setCurrentSessionId(null);
+        setActiveResultMessageId(null);
     };
 
     useEffect(() => {
@@ -133,7 +169,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
         }
     };
 
-    // Load session messages
+    // Load session messages and restore search results with metadata
     const loadSession = async (sessionId: number) => {
         try {
             const response = await fetch(`/api/chat/sessions/${sessionId}/messages`, {
@@ -142,12 +178,39 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
             if (response.ok) {
                 const data = await response.json();
                 if (data.messages.length > 0) {
-                    setMessages(data.messages.map((msg: any) => ({
+                    // Map messages and preserve metadata for assistant messages with results
+                    const loadedMessages = data.messages.map((msg: any) => ({
                         id: `msg_${msg.id}`,
                         role: msg.role,
                         content: msg.content,
-                        timestamp: msg.timestamp
-                    })));
+                        timestamp: msg.timestamp,
+                        metadata: msg.role === 'assistant' && msg.metadata ? {
+                            results: msg.metadata.results || [],
+                            searchMetadata: msg.metadata.searchMetadata || null,
+                            resultsCount: msg.metadata.resultsCount || 0
+                        } : undefined
+                    }));
+                    
+                    setMessages(loadedMessages);
+                    
+                    // Find the last assistant message with results metadata and show those results
+                    const lastAssistantMsg = [...data.messages]
+                        .reverse()
+                        .find((msg: any) => msg.role === 'assistant' && msg.metadata?.results?.length > 0);
+                    
+                    if (lastAssistantMsg?.metadata?.results) {
+                        setResults(lastAssistantMsg.metadata.results);
+                        setMetadata(lastAssistantMsg.metadata.searchMetadata || null);
+                        // Find the message ID for the last assistant message with results
+                        const lastMsgWithResults = loadedMessages.find(
+                            (m: Message) => m.role === 'assistant' && m.metadata?.results?.length > 0
+                        );
+                        setActiveResultMessageId(lastMsgWithResults?.id || null);
+                    } else {
+                        setResults([]);
+                        setMetadata(null);
+                        setActiveResultMessageId(null);
+                    }
                 } else {
                     // Empty session, show welcome
                     setMessages([{
@@ -156,13 +219,22 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                         content: 'Continue your conversation or start fresh!',
                         timestamp: new Date().toISOString()
                     }]);
+                    setResults([]);
+                    setMetadata(null);
                 }
                 setCurrentSessionId(sessionId);
-                setResults([]);
-                setMetadata(null);
             }
         } catch (err) {
             console.error('Failed to load session:', err);
+        }
+    };
+
+    // Show results for a specific message when clicked
+    const handleMessageClick = (message: Message) => {
+        if (message.role === 'assistant' && message.metadata?.results && message.metadata.results.length > 0) {
+            setResults(message.metadata.results);
+            setMetadata(message.metadata.searchMetadata || null);
+            setActiveResultMessageId(message.id);
         }
     };
 
@@ -215,23 +287,34 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
 
             const data = await response.json();
 
+            const searchResults = data.results || [];
+            const searchMeta = data.metadata || null;
+            
             const aiMessage: Message = {
                 id: `ai_${Date.now()}`,
                 role: 'assistant',
-                content: data.aiResponse || `Found ${data.results.length} results`,
-                timestamp: new Date().toISOString()
+                content: data.aiResponse || `Found ${searchResults.length} results`,
+                timestamp: new Date().toISOString(),
+                metadata: {
+                    results: searchResults,
+                    searchMetadata: searchMeta,
+                    resultsCount: searchResults.length
+                }
             };
 
             setMessages(prev => [...prev, aiMessage]);
-            setResults(data.results || []);
+            setResults(searchResults);
             setSuggestions(data.suggestions || []);
-            setMetadata(data.metadata || null);
+            setMetadata(searchMeta);
+            setActiveResultMessageId(aiMessage.id);
 
-            // Save AI response
+            // Save AI response with results for later retrieval
             if (sessionId) {
                 saveMessage(sessionId, 'assistant', aiMessage.content, {
-                    resultsCount: data.results?.length || 0,
-                    filters: data.metadata?.filters
+                    resultsCount: searchResults.length,
+                    filters: searchMeta?.filters,
+                    results: searchResults, // Store results for session restore
+                    searchMetadata: searchMeta
                 });
             }
 
@@ -358,30 +441,61 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                     className="flex-1 overflow-y-auto p-4 space-y-4"
                     style={{ maxHeight: 'calc(100vh - 280px)' }}
                 >
-                    {messages.map((message) => (
-                        <div
-                            key={message.id}
-                            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                        >
+                    {messages.map((message) => {
+                        const hasResults = message.role === 'assistant' && message.metadata?.results && message.metadata.results.length > 0;
+                        const isActiveResult = hasResults && activeResultMessageId === message.id;
+                        
+                        return (
                             <div
-                                className={`max-w-[85%] rounded-2xl px-4 py-3 ${message.role === 'user'
-                                    ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
-                                    : 'bg-slate-100 text-slate-800'
-                                }`}
+                                key={message.id}
+                                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                             >
-                                <p className="text-sm leading-relaxed">{message.content}</p>
-                                <p className={`text-xs mt-1 ${message.role === 'user' ? 'text-blue-100' : 'text-slate-500'}`}>
-                                    {new Date(message.timestamp).toLocaleTimeString()}
-                                </p>
+                                <div
+                                    onClick={() => hasResults && handleMessageClick(message)}
+                                    className={`max-w-[85%] rounded-2xl px-4 py-3 ${message.role === 'user'
+                                        ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
+                                        : hasResults 
+                                            ? `bg-slate-100 text-slate-800 cursor-pointer hover:bg-slate-200 transition-colors ${isActiveResult ? 'ring-2 ring-blue-500' : ''}`
+                                            : 'bg-slate-100 text-slate-800'
+                                    }`}
+                                >
+                                    <p className="text-sm leading-relaxed">{message.content}</p>
+                                    <div className={`flex items-center justify-between mt-1 ${message.role === 'user' ? 'text-blue-100' : 'text-slate-500'}`}>
+                                        <p className="text-xs">
+                                            {new Date(message.timestamp).toLocaleTimeString()}
+                                        </p>
+                                        {hasResults && (
+                                            <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full ml-2">
+                                                {message.metadata?.resultsCount || message.metadata?.results?.length} results • Click to view
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                     {isSearching && (
                         <div className="flex justify-start">
-                            <div className="bg-slate-100 rounded-2xl px-4 py-3">
-                                <div className="flex items-center gap-2">
-                                    <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-                                    <p className="text-sm text-slate-600">Searching...</p>
+                            <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-2xl px-4 py-3 border border-blue-100 shadow-sm">
+                                <div className="flex items-center gap-3">
+                                    <div className="relative">
+                                        <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                                        <div className="absolute inset-0 w-5 h-5 animate-ping opacity-20 bg-blue-500 rounded-full" />
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-medium text-slate-700 transition-all duration-300">
+                                            {loadingMessages[loadingMessageIndex]}
+                                        </p>
+                                        <div className="flex gap-1 mt-1">
+                                            {[0, 1, 2].map((i) => (
+                                                <div
+                                                    key={i}
+                                                    className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce"
+                                                    style={{ animationDelay: `${i * 0.15}s` }}
+                                                />
+                                            ))}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -491,48 +605,64 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 gap-4">
-                            {results.map((idea) => (
-                                <div
-                                    key={idea.id}
-                                    className="bg-white rounded-xl p-5 border border-slate-200 hover:border-blue-400 hover:shadow-lg transition-all cursor-pointer group"
-                                    onClick={() => onNavigateToIdea?.(idea)}
-                                >
-                                    <div className="flex items-start justify-between mb-3">
-                                        <div className="flex-1">
-                                            <h4 className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">
-                                                {idea.title}
-                                            </h4>
-                                            <p className="text-sm text-slate-600 mt-1 line-clamp-2">
-                                                {idea.description}
-                                            </p>
-                                        </div>
-                                        {idea.matchScore && idea.matchScore > 0 && (
-                                            <div className="ml-4 flex-shrink-0">
-                                                <div className="px-3 py-1 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-full text-xs font-bold">
-                                                    {idea.matchScore}% Match
-                                                </div>
+                            {results.map((idea, index) => {
+                                // Safely handle technologies - could be string or array
+                                const techs = idea.technologies as string | string[] | undefined;
+                                const techArray: string[] = Array.isArray(techs) 
+                                    ? techs 
+                                    : (typeof techs === 'string' && techs)
+                                        ? techs.split(',').map(t => t.trim()).filter(Boolean)
+                                        : [];
+                                
+                                return (
+                                    <div
+                                        key={idea.id || `result-${index}`}
+                                        className="bg-white rounded-xl p-5 border border-slate-200 hover:border-blue-400 hover:shadow-lg transition-all cursor-pointer group"
+                                        onClick={() => onNavigateToIdea?.(idea)}
+                                    >
+                                        <div className="flex items-start justify-between mb-3">
+                                            <div className="flex-1">
+                                                <h4 className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">
+                                                    {idea.title || 'Untitled'}
+                                                </h4>
+                                                <p className="text-sm text-slate-600 mt-1 line-clamp-2">
+                                                    {idea.description || 'No description available'}
+                                                </p>
                                             </div>
-                                        )}
-                                    </div>
+                                            {idea.matchScore && idea.matchScore > 0 && (
+                                                <div className="ml-4 flex-shrink-0">
+                                                    <div className="px-3 py-1 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-full text-xs font-bold">
+                                                        {idea.matchScore}% Match
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
 
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs">
-                                            {idea.domain}
-                                        </span>
-                                        <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs">
-                                            {idea.businessGroup}
-                                        </span>
-                                        {idea.technologies.slice(0, 2).map((tech, idx) => (
-                                            <span key={idx} className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs">
-                                                {tech}
-                                            </span>
-                                        ))}
-                                        <span className="text-xs text-slate-400 ml-auto">
-                                            {new Date(idea.submissionDate).toLocaleDateString()}
-                                        </span>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            {idea.domain && (
+                                                <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs">
+                                                    {idea.domain}
+                                                </span>
+                                            )}
+                                            {idea.businessGroup && (
+                                                <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs">
+                                                    {idea.businessGroup}
+                                                </span>
+                                            )}
+                                            {techArray.slice(0, 2).map((tech, idx) => (
+                                                <span key={idx} className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs">
+                                                    {tech}
+                                                </span>
+                                            ))}
+                                            {idea.submissionDate && (
+                                                <span className="text-xs text-slate-400 ml-auto">
+                                                    {new Date(idea.submissionDate).toLocaleDateString()}
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
                 </div>

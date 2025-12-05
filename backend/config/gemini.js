@@ -7,8 +7,9 @@ import 'dotenv/config';
 const API_KEY = process.env.API_KEY || null;
 
 // Exported model names (single source of truth)
+// Free tier compatible models
 const GEMINI_EMBEDDING_MODEL = 'text-embedding-004';
-const GEMINI_GENERATION_MODEL = 'gemini-2.5-flash-lite'; // Gemini 2.5 Flash-Lite model
+const GEMINI_GENERATION_MODEL = 'gemini-2.5-flash-lite'; // Free tier: gemini-2.5-flash-lite
 
 let genAI = null;
 let isAvailable = false;
