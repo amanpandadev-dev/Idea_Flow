@@ -187,7 +187,7 @@ export async function extractThemesWithAI(text) {
 
     try {
         // Using Gemini 2.0 Flash Experimental - Latest fast model
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
         // Truncate text if too long to avoid token limits (approx 15k chars is safe for Flash input context)
         const inputContext = text.length > 15000 ? text.substring(0, 15000) + "..." : text;

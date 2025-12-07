@@ -17,7 +17,7 @@ export async function generateQuestionsWithGemini(themes, fullText = '') {
 
     try {
         const genAI = new GoogleGenerativeAI(API_KEY);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
         const themesText = themes.join(', ');
         const prompt = `Based on a document with themes: ${themesText}

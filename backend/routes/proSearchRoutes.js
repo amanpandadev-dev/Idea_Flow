@@ -13,16 +13,20 @@ import express from 'express';
 import { validateQuery, extractEntities, generateErrorMessage } from '../services/contextValidator.js';
 import { getChromaClient } from '../config/chroma.js';
 import { enhanceQuery, processQuery } from '../services/nlpQueryProcessor.js';
-import { 
-    generateGeminiEmbeddingWithRetry, 
-    generateText, 
+import {
+    generateGeminiEmbeddingWithRetry,
+    generateText,
     isGeminiAvailable,
-    initializeGemini 
+    initializeGemini
 } from '../config/gemini.js';
+import { contextsRouter } from './proSearchContextRoutes.js';
 
 const router = express.Router();
 
 console.log('✅ [Pro Search] Routes loaded with ChromaDB + Gemini + NLP');
+
+// Mount context management routes
+router.use('/', contextsRouter);
 
 // Ensure Gemini is initialized
 initializeGemini();
@@ -41,15 +45,15 @@ async function getEmbedding(text) {
         throw new Error('Text cannot be empty');
     }
 
-    // Truncate to avoid token limits
-    const truncatedText = text.substring(0, 1500);
+    // Truncate to avoid token limits (increased limit for Con #10 fix)
+    const truncatedText = text.substring(0, 5000);
 
     // Try Gemini first, but with quick timeout
     if (isGeminiAvailable()) {
         try {
             const embedding = await Promise.race([
                 generateGeminiEmbeddingWithRetry(truncatedText, 2), // Max 2 retries
-                new Promise((_, reject) => 
+                new Promise((_, reject) =>
                     setTimeout(() => reject(new Error('Embedding timeout')), 10000)
                 )
             ]);
@@ -69,13 +73,13 @@ async function getEmbedding(text) {
 function generateLocalEmbedding(text) {
     const EMBEDDING_DIM = 768;
     const embedding = new Array(EMBEDDING_DIM).fill(0);
-    
+
     // Tokenize and clean
     const words = text.toLowerCase()
         .replace(/[^\w\s]/g, ' ')
         .split(/\s+/)
         .filter(w => w.length > 2);
-    
+
     if (words.length === 0) {
         return embedding;
     }
@@ -90,10 +94,10 @@ function generateLocalEmbedding(text) {
     Object.entries(wordFreq).forEach(([word, freq]) => {
         // Multiple hash positions for each word
         for (let h = 0; h < 3; h++) {
-            const hash = word.split('').reduce((acc, char, i) => 
+            const hash = word.split('').reduce((acc, char, i) =>
                 acc + char.charCodeAt(0) * (i + 1) * (h + 1), h * 1000);
             const index = Math.abs(hash) % EMBEDDING_DIM;
-            
+
             // TF-IDF style weighting
             const tf = freq / words.length;
             const idf = Math.log(1 + 1 / (freq + 1));
@@ -133,11 +137,11 @@ async function indexIdeasToChroma(pool) {
 
     try {
         const chromaClient = getChromaClient();
-        
+
         // Check if collection already has data (loaded from disk)
         const hasCollection = chromaClient.hasCollection('ideas_search');
         const stats = hasCollection ? chromaClient.getStats('ideas_search') : null;
-        
+
         if (hasCollection && stats && stats.documentCount > 0) {
             // Collection exists with data - mark as checked and skip indexing
             lastIndexTime = Date.now();
@@ -145,12 +149,12 @@ async function indexIdeasToChroma(pool) {
             console.log(`[Pro Search] ✅ Using existing index with ${stats.documentCount} ideas (loaded from disk)`);
             return;
         }
-        
+
         // Set indexing flag to prevent concurrent runs
         isIndexing = true;
 
         console.log('[Pro Search] Indexing ideas to ChromaDB...');
-        
+
         // Fetch ALL fields from ideas table for comprehensive indexing
         const result = await pool.query(`
             SELECT 
@@ -178,7 +182,7 @@ async function indexIdeasToChroma(pool) {
 
         for (let i = 0; i < result.rows.length; i += batchSize) {
             const batch = result.rows.slice(i, i + batchSize);
-            
+
             const documents = [];
             const embeddings = [];
             const metadatas = [];
@@ -210,10 +214,10 @@ async function indexIdeasToChroma(pool) {
                 try {
                     // Truncate for embedding but keep it comprehensive
                     const embedding = await getEmbedding(textParts.substring(0, 3000));
-                    
+
                     documents.push(textParts);
                     embeddings.push(embedding);
-                    
+
                     // Store comprehensive metadata for filtering and display
                     metadatas.push({
                         idea_id: idea.idea_id,
@@ -267,83 +271,181 @@ async function indexIdeasToChroma(pool) {
 /**
  * Semantic search using ChromaDB
  */
-async function semanticSearch(query, filters = {}, topK = 25) {
+/**
+ * Semantic search with enhanced pagination and filtering
+ * @param {string} query - Search query
+ * @param {Object} filters - Filter criteria
+ * @param {number} page - Page number (1-indexed)
+ * @param {number} limit - Results per page
+ * @param {number} minSimilarity - Minimum similarity threshold (0-100)
+ * @returns {Object} { results, pagination, facets }
+ */
+async function semanticSearch(query, filters = {}, page = 1, limit = 20, minSimilarity = 30) {
     try {
         const chromaClient = getChromaClient();
-        
+
         if (!chromaClient.hasCollection('ideas_search')) {
-            return [];
+            return { results: [], pagination: { page: 1, limit, total: 0, totalPages: 0 }, facets: {} };
         }
 
         // Generate query embedding
         const queryEmbedding = await getEmbedding(query);
-        
-        // Query ChromaDB
+
+        // Query ChromaDB with larger pool for better pagination
+        // Fetch 200 results to have a good pool after filtering
+        const topK = Math.min(200, limit * 10);
         const results = chromaClient.query('ideas_search', queryEmbedding, topK);
-        
+
         if (!results || results.documents.length === 0) {
-            return [];
+            return { results: [], pagination: { page: 1, limit, total: 0, totalPages: 0 }, facets: {} };
         }
 
         // Map results with similarity scores
-        const ideas = results.documents.map((doc, idx) => {
+        let ideas = results.documents.map((doc, idx) => {
             const metadata = results.metadatas[idx] || {};
             const distance = results.distances[idx] || 1;
             const similarity = Math.max(0, Math.round((1 - distance) * 100));
             const dbId = metadata.idea_id;
 
             return {
-                id: `IDEA-${dbId}`, // Format as string ID for frontend
-                dbId: dbId, // Keep numeric ID for database operations
+                id: `IDEA-${dbId}`,
+                dbId: dbId,
                 title: metadata.title || 'Untitled',
-                description: metadata.summary || doc.substring(0, 300),
+                description: metadata.summary || doc.substring(0, 500), // Increased from 300
                 domain: metadata.domain || 'General',
                 businessGroup: metadata.businessGroup || 'Unknown',
                 technologies: metadata.technologies || '',
                 score: metadata.score || 0,
                 submissionDate: metadata.created_at || new Date().toISOString(),
-                matchScore: similarity
+                matchScore: similarity,
+                // Additional metadata for better display
+                benefits: metadata.benefits || '',
+                risks: metadata.risks || '',
+                buildPhase: metadata.buildPhase || '',
+                buildPreference: metadata.buildPreference || ''
             };
         });
 
+        // Apply similarity threshold
+        ideas = ideas.filter(idea => idea.matchScore >= minSimilarity);
+
         // Apply filters
         let filtered = ideas;
-        
+
         if (filters.domain?.length > 0) {
             const domains = Array.isArray(filters.domain) ? filters.domain : [filters.domain];
-            filtered = filtered.filter(idea => 
+            filtered = filtered.filter(idea =>
                 domains.some(d => idea.domain.toLowerCase().includes(d.toLowerCase()))
             );
         }
 
         if (filters.businessGroup?.length > 0) {
             const groups = Array.isArray(filters.businessGroup) ? filters.businessGroup : [filters.businessGroup];
-            filtered = filtered.filter(idea => 
+            filtered = filtered.filter(idea =>
                 groups.some(g => idea.businessGroup.toLowerCase().includes(g.toLowerCase()))
             );
         }
 
         if (filters.techStack?.length > 0) {
             const techs = Array.isArray(filters.techStack) ? filters.techStack : [filters.techStack];
-            filtered = filtered.filter(idea => 
+            filtered = filtered.filter(idea =>
                 techs.some(t => idea.technologies.toLowerCase().includes(t.toLowerCase()))
             );
         }
 
         if (filters.year) {
             filtered = filtered.filter(idea => {
+                if (!idea.submissionDate) return false;
+                // Parse the submissionDate (created_at) to get the year
                 const year = new Date(idea.submissionDate).getFullYear();
-                return year === filters.year;
+                return year === parseInt(filters.year);
             });
         }
 
         // Sort by match score
-        return filtered.sort((a, b) => b.matchScore - a.matchScore);
+        filtered = filtered.sort((a, b) => b.matchScore - a.matchScore);
+
+        // Calculate facets for filter preview (Con #9 fix)
+        const facets = calculateFacets(filtered);
+
+        // Apply pagination
+        const total = filtered.length;
+        const totalPages = Math.ceil(total / limit);
+        const startIdx = (page - 1) * limit;
+        const endIdx = startIdx + limit;
+        const paginatedResults = filtered.slice(startIdx, endIdx);
+
+        return {
+            results: paginatedResults,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages,
+                hasNext: page < totalPages,
+                hasPrev: page > 1
+            },
+            facets
+        };
 
     } catch (error) {
         console.error('[Pro Search] Semantic search error:', error.message);
-        return [];
+        return { results: [], pagination: { page: 1, limit, total: 0, totalPages: 0 }, facets: {} };
     }
+}
+
+/**
+ * Calculate facet counts for available filters
+ */
+function calculateFacets(ideas) {
+    const facets = {
+        domains: {},
+        businessGroups: {},
+        technologies: {},
+        buildPhases: {},
+        years: {}
+    };
+
+    ideas.forEach(idea => {
+        // Domain facets
+        if (idea.domain) {
+            facets.domains[idea.domain] = (facets.domains[idea.domain] || 0) + 1;
+        }
+
+        // Business group facets
+        if (idea.businessGroup && idea.businessGroup !== 'Unknown') {
+            facets.businessGroups[idea.businessGroup] = (facets.businessGroups[idea.businessGroup] || 0) + 1;
+        }
+
+        // Technology facets
+        if (idea.technologies) {
+            const techs = idea.technologies.split(',').map(t => t.trim()).filter(Boolean);
+            techs.forEach(tech => {
+                facets.technologies[tech] = (facets.technologies[tech] || 0) + 1;
+            });
+        }
+
+        // Build phase facets
+        if (idea.buildPhase) {
+            facets.buildPhases[idea.buildPhase] = (facets.buildPhases[idea.buildPhase] || 0) + 1;
+        }
+
+        // Year facets
+        if (idea.submissionDate) {
+            const year = new Date(idea.submissionDate).getFullYear();
+            facets.years[year] = (facets.years[year] || 0) + 1;
+        }
+    });
+
+    // Sort facets by count (descending)
+    Object.keys(facets).forEach(facetType => {
+        const sorted = Object.entries(facets[facetType])
+            .sort(([, a], [, b]) => b - a)
+            .slice(0, 10); // Top 10 per facet
+        facets[facetType] = Object.fromEntries(sorted);
+    });
+
+    return facets;
 }
 
 /**
@@ -381,6 +483,12 @@ function parseFilters(query, additionalFilters = {}) {
  * Generate AI-powered response using Gemini
  */
 async function generateAIResponse(query, results, filters, nlpResult) {
+    // Safety check
+    if (!results) {
+        console.error('[Pro Search] generateAIResponse called with undefined results');
+        return 'Search completed. Please try refining your query.';
+    }
+
     const count = results.length;
 
     // For no results
@@ -398,7 +506,7 @@ async function generateAIResponse(query, results, filters, nlpResult) {
         try {
             const topIdeas = results.slice(0, 3).map(r => r.title).join(', ');
             const domains = [...new Set(results.slice(0, 5).map(r => r.domain))].join(', ');
-            
+
             const prompt = `You are a helpful assistant for an innovation idea repository. 
 A user searched for: "${query}"
 Found ${count} matching ideas. Top results: ${topIdeas}
@@ -412,7 +520,17 @@ Do NOT reveal any confidential information or discuss topics outside of idea sea
                 return aiText.trim();
             }
         } catch (error) {
-            console.warn('[Pro Search] AI response generation failed:', error.message);
+            // Detect quota exceeded errors
+            const isQuotaError = error.message?.includes('quota') ||
+                error.message?.includes('429') ||
+                error.message?.includes('Too Many Requests');
+
+            if (isQuotaError) {
+                console.warn('[Pro Search] ⚠️  Gemini API quota exceeded - using fallback response. The API will automatically retry once quota resets.');
+            } else {
+                console.warn('[Pro Search] AI response generation failed:', error.message);
+            }
+            // Falls through to static fallback response below
         }
     }
 
@@ -449,11 +567,16 @@ Do NOT reveal any confidential information or discuss topics outside of idea sea
 function generateSuggestions(query, results, filters) {
     const suggestions = new Set();
 
+    // Safety check
+    if (!results || !Array.isArray(results)) {
+        return ['Show latest ideas', 'AI and ML projects', 'Healthcare innovations'];
+    }
+
     // Based on results
     if (results.length > 0) {
         const topDomains = [...new Set(results.slice(0, 5).map(r => r.domain).filter(Boolean))];
         if (topDomains[0]) suggestions.add(`More ${topDomains[0]} ideas`);
-        
+
         const topTechs = [...new Set(results.slice(0, 5).map(r => r.technologies).filter(Boolean))];
         if (topTechs[0]) suggestions.add(`${topTechs[0]} projects`);
     }
@@ -475,29 +598,36 @@ function generateSuggestions(query, results, filters) {
  */
 router.post('/conversational', async (req, res) => {
     const startTime = Date.now();
-    
+
     try {
-        const { query, additionalFilters = {} } = req.body;
+        const {
+            query,
+            additionalFilters = {},
+            page = 1,
+            limit = 20,
+            minSimilarity = 30,
+            overrideValidation = false
+        } = req.body;
 
         // Validate input
         if (!query || typeof query !== 'string') {
-            return res.status(400).json({ 
-                error: true, 
-                message: 'Query is required' 
+            return res.status(400).json({
+                error: true,
+                message: 'Query is required'
             });
         }
 
         const trimmedQuery = query.trim();
         if (trimmedQuery.length < 2) {
-            return res.status(400).json({ 
-                error: true, 
-                message: 'Query too short' 
+            return res.status(400).json({
+                error: true,
+                message: 'Query too short'
             });
         }
 
         // STEP 1: Context Validation - Block off-topic/confidential queries
         const validation = validateQuery(trimmedQuery);
-        
+
         // Handle greetings specially
         if (validation.isGreeting) {
             console.log(`[Pro Search] Greeting detected: "${trimmedQuery}"`);
@@ -505,38 +635,43 @@ router.post('/conversational', async (req, res) => {
                 results: [],
                 aiResponse: "Hi there! 👋 I'm your Pro Search assistant. I can help you discover innovation ideas and projects. Try asking me things like:\n\n• \"Show me latest AI projects\"\n• \"Find healthcare innovations\"\n• \"Search for React applications\"\n\nWhat would you like to explore today?",
                 suggestions: ['Show me latest ideas', 'Find AI projects', 'Healthcare innovations', 'Cloud solutions'],
-                metadata: { 
-                    intent: 'greeting', 
-                    filters: {}, 
-                    totalResults: 0 
+                pagination: { page: 1, limit: 20, total: 0, totalPages: 0, hasNext: false, hasPrev: false },
+                facets: {},
+                metadata: {
+                    intent: 'greeting',
+                    filters: {},
+                    totalResults: 0
                 }
             });
         }
-        
+
         if (!validation.valid) {
             console.log(`[Pro Search] Rejected query: "${trimmedQuery}" - ${validation.reason}`);
             const errorMsg = generateErrorMessage(validation.reason, validation.suggestion);
             return res.json({
                 results: [],
-                aiResponse: errorMsg,
+                aiResponse: errorMsg + "\n\n💡 Tip: You can add 'overrideValidation: true' to bypass validation if this is a legitimate query.",
                 suggestions: ['Show me latest ideas', 'Find AI projects', 'Healthcare innovations'],
-                metadata: { 
-                    intent: 'rejected', 
+                pagination: { page: 1, limit: 20, total: 0, totalPages: 0, hasNext: false, hasPrev: false },
+                facets: {},
+                metadata: {
+                    intent: 'rejected',
                     reason: validation.reason,
-                    filters: {}, 
-                    totalResults: 0 
+                    canOverride: true,
+                    filters: {},
+                    totalResults: 0
                 }
             });
         }
 
-        console.log(`[Pro Search] Processing: "${trimmedQuery}"`);
+        console.log(`[Pro Search] Processing: "${trimmedQuery}" (page ${page}, limit ${limit}, similarity >= ${minSimilarity}%)`);
 
         // Get database pool
         const pool = req.app.get('db');
         if (!pool) {
-            return res.status(503).json({ 
-                error: true, 
-                message: 'Database not available' 
+            return res.status(503).json({
+                error: true,
+                message: 'Database not available'
             });
         }
 
@@ -545,10 +680,10 @@ router.post('/conversational', async (req, res) => {
 
         // STEP 3: NLP Processing - Spell correction & query expansion
         const apiKey = process.env.API_KEY;
-        const nlpResult = await enhanceQuery(trimmedQuery, { 
-            useAI: !!apiKey && isGeminiAvailable(), 
+        const nlpResult = await enhanceQuery(trimmedQuery, {
+            useAI: !!apiKey && isGeminiAvailable(),
             apiKey,
-            model: 'gemini-2.5-flash-lite'
+            model: 'gemini-2.5-flash'
         });
 
         console.log(`[Pro Search] NLP: "${trimmedQuery}" → "${nlpResult.corrected}"`);
@@ -558,36 +693,36 @@ router.post('/conversational', async (req, res) => {
 
         // STEP 5: Semantic search using ChromaDB + Gemini embeddings
         const searchQuery = nlpResult.expanded?.join(' ') || nlpResult.corrected;
-        let results = await semanticSearch(searchQuery, filters, 25);
+        let searchResult = await semanticSearch(searchQuery, filters, page, limit, minSimilarity);
 
-        // STEP 6: Fallback to database if no semantic results
-        if (results.length === 0) {
+        // STEP 6: Fallback to database if no semantic results (only on first page)
+        if (searchResult.results.length === 0 && page === 1) {
             console.log('[Pro Search] No semantic results, trying keyword search...');
-            
+
             // Use multiple search terms from NLP processing
             const searchTerms = nlpResult.tokens || trimmedQuery.split(/\s+/);
             const primaryTerm = searchTerms[0] || trimmedQuery;
-            
+
             // Build dynamic OR conditions for better matching
             let whereConditions = [];
             let params = [];
             let paramIndex = 1;
-            
+
             // Add conditions for each significant term (max 3)
             const significantTerms = searchTerms.filter(t => t.length > 2).slice(0, 3);
-            
+
             for (const term of significantTerms) {
                 whereConditions.push(`(title ILIKE $${paramIndex} OR summary ILIKE $${paramIndex} OR challenge_opportunity ILIKE $${paramIndex} OR code_preference ILIKE $${paramIndex})`);
                 params.push(`%${term}%`);
                 paramIndex++;
             }
-            
+
             // Fallback if no terms
             if (whereConditions.length === 0) {
                 whereConditions.push(`(title ILIKE $1 OR summary ILIKE $1)`);
                 params.push(`%${primaryTerm}%`);
             }
-            
+
             const dbResult = await pool.query(`
                 SELECT idea_id, title, summary as description,
                        challenge_opportunity as domain, business_group as "businessGroup",
@@ -596,10 +731,10 @@ router.post('/conversational', async (req, res) => {
                 FROM ideas
                 WHERE ${whereConditions.join(' OR ')}
                 ORDER BY score DESC, created_at DESC
-                LIMIT 20
+                LIMIT ${limit * 5}
             `, params);
 
-            results = dbResult.rows.map(row => ({
+            const dbResults = dbResult.rows.map(row => ({
                 id: `IDEA-${row.idea_id}`, // Format as string ID for frontend
                 dbId: row.idea_id, // Keep numeric ID for database operations
                 title: row.title,
@@ -611,43 +746,69 @@ router.post('/conversational', async (req, res) => {
                 score: row.score || 0,
                 matchScore: 65 // Default score for keyword results
             }));
-            
-            console.log(`[Pro Search] Keyword search found ${results.length} results`);
+
+            console.log(`[Pro Search] Keyword search found ${dbResults.length} results`);
+
+            // Apply pagination to fallback results
+            const total = dbResults.length;
+            const totalPages = Math.ceil(total / limit);
+            const startIdx = (page - 1) * limit;
+            const endIdx = startIdx + limit;
+
+            searchResult = {
+                results: dbResults.slice(startIdx, endIdx),
+                pagination: {
+                    page,
+                    limit,
+                    total,
+                    totalPages,
+                    hasNext: page < totalPages,
+                    hasPrev: page > 1
+                },
+                facets: calculateFacets(dbResults)
+            };
         }
 
-        // Limit results
-        results = results.slice(0, 10);
+        // STEP 7: Generate AI response (only on first page)
+        const aiResponse = page === 1
+            ? await generateAIResponse(trimmedQuery, searchResult.results, filters, nlpResult)
+            : `Showing page ${page} of ${searchResult.pagination.totalPages}`;
 
-        // STEP 7: Generate AI response
-        const aiResponse = await generateAIResponse(trimmedQuery, results, filters, nlpResult);
-
-        // STEP 8: Generate suggestions
-        const suggestions = generateSuggestions(trimmedQuery, results, filters);
+        // STEP 8: Generate suggestions (only on first page)
+        const suggestions = page === 1
+            ? generateSuggestions(trimmedQuery, searchResult.results, filters)
+            : [];
 
         const duration = Date.now() - startTime;
-        console.log(`[Pro Search] Completed in ${duration}ms, found ${results.length} results`);
+        console.log(`[Pro Search] Completed in ${duration}ms, ${searchResult.pagination.total} total results, page ${page}/${searchResult.pagination.totalPages}`);
 
         res.json({
-            results,
+            results: searchResult.results,
             aiResponse,
             suggestions,
+            pagination: searchResult.pagination,
+            facets: searchResult.facets,
             metadata: {
                 intent: 'search',
                 filters,
-                totalResults: results.length,
+                totalResults: searchResult.pagination.total,
                 processingTime: duration,
                 nlpEnhanced: nlpResult.aiEnhanced || false,
                 correctedQuery: nlpResult.corrected,
-                originalQuery: trimmedQuery
+                originalQuery: trimmedQuery,
+                minSimilarity,
+                page: searchResult.pagination.page
             }
         });
 
     } catch (error) {
         console.error('[Pro Search] Error:', error);
-        res.status(500).json({ 
-            error: true, 
+        console.error('[Pro Search] Stack:', error.stack);
+        res.status(500).json({
+            error: true,
             message: 'Search failed. Please try again.',
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
         });
     }
 });
@@ -689,8 +850,8 @@ router.post('/reindex', async (req, res) => {
 
         await indexIdeasToChroma(pool);
 
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             message: 'Ideas reindexed successfully',
             timestamp: new Date().toISOString()
         });

@@ -28,14 +28,14 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
                 if (status.hasContext && status.stats) {
                     console.log('[DocumentUpload] Found existing context, restoring state');
                     // Reconstruct the uploadedContext from status
-                    const restoredContext = {
+                    const restoredContext: ContextUploadResponse = {
                         success: true,
                         chunksProcessed: status.stats.documentCount,
                         themes: status.stats.themes || [],
                         keywords: status.stats.keywords || [],
                         suggestedQuestions: status.stats.suggestedQuestions || [],
-                        sessionId: status.userId || '',
-                        filename: status.stats.filename || 'Uploaded Document', // Get filename from stats
+                        sessionId: status.sessionId || '',
+                        filename: status.stats.filename || 'Uploaded Document',
                         stats: {
                             originalLength: 0,
                             chunkCount: status.stats.documentCount,

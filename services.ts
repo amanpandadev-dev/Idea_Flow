@@ -283,6 +283,7 @@ export interface ContextUploadResponse {
   themes: string[];
   keywords?: string[];
   suggestedQuestions?: string[];
+  filename?: string;
   ragData?: {
     themes: string[];
     keywords: string[];
@@ -333,10 +334,15 @@ export const resetContext = async (): Promise<{ success: boolean; message: strin
 export interface ContextStatus {
   hasContext: boolean;
   sessionId: string | null;
+  userId?: string;
   stats?: {
     sessionId: string;
     documentCount: number;
     collectionName: string;
+    themes?: string[];
+    keywords?: string[];
+    suggestedQuestions?: string[];
+    filename?: string;
   };
 }
 
@@ -410,4 +416,78 @@ export const semanticSearchIdeas = async (
     body: JSON.stringify({ query, embeddingProvider, page, limit, minSimilarity })
   });
   return data;
+};
+
+// ============================================
+// Chat History API Functions
+// ============================================
+
+export interface ChatSession {
+  id: number;
+  title: string;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GroupedChatSessions {
+  [dateGroup: string]: ChatSession[];
+}
+
+export interface ChatMessage {
+  id: number;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  metadata?: {
+    results?: any[];
+    filters?: any;
+    [key: string]: any;
+  };
+  timestamp: string;
+}
+
+// Get all chat sessions for the current user
+export const getChatSessions = async (): Promise<{ sessions: GroupedChatSessions }> => {
+  return fetchWithAuth(`${API_URL}/chat/sessions`);
+};
+
+// Create a new chat session
+export const createChatSession = async (title?: string): Promise<{ session: ChatSession }> => {
+  return fetchWithAuth(`${API_URL}/chat/sessions`, {
+    method: 'POST',
+    body: JSON.stringify({ title })
+  });
+};
+
+// Get messages for a specific session
+export const getChatMessages = async (sessionId: number): Promise<{ messages: ChatMessage[] }> => {
+  return fetchWithAuth(`${API_URL}/chat/sessions/${sessionId}/messages`);
+};
+
+// Add a message to a session
+export const addChatMessage = async (
+  sessionId: number,
+  role: 'user' | 'assistant' | 'system',
+  content: string,
+  metadata?: any
+): Promise<{ message: ChatMessage }> => {
+  return fetchWithAuth(`${API_URL}/chat/sessions/${sessionId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ role, content, metadata })
+  });
+};
+
+// Delete a chat session
+export const deleteChatSession = async (sessionId: number): Promise<{ success: boolean }> => {
+  return fetchWithAuth(`${API_URL}/chat/sessions/${sessionId}`, {
+    method: 'DELETE'
+  });
+};
+
+// Rename a chat session
+export const renameChatSession = async (sessionId: number, title: string): Promise<{ session: ChatSession }> => {
+  return fetchWithAuth(`${API_URL}/chat/sessions/${sessionId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title })
+  });
 };

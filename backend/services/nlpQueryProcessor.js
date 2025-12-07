@@ -229,7 +229,7 @@ export function correctSpelling(word) {
     if (Math.abs(misspelled.length - lowerWord.length) > 2) {
       continue;
     }
-    
+
     const distance = levenshteinDistance(lowerWord, misspelled);
     if (distance < bestDistance) {
       bestDistance = distance;
@@ -293,7 +293,7 @@ export function processQuery(rawQuery) {
 /**
  * AI-powered query refinement using Gemini 2.0 Flash (Free Tier - 1500 req/day)
  */
-export async function refineQueryWithAI(rawQuery, apiKey, modelName = "gemini-2.5-flash-lite") {
+export async function refineQueryWithAI(rawQuery, apiKey, modelName = "gemini-2.5-flash") {
   if (!apiKey) {
     console.warn('[NLP] No API key provided, skipping AI refinement');
     return processQuery(rawQuery);
@@ -312,23 +312,25 @@ User Query: "${rawQuery}"
 
 Instructions:
 1. Fix any spelling errors (e.g., "clodus" → "cloud", "custmer" → "customer")
-2. Expand abbreviations and acronyms (e.g., "AI" → "artificial intelligence", "ML" → "machine learning")
-3. Add relevant synonyms and related terms
-4. Identify the core intent and key concepts
-5. Normalize technical terms to standard industry terminology
-6. For naive queries like "monitoring system", expand to "health monitoring, system monitoring, observability, tracking"
-7. For domain queries like "banking apps", expand to "banking applications, financial services, fintech, payment systems"
+2. Expand abbreviations and acronyms (e.g., "AI" → "artificial intelligence")
+3. Add 3-5 highly relevant synonyms or related compound terms
+4. Keep compound terms together (e.g., "cloud computing" not "cloud" "computing")
+5. Focus on the PRIMARY intent - don't add unrelated expansions
+6. For technology queries, add only closely related technologies
 
-Return ONLY the enhanced search terms as a single line, separated by spaces. Include both the original corrected terms and relevant expansions.
+IMPORTANT: Return terms separated by COMMAS, keeping compound terms together.
 
 Example:
+Input: "cloud"
+Output: cloud, cloud computing, AWS, Azure, cloud infrastructure, serverless
+
 Input: "AI chatbot for custmer support"
-Output: artificial intelligence AI chatbot conversational agent virtual assistant customer support service helpdesk
+Output: AI chatbot, artificial intelligence, customer support, virtual assistant, conversational AI
 
 Input: "monitoring system for hospitals"
-Output: monitoring system health monitoring observability tracking hospital healthcare medical clinical patient care diagnostics
+Output: hospital monitoring, healthcare monitoring, patient monitoring system, medical observability
 
-Enhanced Query:`;
+Enhanced Query (comma-separated):`;
 
     const result = await model.generateContent(prompt);
     if (!result || !result.response) {
@@ -339,15 +341,23 @@ Enhanced Query:`;
     const refined = result.response.text().trim();
     console.log(`[NLP] ✅ Original: "${rawQuery}" → AI Refined: "${refined}"`);
 
-    // Parse AI response
-    const aiTokens = refined.split(/\s+/).filter(t => t.length > 0);
+    // Parse AI response - split by commas to preserve compound terms
+    const aiTerms = refined
+      .split(/,/)
+      .map(t => t.trim())
+      .filter(t => t.length > 0);
+
+    // Create search text that preserves compound terms
+    // Join with spaces for embedding, but keep the terms array for filtering
+    const searchText = aiTerms.join(' ');
 
     return {
       original: rawQuery,
-      corrected: refined,
-      expanded: aiTokens,
-      tokens: aiTokens,
-      aiEnhanced: true
+      corrected: searchText,
+      expanded: aiTerms,
+      tokens: aiTerms,
+      aiEnhanced: true,
+      compoundTerms: aiTerms.filter(t => t.includes(' ')) // Track compound terms
     };
 
   } catch (error) {
@@ -361,7 +371,7 @@ Enhanced Query:`;
  */
 export async function enhanceQuery(rawQuery, options = {}) {
   // Using Gemini 2.0 Flash - Free tier with 1500 requests/day
-  const { useAI = true, apiKey = null, model = "gemini-2.5-flash-lite" } = options;
+  const { useAI = true, apiKey = null, model = "gemini-2.5-flash" } = options;
 
   console.log(`[NLP] Processing query: "${rawQuery}"`);
 

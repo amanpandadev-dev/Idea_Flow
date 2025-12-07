@@ -40,7 +40,7 @@ router.get('/hybrid', async (req, res) => {
         let refinedQuery = q.toString();
         if (aiAvailable && ai) {
             try {
-                const model = ai.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+                const model = ai.getGenerativeModel({ model: "gemini-2.5-flash" });
                 const prompt = `You are an intelligent search query optimizer for an innovation idea repository.
 
 Task: Analyze and enhance the user's search query to improve search results.

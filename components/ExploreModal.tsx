@@ -54,7 +54,9 @@ const ExploreModal: React.FC<ExploreModalProps> = ({
   };
 
   const handleReset = () => {
-    setFilters({ themes: [], businessGroups: [], technologies: [] });
+    const emptyFilters = { themes: [], businessGroups: [], technologies: [] };
+    setFilters(emptyFilters);
+    onApplyFilters(emptyFilters); // Apply the reset immediately
   };
 
   const activeCount = filters.themes.length + filters.businessGroups.length + filters.technologies.length;

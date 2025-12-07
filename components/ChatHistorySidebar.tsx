@@ -19,6 +19,7 @@ interface ChatHistorySidebarProps {
     onNewChat: () => void;
     onDeleteSession: (sessionId: number) => void;
     userId: string;
+    width?: number;
 }
 
 const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
@@ -26,7 +27,8 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
     onSelectSession,
     onNewChat,
     onDeleteSession,
-    userId
+    userId,
+    width = 256 // default w-64
 }) => {
     const [sessions, setSessions] = useState<GroupedSessions>({});
     const [loading, setLoading] = useState(true);
@@ -126,7 +128,10 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
     });
 
     return (
-        <div className="w-64 bg-slate-900 text-white flex flex-col h-full">
+        <div
+            className="bg-slate-900 text-white flex flex-col h-full transition-all duration-75 flex-shrink-0"
+            style={{ width: `${width}px` }}
+        >
             {/* Header */}
             <div className="p-4 border-b border-slate-700">
                 <button
@@ -159,25 +164,24 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                                 className="w-full flex items-center justify-between px-4 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800 transition-colors"
                             >
                                 <span>{group}</span>
-                                <ChevronRight 
-                                    className={`w-3 h-3 transition-transform ${expandedGroups.has(group) ? 'rotate-90' : ''}`} 
+                                <ChevronRight
+                                    className={`w-3 h-3 transition-transform ${expandedGroups.has(group) ? 'rotate-90' : ''}`}
                                 />
                             </button>
-                            
+
                             {expandedGroups.has(group) && (
                                 <div className="pb-2">
                                     {sessions[group].map(session => (
                                         <div
                                             key={session.id}
-                                            className={`group flex items-center gap-2 px-3 py-2 mx-2 rounded-lg cursor-pointer transition-colors ${
-                                                currentSessionId === session.id
+                                            className={`group flex items-center gap-2 px-3 py-2 mx-2 rounded-lg cursor-pointer transition-colors ${currentSessionId === session.id
                                                     ? 'bg-slate-700'
                                                     : 'hover:bg-slate-800'
-                                            }`}
+                                                }`}
                                             onClick={() => editingId !== session.id && onSelectSession(session.id)}
                                         >
                                             <MessageSquare className="w-4 h-4 flex-shrink-0 text-slate-400" />
-                                            
+
                                             {editingId === session.id ? (
                                                 <div className="flex-1 flex items-center gap-1">
                                                     <input

@@ -117,15 +117,32 @@ router.get('/sessions/:sessionId/messages', async (req, res) => {
             ORDER BY created_at ASC
         `, [sessionId]);
 
-        res.json({ 
-            messages: result.rows.map(msg => ({
+        const messages = result.rows.map(msg => {
+            // Ensure metadata is parsed if it's a string
+            let parsedMetadata = msg.metadata;
+            if (typeof msg.metadata === 'string') {
+                try {
+                    parsedMetadata = JSON.parse(msg.metadata);
+                } catch (e) {
+                    console.warn('[ChatHistory] Failed to parse metadata:', e);
+                    parsedMetadata = null;
+                }
+            }
+            
+            return {
                 id: msg.id,
                 role: msg.role,
                 content: msg.content,
-                metadata: msg.metadata,
+                metadata: parsedMetadata,
                 timestamp: msg.created_at
-            }))
+            };
         });
+
+        // Log for debugging
+        const msgWithResults = messages.filter(m => m.metadata?.results?.length > 0);
+        console.log(`[ChatHistory] Loaded ${messages.length} messages, ${msgWithResults.length} with results`);
+
+        res.json({ messages });
     } catch (err) {
         console.error('[ChatHistory] Error fetching messages:', err);
         res.status(500).json({ error: 'Failed to fetch messages' });
@@ -143,27 +160,36 @@ router.post('/sessions/:sessionId/messages', async (req, res) => {
         const { sessionId } = req.params;
         const { role, content, metadata } = req.body;
 
-        // Limit results stored to prevent huge payloads (store top 10 only)
+        // Store more results for better session restoration (top 50)
         let processedMetadata = metadata;
         if (metadata?.results && Array.isArray(metadata.results)) {
+            console.log(`[ChatHistory] Saving message with ${metadata.results.length} results`);
             processedMetadata = {
                 ...metadata,
-                results: metadata.results.slice(0, 10).map((r) => ({
+                results: metadata.results.slice(0, 50).map((r) => ({
                     id: r.id,
+                    dbId: r.dbId,
                     title: r.title,
-                    description: r.description?.substring(0, 200),
+                    description: r.description?.substring(0, 300),
                     domain: r.domain,
                     businessGroup: r.businessGroup,
                     technologies: r.technologies,
+                    buildPhase: r.buildPhase,
+                    scalability: r.scalability,
+                    novelty: r.novelty,
+                    score: r.score,
+                    submissionDate: r.submissionDate,
                     matchScore: r.matchScore
-                }))
+                })),
+                resultsCount: metadata.results.length
             };
+            console.log(`[ChatHistory] Processed ${processedMetadata.results.length} results for storage`);
         }
 
-        // Insert message
+        // Insert message - PostgreSQL JSONB accepts objects directly
         const msgResult = await pool.query(`
             INSERT INTO chat_messages (session_id, role, content, metadata)
-            VALUES ($1, $2, $3, $4)
+            VALUES ($1, $2, $3, $4::jsonb)
             RETURNING id, role, content, metadata, created_at
         `, [sessionId, role, content, processedMetadata ? JSON.stringify(processedMetadata) : null]);
 

@@ -269,12 +269,19 @@ class PersistentVectorStore {
             };
         }
 
-        // Calculate similarities
-        const results = collection.embeddings.map((embedding, index) => ({
-            index,
-            similarity: cosineSimilarity(queryEmbedding, embedding),
-            distance: 1 - cosineSimilarity(queryEmbedding, embedding)
-        }));
+        // Optimized similarity calculation with early termination
+        const results = [];
+        const embeddings = collection.embeddings;
+        const numDocs = embeddings.length;
+        
+        for (let i = 0; i < numDocs; i++) {
+            const similarity = cosineSimilarity(queryEmbedding, embeddings[i]);
+            results.push({
+                index: i,
+                similarity,
+                distance: 1 - similarity
+            });
+        }
 
         // Sort by similarity and take top K
         const topResults = results
