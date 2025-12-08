@@ -34,7 +34,7 @@ const ExploreModal: React.FC<ExploreModalProps> = ({
 
   if (!isOpen) return null;
 
-  const toggleFilter = (category: keyof ExploreFilters, value: string) => {
+  const toggleFilter = (category: 'themes' | 'businessGroups' | 'technologies', value: string) => {
     setFilters(prev => {
       const current = prev[category];
       const updated = current.includes(value)
@@ -54,12 +54,16 @@ const ExploreModal: React.FC<ExploreModalProps> = ({
   };
 
   const handleReset = () => {
-    const emptyFilters = { themes: [], businessGroups: [], technologies: [] };
+    const emptyFilters: ExploreFilters = { themes: [], businessGroups: [], technologies: [], year: undefined };
     setFilters(emptyFilters);
     onApplyFilters(emptyFilters); // Apply the reset immediately
   };
 
-  const activeCount = filters.themes.length + filters.businessGroups.length + filters.technologies.length;
+  const setYear = (year: number | undefined) => {
+    setFilters(prev => ({ ...prev, year }));
+  };
+
+  const activeCount = filters.themes.length + filters.businessGroups.length + filters.technologies.length + (filters.year ? 1 : 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -218,6 +222,24 @@ const ExploreModal: React.FC<ExploreModalProps> = ({
             <span className="text-sm text-slate-400 border-l border-slate-200 pl-4">
               {activeCount} active filters
             </span>
+            
+            {/* Year Filter */}
+            <div className="flex items-center gap-2 border-l border-slate-200 pl-4">
+              <label className="text-sm font-medium text-slate-600">Year:</label>
+              <select
+                value={filters.year || ''}
+                onChange={(e) => setYear(e.target.value ? parseInt(e.target.value) : undefined)}
+                className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+              >
+                <option value="">All Years</option>
+                <option value="2025">2025</option>
+                <option value="2024">2024</option>
+                <option value="2023">2023</option>
+                <option value="2022">2022</option>
+                <option value="2021">2021</option>
+                <option value="2020">2020</option>
+              </select>
+            </div>
           </div>
 
           <button

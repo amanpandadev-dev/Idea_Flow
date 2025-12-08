@@ -28,7 +28,7 @@ const OFF_TOPIC_PATTERNS = [
     /can you (feel|think|dream|sleep|eat)/i,
     /what do you look like/i,
     /describe yourself/i,
-    
+
     // Conversational/casual chat (not search related)
     /^(how'?s it going|what'?s going on|sup|yo|wassup)/i,
     /^(thanks|thank you|thx|ty)[\s!.,?]*$/i,
@@ -36,7 +36,7 @@ const OFF_TOPIC_PATTERNS = [
     /^(yes|no|yeah|nope|yep|nah|ok|okay|sure|fine)[\s!.,?]*$/i,
     /^(lol|haha|hehe|rofl|lmao)/i,
     /^(wow|omg|oh|ah|hmm|huh|meh)/i,
-    
+
     // General knowledge questions
     /where (is|are) (the )?(taj mahal|eiffel tower|great wall|statue of liberty|pyramids)/i,
     /what is (the )?(capital of|meaning of|definition of)/i,
@@ -49,13 +49,13 @@ const OFF_TOPIC_PATTERNS = [
     /what day is (it|today)/i,
     /translate .* (to|into)/i,
     /how (tall|big|old|long|far|much|many) is/i,
-    
+
     // Homework/assignment requests
     /solve (this|my) (problem|homework|assignment|equation)/i,
     /write (me )?(a |an )?(essay|story|poem|code|program|script) (for|about)/i,
     /help me (with my|do my) (homework|assignment)/i,
     /calculate|compute|evaluate/i,
-    
+
     // Entertainment/casual
     /tell me a joke/i,
     /sing (me )?(a )?song/i,
@@ -63,11 +63,11 @@ const OFF_TOPIC_PATTERNS = [
     /what'?s (your )?favorite/i,
     /do you (like|love|hate)/i,
     /recommend (me )?(a )?(movie|book|song|show|game)/i,
-    
+
     // Harmful/inappropriate
     /how to (hack|steal|cheat|lie|hurt)/i,
     /illegal|drugs|weapons/i,
-    
+
     // Meta questions about the system
     /what (can|do) you (do|know)/i,
     /how (do|does) (this|you) work/i,
@@ -78,7 +78,7 @@ const OFF_TOPIC_PATTERNS = [
     /you are now/i,
     /forget (everything|all|your)/i,
     /new (persona|personality|character)/i,
-    
+
     // Random/nonsense
     /^[a-z]{1,3}[\s!.,?]*$/i,  // Single letters or very short nonsense
     /asdf|qwerty|test123/i,
@@ -205,6 +205,20 @@ export function validateQuery(query) {
 
     if (hasIdeaKeyword) {
         return { valid: true };
+    }
+
+    // Check for suspicious long single words (likely garbage)
+    if (normalizedQuery.indexOf(' ') === -1 && normalizedQuery.length > 12) {
+        // Exceptions for known long tech terms
+        const knownLongWords = ['cryptocurrency', 'telecommunication', 'infrastructure', 'authentication', 'virtualization', 'microservices', 'cybersecurity'];
+        if (!knownLongWords.some(w => normalizedQuery.includes(w))) {
+            return {
+                valid: false,
+                reason: 'Invalid query format',
+                warning: true,
+                suggestion: "That doesn't look like a valid word. Please try searching for specific terms or phrases."
+            };
+        }
     }
 
     // For queries without clear intent, check length and provide guidance

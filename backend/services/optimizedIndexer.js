@@ -145,13 +145,18 @@ function prepareIdeaText(idea) {
 
 /**
  * Prepare metadata for filtering and display
+ * Includes created_year for fast year-based filtering
  */
 function prepareMetadata(idea) {
+    const createdAt = idea.created_at;
+    const createdYear = createdAt ? new Date(createdAt).getFullYear() : null;
+    
     return {
         idea_id: idea.idea_id,
         title: idea.title || '',
         summary: (idea.summary || '').substring(0, 500),
         domain: (idea.challenge_opportunity || '').toLowerCase(),
+        challengeOpportunity: (idea.challenge_opportunity || '').toLowerCase(),
         businessGroup: (idea.business_group || '').toLowerCase(),
         technologies: (idea.code_preference || '').toLowerCase(),
         buildPhase: (idea.build_phase || '').toLowerCase(),
@@ -161,7 +166,8 @@ function prepareMetadata(idea) {
         timeline: idea.timeline || '',
         participationWeek: idea.participation_week || '',
         score: idea.score || 0,
-        created_at: idea.created_at?.toISOString() || '',
+        created_at: createdAt?.toISOString() || '',
+        created_year: createdYear,
         benefits: (idea.benefits || '').substring(0, 300),
         risks: (idea.risks || '').substring(0, 300),
         responsibleAI: idea.responsible_ai || ''
@@ -260,8 +266,9 @@ export async function indexIdeasOptimized(pool, options = {}) {
  * @param {string} query - Search query
  * @param {object} filters - Dynamic filters
  * @param {number} limit - Max results (default 200)
+ * @param {object} pool - Database pool for fetching accurate created_at dates
  */
-export async function optimizedSearch(query, filters = {}, limit = 200) {
+export async function optimizedSearch(query, filters = {}, limit = 200, pool = null) {
     try {
         const chromaClient = getChromaClient();
         
@@ -292,14 +299,25 @@ export async function optimizedSearch(query, filters = {}, limit = 200) {
         // Map results with similarity scores
         let results = [];
         
+        // Calculate minimum similarity threshold based on query quality
+        // Garbage/nonsense queries should return no results
+        const queryWords = query.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+        const isLikelyGarbageQuery = queryWords.length === 0 || 
+            (queryWords.length === 1 && queryWords[0].length > 15 && !/[aeiou]{2,}/i.test(queryWords[0]));
+        
+        // Higher threshold for garbage queries to filter them out
+        const minSimilarityThreshold = isLikelyGarbageQuery ? 50 : 15;
+        
+        console.log(`[OptimizedSearch] Query analysis: words=${queryWords.length}, isGarbage=${isLikelyGarbageQuery}, minThreshold=${minSimilarityThreshold}`);
+        
         for (let idx = 0; idx < rawResults.documents.length; idx++) {
             const doc = rawResults.documents[idx];
             const metadata = rawResults.metadatas[idx] || {};
             const distance = rawResults.distances[idx] || 1;
             const similarity = Math.max(0, Math.round((1 - distance) * 100));
 
-            // Skip very low similarity results
-            if (similarity < 3) continue;
+            // Skip results below the dynamic similarity threshold
+            if (similarity < minSimilarityThreshold) continue;
 
             results.push({
                 id: `IDEA-${metadata.idea_id}`,
@@ -318,16 +336,22 @@ export async function optimizedSearch(query, filters = {}, limit = 200) {
             });
         }
 
-        // Apply dynamic filters (case-insensitive)
-        results = applyDynamicFilters(results, filters);
+        // Apply dynamic filters (case-insensitive) - excludes year filter
+        const filterResult = applyDynamicFilters(results, filters);
+        let filtered = filterResult.filtered;
+
+        // Apply year filter with database lookup for accurate dates
+        if (filters.year) {
+            filtered = await applyYearFilter(filtered, filters.year, pool);
+        }
 
         // Sort by match score and limit
-        results = results
+        filtered = filtered
             .sort((a, b) => b.matchScore - a.matchScore)
             .slice(0, limit);
 
-        console.log(`[OptimizedSearch] Final results: ${results.length}`);
-        return { results, source: 'semantic' };
+        console.log(`[OptimizedSearch] Final results: ${filtered.length}`);
+        return { results: filtered, source: 'semantic' };
         
     } catch (error) {
         console.error('[OptimizedSearch] Error:', error.message);
@@ -341,17 +365,17 @@ export async function optimizedSearch(query, filters = {}, limit = 200) {
  * Domain filter searches: challenge_opportunity, title, summary, description
  */
 function applyDynamicFilters(results, filters) {
-    // Count how many filters are active
+    // Count how many filters are active (excluding year - handled separately with DB lookup)
     const activeFilters = [];
     if (filters.domain?.length > 0) activeFilters.push('domain');
     if (filters.businessGroup?.length > 0) activeFilters.push('businessGroup');
     if (filters.techStack?.length > 0) activeFilters.push('techStack');
     if (filters.buildPhase?.length > 0) activeFilters.push('buildPhase');
     if (filters.scalability?.length > 0) activeFilters.push('scalability');
-    if (filters.year) activeFilters.push('year');
+    // Note: year filter is handled separately with DB lookup for accurate dates
 
     if (activeFilters.length === 0) {
-        return results;
+        return { filtered: results, activeFilters };
     }
 
     console.log(`[OptimizedSearch] Applying STRICT AND for ${activeFilters.length} filters: ${activeFilters.join(', ')}`);
@@ -415,22 +439,53 @@ function applyDynamicFilters(results, filters) {
             }
         }
 
-        // Year filter - strict match
-        if (filters.year) {
-            if (!r.submissionDate) {
-                return false; // No date, can't match year
-            }
-            const year = new Date(r.submissionDate).getFullYear();
-            if (year !== filters.year) {
-                return false; // Year filter not matched
-            }
-        }
+        // Year filter - handled separately after DB lookup
+        // Skip year filter here, will be applied after fetching dates from DB
 
-        return true; // All filters matched
+        return true; // All other filters matched
     });
     
-    console.log(`[OptimizedSearch] Strict AND filter: ${filtered.length} results match ALL ${activeFilters.length} filters`);
+    console.log(`[OptimizedSearch] After non-year filters: ${filtered.length} results`);
 
+    return { filtered, activeFilters };
+}
+
+/**
+ * Apply year filter with database lookup for accurate dates
+ */
+async function applyYearFilter(results, year, pool) {
+    if (!year || results.length === 0) return results;
+    
+    // Fetch actual created_at from database
+    if (pool) {
+        try {
+            const ideaIds = results.map(r => r.dbId).filter(Boolean);
+            if (ideaIds.length > 0) {
+                const dateResult = await pool.query(
+                    `SELECT idea_id, created_at FROM ideas WHERE idea_id = ANY($1::int[])`,
+                    [ideaIds]
+                );
+                const dateMap = new Map(dateResult.rows.map(r => [r.idea_id, r.created_at]));
+                
+                // Update submissionDate from database
+                results = results.map(idea => ({
+                    ...idea,
+                    submissionDate: dateMap.get(idea.dbId) || idea.submissionDate
+                }));
+            }
+        } catch (e) {
+            console.warn('[OptimizedSearch] Failed to fetch dates from DB:', e.message);
+        }
+    }
+    
+    // Apply year filter with accurate dates
+    const filtered = results.filter(r => {
+        if (!r.submissionDate) return false;
+        const ideaYear = new Date(r.submissionDate).getFullYear();
+        return ideaYear === year;
+    });
+    
+    console.log(`[OptimizedSearch] Year ${year} filter applied, ${filtered.length} results remaining`);
     return filtered;
 }
 

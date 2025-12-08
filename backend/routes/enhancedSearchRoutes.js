@@ -249,7 +249,7 @@ router.post('/search', async (req, res) => {
             const searchQuery = nlpResult.expanded?.join(' ') || nlpResult.corrected;
             console.log(`[EnhancedSearch] Search query: "${searchQuery}"`);
             
-            const chromaResult = await optimizedSearch(searchQuery, searchFilters, limit);
+            const chromaResult = await optimizedSearch(searchQuery, searchFilters, limit, pool);
             results = chromaResult.results || [];
             source = chromaResult.source || 'semantic';
             console.log(`[EnhancedSearch] Semantic search found ${results.length} results (source: ${source})`);
@@ -258,99 +258,82 @@ router.post('/search', async (req, res) => {
             console.error('[EnhancedSearch] Stack:', e.stack);
         }
 
-        // Fallback to database search if no results
-        if (results.length === 0) {
-            console.log('[EnhancedSearch] Step 3: Falling back to database search...');
-            try {
-                const dbResult = await executeDynamicSearch(pool, nlpResult.corrected, searchFilters, { limit });
-                results = dbResult.results || [];
-                source = 'database';
-                console.log(`[EnhancedSearch] Database search found ${results.length} results`);
-            } catch (e) {
-                console.error('[EnhancedSearch] Database search failed:', e.message);
-            }
-        }
+        // Check if query looks like garbage/nonsense (no real words)
+        const queryWords = trimmedQuery.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+        const hasCommonVowelPattern = queryWords.some(w => /[aeiou]/i.test(w));
+        const isLikelyGarbageQuery = queryWords.length === 0 || 
+            (queryWords.length === 1 && queryWords[0].length > 10 && !hasCommonVowelPattern);
         
-        // Last resort: simple keyword search across ALL fields
-        if (results.length === 0) {
-            console.log('[EnhancedSearch] Step 4: Simple keyword fallback...');
-            try {
-                const keywords = trimmedQuery.split(/\s+/).filter(w => w.length > 2);
-                const searchTerm = keywords.length > 0 ? keywords[0] : trimmedQuery;
-                console.log(`[EnhancedSearch] Keyword search term: "${searchTerm}"`);
-                
-                const simpleResult = await pool.query(`
-                    SELECT idea_id, title, summary, challenge_opportunity, business_group, 
-                           code_preference, build_phase, scalability, novelty, score, created_at
-                    FROM ideas
-                    WHERE title ILIKE $1 
-                       OR summary ILIKE $1 
-                       OR challenge_opportunity ILIKE $1 
-                       OR code_preference ILIKE $1
-                       OR business_group ILIKE $1
-                       OR COALESCE(benefits, '') ILIKE $1
-                       OR COALESCE(additional_info, '') ILIKE $1
-                       OR COALESCE(build_phase, '') ILIKE $1
-                       OR COALESCE(scalability, '') ILIKE $1
-                       OR COALESCE(novelty, '') ILIKE $1
-                    ORDER BY score DESC, created_at DESC
-                    LIMIT $2
-                `, [`%${searchTerm}%`, limit]);
-
-                results = simpleResult.rows.map(row => ({
-                    id: `IDEA-${row.idea_id}`,
-                    dbId: row.idea_id,
-                    title: row.title,
-                    description: row.summary || '',
-                    domain: row.challenge_opportunity || 'General',
-                    businessGroup: row.business_group || 'Unknown',
-                    technologies: row.code_preference || '',
-                    buildPhase: row.build_phase || '',
-                    scalability: row.scalability || '',
-                    novelty: row.novelty || '',
-                    score: row.score || 0,
-                    submissionDate: row.created_at,
-                    matchScore: 60
-                }));
-                source = 'keyword';
-                console.log(`[EnhancedSearch] Keyword search found ${results.length} results`);
-            } catch (e2) {
-                console.error('[EnhancedSearch] Keyword search failed:', e2.message);
-            }
-        }
+        console.log(`[EnhancedSearch] Query analysis: words=${queryWords.length}, hasVowels=${hasCommonVowelPattern}, isGarbage=${isLikelyGarbageQuery}`);
         
-        // Ultimate fallback: return latest ideas if nothing found
-        if (results.length === 0) {
-            console.log('[EnhancedSearch] Step 5: Returning latest ideas as fallback...');
-            try {
-                const latestResult = await pool.query(`
-                    SELECT idea_id, title, summary, challenge_opportunity, business_group, 
-                           code_preference, build_phase, scalability, novelty, score, created_at
-                    FROM ideas
-                    ORDER BY created_at DESC
-                    LIMIT $1
-                `, [Math.min(limit, 20)]);
-
-                results = latestResult.rows.map(row => ({
-                    id: `IDEA-${row.idea_id}`,
-                    dbId: row.idea_id,
-                    title: row.title,
-                    description: row.summary || '',
-                    domain: row.challenge_opportunity || 'General',
-                    businessGroup: row.business_group || 'Unknown',
-                    technologies: row.code_preference || '',
-                    buildPhase: row.build_phase || '',
-                    scalability: row.scalability || '',
-                    novelty: row.novelty || '',
-                    score: row.score || 0,
-                    submissionDate: row.created_at,
-                    matchScore: 50
-                }));
-                source = 'latest';
-                console.log(`[EnhancedSearch] Returning ${results.length} latest ideas`);
-            } catch (e3) {
-                console.error('[EnhancedSearch] Even latest ideas query failed:', e3.message);
+        // If garbage query, don't do fallback searches - return empty
+        if (isLikelyGarbageQuery && results.length === 0) {
+            console.log('[EnhancedSearch] Garbage query detected, returning 0 results');
+            source = 'none';
+        } else {
+            // Fallback to database search if no results (only for valid queries)
+            if (results.length === 0) {
+                console.log('[EnhancedSearch] Step 3: Falling back to database search...');
+                try {
+                    const dbResult = await executeDynamicSearch(pool, nlpResult.corrected, searchFilters, { limit });
+                    results = dbResult.results || [];
+                    source = 'database';
+                    console.log(`[EnhancedSearch] Database search found ${results.length} results`);
+                } catch (e) {
+                    console.error('[EnhancedSearch] Database search failed:', e.message);
+                }
             }
+            
+            // Last resort: simple keyword search across ALL fields (only for valid queries)
+            if (results.length === 0 && !isLikelyGarbageQuery) {
+                console.log('[EnhancedSearch] Step 4: Simple keyword fallback...');
+                try {
+                    const keywords = trimmedQuery.split(/\s+/).filter(w => w.length > 2);
+                    const searchTerm = keywords.length > 0 ? keywords[0] : trimmedQuery;
+                    console.log(`[EnhancedSearch] Keyword search term: "${searchTerm}"`);
+                    
+                    const simpleResult = await pool.query(`
+                        SELECT idea_id, title, summary, challenge_opportunity, business_group, 
+                               code_preference, build_phase, scalability, novelty, score, created_at
+                        FROM ideas
+                        WHERE title ILIKE $1 
+                           OR summary ILIKE $1 
+                           OR challenge_opportunity ILIKE $1 
+                           OR code_preference ILIKE $1
+                           OR business_group ILIKE $1
+                           OR COALESCE(benefits, '') ILIKE $1
+                           OR COALESCE(additional_info, '') ILIKE $1
+                           OR COALESCE(build_phase, '') ILIKE $1
+                           OR COALESCE(scalability, '') ILIKE $1
+                           OR COALESCE(novelty, '') ILIKE $1
+                        ORDER BY score DESC, created_at DESC
+                        LIMIT $2
+                    `, [`%${searchTerm}%`, limit]);
+
+                    results = simpleResult.rows.map(row => ({
+                        id: `IDEA-${row.idea_id}`,
+                        dbId: row.idea_id,
+                        title: row.title,
+                        description: row.summary || '',
+                        domain: row.challenge_opportunity || 'General',
+                        businessGroup: row.business_group || 'Unknown',
+                        technologies: row.code_preference || '',
+                        buildPhase: row.build_phase || '',
+                        scalability: row.scalability || '',
+                        novelty: row.novelty || '',
+                        score: row.score || 0,
+                        submissionDate: row.created_at,
+                        matchScore: 60
+                    }));
+                    source = 'keyword';
+                    console.log(`[EnhancedSearch] Keyword search found ${results.length} results`);
+                } catch (e2) {
+                    console.error('[EnhancedSearch] Keyword search failed:', e2.message);
+                }
+            }
+            
+            // NOTE: Removed "latest ideas" fallback - if no results match, return 0 results
+            // This ensures garbage queries and queries with no matches return empty results
         }
 
         // Generate response
@@ -650,7 +633,7 @@ router.get('/test-search', async (req, res) => {
         let chromaResult = null;
         try {
             await ensureIndex(pool);
-            chromaResult = await optimizedSearch(query, {}, 5);
+            chromaResult = await optimizedSearch(query, {}, 5, pool);
         } catch (e) {
             chromaResult = { error: e.message };
         }

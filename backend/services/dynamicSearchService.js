@@ -4,6 +4,18 @@
  */
 
 /**
+ * Helper: Check if search text looks like garbage/nonsense
+ */
+function isGarbageQuery(text) {
+    if (!text || text.trim().length === 0) return false;
+    const words = text.toLowerCase().replace(/[^\w\s]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+    if (words.length === 0) return true;
+    // Check if single long word without vowels (likely random characters)
+    if (words.length === 1 && words[0].length > 10 && !/[aeiou]/i.test(words[0])) return true;
+    return false;
+}
+
+/**
  * Execute dynamic database search with filters
  * @param {object} pool - Database pool
  * @param {string} searchText - Search text
@@ -13,11 +25,22 @@
 export async function executeDynamicSearch(pool, searchText, filters = {}, options = {}) {
     const { limit = 100, offset = 0, sortBy = 'score', sortOrder = 'DESC' } = options;
 
+    // If garbage query, return empty results immediately
+    if (isGarbageQuery(searchText)) {
+        console.log(`[DynamicSearch] Garbage query detected: "${searchText}", returning 0 results`);
+        return {
+            results: [],
+            total: 0,
+            source: 'database'
+        };
+    }
+
     const conditions = [];
     const params = [];
     let paramIndex = 1;
 
     // Add text search condition - search across ALL text fields
+    // Text search is REQUIRED when provided - must match at least one term (AND logic with filters)
     if (searchText && searchText.trim().length > 0) {
         const searchTerms = searchText.trim().split(/\s+/).filter(t => t.length > 2);
         
@@ -38,11 +61,20 @@ export async function executeDynamicSearch(pool, searchText, filters = {}, optio
                     COALESCE(novelty, '') ILIKE $${idx}
                 )`;
             });
+            // Text search is REQUIRED - must match at least one term
             conditions.push(`(${textConditions.join(' OR ')})`);
+        } else {
+            // No valid search terms (all words too short) - return empty
+            console.log(`[DynamicSearch] No valid search terms in: "${searchText}", returning 0 results`);
+            return {
+                results: [],
+                total: 0,
+                source: 'database'
+            };
         }
     }
 
-    // Add filter conditions
+    // Add filter conditions (these are ANDed with text search)
     if (filters.domain?.length > 0) {
         const domains = Array.isArray(filters.domain) ? filters.domain : [filters.domain];
         const domainConds = domains.map(d => {
@@ -112,6 +144,7 @@ export async function executeDynamicSearch(pool, searchText, filters = {}, optio
     try {
         console.log(`[DynamicSearch] Executing query with ${params.length} params`);
         console.log(`[DynamicSearch] Search text: "${searchText}"`);
+        console.log(`[DynamicSearch] Conditions: ${conditions.length}`);
         const result = await pool.query(query, params);
         
         console.log(`[DynamicSearch] Found ${result.rows.length} results`);
@@ -142,6 +175,7 @@ export async function executeDynamicSearch(pool, searchText, filters = {}, optio
         throw error;
     }
 }
+
 
 /**
  * Hybrid search - combines semantic and database search

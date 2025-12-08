@@ -75,15 +75,31 @@ const App: React.FC = () => {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isWishlistOpen, setIsWishlistOpen] = useState(false);
   const [isProSearchOpen, setIsProSearchOpen] = useState(false);
+  const [persistentUserId, setPersistentUserId] = useState<string>('');
 
   useEffect(() => {
     if (window.location.hash === '#register') setAuthView('register');
     const token = localStorage.getItem('token');
     const storedUser = localStorage.getItem('user');
+
+    // Persistent User ID Logic
+    let pid = localStorage.getItem('ideaflow_uid');
+    if (!pid) {
+      pid = `guest-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('ideaflow_uid', pid);
+    }
+
     if (token) {
       setIsAuthenticated(true);
-      if (storedUser) setUser(JSON.parse(storedUser));
+      if (storedUser) {
+        const u = JSON.parse(storedUser);
+        setUser(u);
+        setPersistentUserId(u.emp_id || pid);
+      } else {
+        setPersistentUserId(pid);
+      }
     } else {
+      setPersistentUserId(pid);
       setLoading(false);
     }
   }, []);
@@ -380,20 +396,19 @@ const App: React.FC = () => {
         />
       )}
 
-      {proSearchState.isOpen && (
-        <ProSearchModal
-          isOpen={proSearchState.isOpen}
-          onClose={handleCloseProSearch}
-          onViewDetails={handleViewDetails}
-          onRefreshData={handleRefreshData}
-          initialQuery={proSearchState.query}
-          initialResults={proSearchState.results}
-          onSearchComplete={handleProSearchComplete}
-          availableTechnologies={allTechnologies}
-          availableThemes={allThemes}
-          availableBusinessGroups={allBusinessGroups}
-        />
-      )}
+      <ProSearchModal
+        isOpen={proSearchState.isOpen}
+        onClose={handleCloseProSearch}
+        onViewDetails={handleViewDetails}
+        onRefreshData={handleRefreshData}
+        initialQuery={proSearchState.query}
+        initialResults={proSearchState.results}
+        onSearchComplete={handleProSearchComplete}
+        availableTechnologies={allTechnologies}
+        availableThemes={allThemes}
+        availableBusinessGroups={allBusinessGroups}
+        userId={persistentUserId}
+      />
     </div>
   );
 };

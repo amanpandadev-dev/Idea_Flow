@@ -2,9 +2,9 @@
  * Advanced NLP Query Processor
  * Handles spell correction, query expansion, and semantic understanding
  * for naive user queries
+ * 
+ * Uses OpenRouter API for AI-powered query refinement
  */
-
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // Common misspellings and corrections for technical terms
 const SPELL_CORRECTIONS = {
@@ -48,7 +48,6 @@ const SPELL_CORRECTIONS = {
   'programm': 'program',
   'databse': 'database',
   'databas': 'database',
-  // Removed 'api': 'API' - causes false positives with short words like 'hi'
   'apis': 'APIs',
   'frontend': 'front-end',
   'backedn': 'backend',
@@ -169,9 +168,9 @@ function levenshteinDistance(str1, str2) {
     for (let j = 1; j <= len2; j++) {
       const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
       matrix[i][j] = Math.min(
-        matrix[i - 1][j] + 1,      // deletion
-        matrix[i][j - 1] + 1,      // insertion
-        matrix[i - 1][j - 1] + cost // substitution
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost
       );
     }
   }
@@ -200,35 +199,17 @@ const SKIP_WORDS = new Set([
 export function correctSpelling(word) {
   const lowerWord = word.toLowerCase();
 
-  // Skip common words and greetings - don't try to correct them
-  if (SKIP_WORDS.has(lowerWord)) {
-    return word;
-  }
+  if (SKIP_WORDS.has(lowerWord)) return word;
+  if (lowerWord.length <= 2) return word;
+  if (SPELL_CORRECTIONS[lowerWord]) return SPELL_CORRECTIONS[lowerWord];
+  if (lowerWord.length < 4) return word;
 
-  // Skip very short words (2 chars or less) - too risky for fuzzy matching
-  if (lowerWord.length <= 2) {
-    return word;
-  }
-
-  // Direct match in dictionary
-  if (SPELL_CORRECTIONS[lowerWord]) {
-    return SPELL_CORRECTIONS[lowerWord];
-  }
-
-  // Fuzzy match with threshold - only for words 4+ chars
-  if (lowerWord.length < 4) {
-    return word; // Don't fuzzy match short words
-  }
-
-  const threshold = 2; // Max edit distance
+  const threshold = 2;
   let bestMatch = word;
   let bestDistance = threshold + 1;
 
   for (const [misspelled, correct] of Object.entries(SPELL_CORRECTIONS)) {
-    // Only compare with similar length words to avoid false positives
-    if (Math.abs(misspelled.length - lowerWord.length) > 2) {
-      continue;
-    }
+    if (Math.abs(misspelled.length - lowerWord.length) > 2) continue;
 
     const distance = levenshteinDistance(lowerWord, misspelled);
     if (distance < bestDistance) {
@@ -249,16 +230,14 @@ export function expandQuery(terms) {
   terms.forEach(term => {
     const lowerTerm = term.toLowerCase();
 
-    // Add expansions from dictionary
     if (QUERY_EXPANSIONS[lowerTerm]) {
       QUERY_EXPANSIONS[lowerTerm].forEach(expansion => expanded.add(expansion));
     }
 
-    // Add common variations
     if (term.endsWith('s')) {
-      expanded.add(term.slice(0, -1)); // singular
+      expanded.add(term.slice(0, -1));
     } else {
-      expanded.add(term + 's'); // plural
+      expanded.add(term + 's');
     }
   });
 
@@ -266,20 +245,16 @@ export function expandQuery(terms) {
 }
 
 /**
- * Process query with spell correction and expansion
+ * Process query with spell correction and expansion (rule-based)
  */
 export function processQuery(rawQuery) {
-  // Tokenize
   const tokens = rawQuery
     .toLowerCase()
     .replace(/[^\w\s]/g, ' ')
     .split(/\s+/)
     .filter(t => t.length > 0);
 
-  // Correct spelling
   const corrected = tokens.map(correctSpelling);
-
-  // Expand with synonyms
   const expanded = expandQuery(corrected);
 
   return {
@@ -290,65 +265,108 @@ export function processQuery(rawQuery) {
   };
 }
 
+
 /**
- * AI-powered query refinement using Gemini 2.0 Flash (Free Tier - 1500 req/day)
+ * AI-powered query refinement using OpenRouter API
+ * Supports multiple models: llama, mistral, claude, gpt-4, etc.
+ * 
+ * @param {string} rawQuery - The user's search query
+ * @param {string} apiKey - OpenRouter API key
+ * @param {string} modelName - Model to use (default: mistralai/mistral-7b-instruct:free)
  */
-export async function refineQueryWithAI(rawQuery, apiKey, modelName = "gemini-2.5-flash") {
+export async function refineQueryWithOpenRouter(rawQuery, apiKey, modelName = "mistralai/mistral-7b-instruct:free") {
   if (!apiKey) {
-    console.warn('[NLP] No API key provided, skipping AI refinement');
+    console.warn('[NLP] No OpenRouter API key provided, using rule-based processing');
     return processQuery(rawQuery);
   }
 
-  try {
-    const ai = new GoogleGenerativeAI(apiKey);
-    // Use the requested model (defaulting to 1.5 Flash)
-    const model = ai.getGenerativeModel({ model: modelName });
+  // Check if query contains a year - we'll preserve it but not add new ones
+  const hasYear = /\b(202[0-9]|2030)\b/.test(rawQuery);
+  const yearMatch = rawQuery.match(/\b(202[0-9]|2030)\b/);
+  const queryYear = yearMatch ? yearMatch[0] : null;
 
-    const prompt = `You are an intelligent search query optimizer for an innovation idea repository.
-
-Task: Analyze and enhance the user's search query to improve search results.
+  const prompt = `You are a search query optimizer for an innovation idea database.
 
 User Query: "${rawQuery}"
 
-Instructions:
-1. Fix any spelling errors (e.g., "clodus" → "cloud", "custmer" → "customer")
-2. Expand abbreviations and acronyms (e.g., "AI" → "artificial intelligence")
-3. Add 3-5 highly relevant synonyms or related compound terms
-4. Keep compound terms together (e.g., "cloud computing" not "cloud" "computing")
-5. Focus on the PRIMARY intent - don't add unrelated expansions
-6. For technology queries, add only closely related technologies
+Task: Expand this query with 3-5 relevant synonyms and related terms.
 
-IMPORTANT: Return terms separated by COMMAS, keeping compound terms together.
+Rules:
+1. Fix spelling errors
+2. Add ONLY closely related terms to the main topic
+3. DO NOT add years, dates, or time references unless the user explicitly mentioned one
+4. DO NOT add unrelated technologies or domains
+5. Keep compound terms together (e.g., "machine learning" not "machine" "learning")
+6. Return ONLY the enhanced terms, comma-separated
 
-Example:
-Input: "cloud"
-Output: cloud, cloud computing, AWS, Azure, cloud infrastructure, serverless
+Examples:
+"blockchain" → blockchain, distributed ledger, web3, smart contracts, decentralized
+"AI chatbot" → AI chatbot, conversational AI, virtual assistant, chatbot, artificial intelligence
+"healthcare" → healthcare, medical, patient care, health services, clinical
 
-Input: "AI chatbot for custmer support"
-Output: AI chatbot, artificial intelligence, customer support, virtual assistant, conversational AI
+Enhanced terms:`;
 
-Input: "monitoring system for hospitals"
-Output: hospital monitoring, healthcare monitoring, patient monitoring system, medical observability
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'http://localhost:3000',
+        'X-Title': 'IdeaFlow Pro Search'
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 100,
+        temperature: 0.2
+      })
+    });
 
-Enhanced Query (comma-separated):`;
-
-    const result = await model.generateContent(prompt);
-    if (!result || !result.response) {
-      console.warn('[NLP] AI refinement failed, using fallback');
+    if (!response.ok) {
+      const error = await response.text();
+      console.warn('[NLP] OpenRouter API error:', error);
       return processQuery(rawQuery);
     }
 
-    const refined = result.response.text().trim();
-    console.log(`[NLP] ✅ Original: "${rawQuery}" → AI Refined: "${refined}"`);
+    const data = await response.json();
+    const refined = data.choices?.[0]?.message?.content?.trim();
 
-    // Parse AI response - split by commas to preserve compound terms
-    const aiTerms = refined
+    if (!refined) {
+      console.warn('[NLP] OpenRouter returned empty response');
+      return processQuery(rawQuery);
+    }
+
+    // Parse AI response and clean up
+    let aiTerms = refined
       .split(/,/)
       .map(t => t.trim())
-      .filter(t => t.length > 0);
+      .filter(t => t.length > 0 && t.length < 50); // Filter out overly long terms
 
-    // Create search text that preserves compound terms
-    // Join with spaces for embedding, but keep the terms array for filtering
+    // CRITICAL: Remove any years that AI added if user didn't ask for them
+    if (!hasYear) {
+      aiTerms = aiTerms.filter(t => !/\b(202[0-9]|2030)\b/.test(t));
+    }
+
+    // Remove duplicate-ish terms (case insensitive)
+    const seen = new Set();
+    aiTerms = aiTerms.filter(t => {
+      const lower = t.toLowerCase();
+      if (seen.has(lower)) return false;
+      seen.add(lower);
+      return true;
+    });
+
+    // Limit to reasonable number of terms (but leave room for year if needed)
+    aiTerms = aiTerms.slice(0, hasYear ? 9 : 10);
+    
+    // User DID include a year - make sure it's preserved in the results (add at end)
+    if (hasYear && queryYear && !aiTerms.some(t => t.includes(queryYear))) {
+      aiTerms.push(queryYear);
+    }
+
+    console.log(`[NLP] ✅ OpenRouter: "${rawQuery}" → [${aiTerms.join(', ')}]`);
+
     const searchText = aiTerms.join(' ');
 
     return {
@@ -357,41 +375,59 @@ Enhanced Query (comma-separated):`;
       expanded: aiTerms,
       tokens: aiTerms,
       aiEnhanced: true,
-      compoundTerms: aiTerms.filter(t => t.includes(' ')) // Track compound terms
+      provider: 'openrouter',
+      model: modelName,
+      compoundTerms: aiTerms.filter(t => t.includes(' ')),
+      detectedYear: queryYear ? parseInt(queryYear) : null
     };
 
   } catch (error) {
-    console.error(`[NLP] AI refinement error (${modelName}):`, error.message);
+    console.error(`[NLP] OpenRouter error:`, error.message);
     return processQuery(rawQuery);
   }
 }
 
 /**
- * Complete NLP pipeline
+ * Complete NLP pipeline - Uses OpenRouter for AI refinement
+ * 
+ * @param {string} rawQuery - The user's search query
+ * @param {object} options - Configuration options
+ * @param {boolean} options.useAI - Whether to use AI refinement
+ * @param {string} options.openRouterKey - OpenRouter API key
+ * @param {string} options.openRouterModel - Model to use
  */
 export async function enhanceQuery(rawQuery, options = {}) {
-  // Using Gemini 2.0 Flash - Free tier with 1500 requests/day
-  const { useAI = true, apiKey = null, model = "gemini-2.5-flash" } = options;
+  const { 
+    useAI = true, 
+    openRouterKey = null,
+    openRouterModel = "mistralai/mistral-7b-instruct:free"
+  } = options;
 
   console.log(`[NLP] Processing query: "${rawQuery}"`);
 
-  // Use AI if available and enabled
-  if (useAI && apiKey) {
-    const result = await refineQueryWithAI(rawQuery, apiKey, model);
+  // Use OpenRouter for AI refinement if key is available
+  if (useAI && openRouterKey) {
+    console.log(`[NLP] Using OpenRouter with model: ${openRouterModel}`);
+    const result = await refineQueryWithOpenRouter(rawQuery, openRouterKey, openRouterModel);
     console.log(`[NLP] Expanded to ${result.expanded.length} terms`);
     return result;
   }
 
   // Fallback to rule-based processing
+  console.log(`[NLP] Using rule-based processing (no API key)`);
   const result = processQuery(rawQuery);
   console.log(`[NLP] Expanded to ${result.expanded.length} terms (rule-based)`);
   return result;
 }
 
+// Legacy function name for backward compatibility
+export const refineQueryWithAI = refineQueryWithOpenRouter;
+
 export default {
   correctSpelling,
   expandQuery,
   processQuery,
+  refineQueryWithOpenRouter,
   refineQueryWithAI,
   enhanceQuery,
   SPELL_CORRECTIONS,

@@ -98,4 +98,17 @@ export interface ExploreFilters {
   themes: string[];
   businessGroups: string[];
   technologies: string[];
+  year?: number;
+  createdFrom?: string;
+  createdTo?: string;
+  challengeOpportunity?: string;
+}
+
+export interface ProSearchSession {
+  sessionId: string;
+  userId?: string;
+  query: string;
+  filters: ExploreFilters;
+  createdAt: string;
+  updatedAt: string;
 }

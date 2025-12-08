@@ -30,10 +30,10 @@ const ProSearchModal: React.FC<ProSearchModalProps> = ({
   availableBusinessGroups,
   userId = 'anonymous'
 }) => {
-  if (!isOpen) return null;
+  // if (!isOpen) return null; // Keep mounted to preserve state
 
   return (
-    <div className="fixed inset-0 z-50 bg-white">
+    <div className={`fixed inset-0 z-50 bg-white ${isOpen ? '' : 'hidden'}`}>
       {/* Fullscreen Modal */}
       <div className="w-full h-full flex flex-col">
         {/* Modal Header */}
@@ -56,6 +56,7 @@ const ProSearchModal: React.FC<ProSearchModalProps> = ({
             availableThemes={availableThemes}
             availableBusinessGroups={availableBusinessGroups}
             userId={userId}
+            isVisible={isOpen}
           />
         </div>
       </div>
