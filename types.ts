@@ -98,4 +98,5 @@ export interface ExploreFilters {
   themes: string[];
   businessGroups: string[];
   technologies: string[];
+  statuses?: string[];
 }

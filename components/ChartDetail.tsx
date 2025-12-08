@@ -1,7 +1,7 @@
 
 import React, { useMemo } from 'react';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend
 } from 'recharts';
 import { Idea, Domain, Status } from '../types';
@@ -30,7 +30,7 @@ const CustomYAxisTick = (props: any) => {
 };
 
 const ChartDetail: React.FC<ChartDetailProps> = ({ chartId, data, onBack }) => {
-  
+
   // --- Data Processing ---
 
   const domainData = useMemo(() => {
@@ -44,7 +44,7 @@ const ChartDetail: React.FC<ChartDetailProps> = ({ chartId, data, onBack }) => {
   }, [data]);
 
   const statusData = useMemo(() => {
-     const counts = data.reduce((acc, curr) => {
+    const counts = data.reduce((acc, curr) => {
       acc[curr.status] = (acc[curr.status] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
@@ -72,15 +72,15 @@ const ChartDetail: React.FC<ChartDetailProps> = ({ chartId, data, onBack }) => {
     const map: Record<string, any> = {};
     // Initialize for all domains
     Object.values(Domain).forEach(d => {
-        map[d] = { name: d, total: 0 };
-        Object.values(Status).forEach(s => map[d][s] = 0);
+      map[d] = { name: d, total: 0 };
+      Object.values(Status).forEach(s => map[d][s] = 0);
     });
-    
+
     data.forEach(idea => {
-        if(map[idea.domain]) {
-            map[idea.domain][idea.status]++;
-            map[idea.domain].total++;
-        }
+      if (map[idea.domain]) {
+        map[idea.domain][idea.status]++;
+        map[idea.domain].total++;
+      }
     });
 
     return Object.values(map).sort((a, b) => b.total - a.total);
@@ -89,12 +89,12 @@ const ChartDetail: React.FC<ChartDetailProps> = ({ chartId, data, onBack }) => {
   // --- Render Logic ---
 
   const getChartTitle = () => {
-    switch(chartId) {
-        case 'theme': return 'Submissions by Theme';
-        case 'status': return 'Idea Status Distribution & Theme Breakdown';
-        case 'build': return 'Submissions by Build Type';
-        case 'businessGroup': return 'Submissions by Business Group';
-        default: return 'Chart Details';
+    switch (chartId) {
+      case 'theme': return 'Submissions by Theme';
+      case 'status': return 'Idea Status Distribution & Theme Breakdown';
+      case 'build': return 'Submissions by Build Type';
+      case 'businessGroup': return 'Submissions by Business Group';
+      default: return 'Chart Details';
     }
   };
 
@@ -102,105 +102,129 @@ const ChartDetail: React.FC<ChartDetailProps> = ({ chartId, data, onBack }) => {
     switch (chartId) {
       case 'theme':
         return (
-            <div className="h-full w-full overflow-y-auto custom-scrollbar pr-4 bg-white rounded-xl border border-slate-200 p-6">
-                <div style={{ height: `${Math.max(800, domainData.length * 50)}px` }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={domainData} layout="vertical" margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" />
-                      <YAxis dataKey="name" type="category" width={320} tick={<CustomYAxisTick />} interval={0} />
-                      <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '8px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                      <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={28}>
-                        {domainData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.fill} />)}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+          <div className="h-full w-full overflow-y-auto custom-scrollbar pr-4 bg-white rounded-xl border border-slate-200 p-6">
+            <div style={{ height: `${Math.max(800, domainData.length * 50)}px` }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={domainData} layout="vertical" margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                  <XAxis type="number" />
+                  <YAxis dataKey="name" type="category" width={320} tick={<CustomYAxisTick />} interval={0} />
+                  <Tooltip cursor={{ fill: '#f8fafc' }} contentStyle={{ borderRadius: '8px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                  <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={28}>
+                    {domainData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.fill} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
             </div>
+          </div>
         );
       case 'status':
         return (
-            <div className="flex flex-col lg:flex-row gap-6 h-full">
-                {/* Overall Pie */}
-                <div className="lg:w-1/3 bg-white rounded-xl border border-slate-200 p-6 flex flex-col">
-                    <h3 className="text-lg font-semibold text-slate-700 mb-4 text-center">Global Status</h3>
-                    <div className="flex-1">
-                        <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                            <Pie 
-                                data={statusData} 
-                                cx="50%" 
-                                cy="50%" 
-                                innerRadius={60}
-                                outerRadius={100} 
-                                label 
-                                paddingAngle={2}
-                                dataKey="value"
-                            >
-                            {statusData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                            ))}
-                            </Pie>
-                            <Tooltip />
-                            <Legend verticalAlign="bottom" height={100} />
-                        </PieChart>
-                        </ResponsiveContainer>
-                    </div>
-                </div>
-                
-                {/* Stacked Bar by Theme */}
-               
-            </div>
-        );
-      case 'build':
-        return (
-            <div className="bg-white rounded-xl border border-slate-200 p-6 h-full">
+          <div className="flex flex-col lg:flex-row gap-6 h-full">
+            {/* Overall Pie */}
+            <div className="lg:w-1/3 bg-white rounded-xl border border-slate-200 p-6 flex flex-col">
+              <h3 className="text-lg font-semibold text-slate-700 mb-4 text-center">Global Status</h3>
+              <div className="flex-1 flex items-center justify-center">
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
+                  <PieChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                     <Pie
-                      data={buildData}
+                      data={statusData}
                       cx="50%"
                       cy="50%"
+                      innerRadius={60}
+                      outerRadius={100}
                       label
-                      innerRadius={80}
-                      outerRadius={160}
                       paddingAngle={2}
                       dataKey="value"
                     >
-                      {buildData.map((entry, index) => (
+                      {statusData.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
                       ))}
                     </Pie>
                     <Tooltip />
-                    <Legend verticalAlign="bottom" />
+                    <Legend verticalAlign="bottom" height={100} />
                   </PieChart>
                 </ResponsiveContainer>
+              </div>
             </div>
+
+            {/* Stacked Bar by Theme */}
+
+          </div>
+        );
+      case 'build':
+        return (
+          <div className="bg-white rounded-xl border border-slate-200 p-8 h-full flex flex-col">
+            <div className="flex items-center justify-center flex-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart margin={{ top: 40, right: 40, bottom: 40, left: 40 }}>
+                  <Pie
+                    data={buildData}
+                    cx="50%"
+                    cy="50%"
+                    label
+                    innerRadius={80}
+                    outerRadius={120}
+                    paddingAngle={2}
+                    dataKey="value"
+                  >
+                    {buildData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  {/* Legend hidden - will display custom labels below */}
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            {/* Horizontal divider lines */}
+            <div className="px-4 pb-2 space-y-2 mt-4">
+              <hr className="border-t border-slate-200" />
+              <hr className="border-t border-slate-200" />
+            </div>
+            {/* Custom labels below chart */}
+            <div className="px-6 py-4 space-y-2">
+              {buildData.map((entry, index) => (
+                <div key={entry.name} className="flex items-center gap-3">
+                  <div
+                    className="w-3 h-3 rounded-sm flex-shrink-0"
+                    style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
+                  />
+                  <span className="text-sm font-medium text-slate-700">
+                    {entry.name}
+                  </span>
+                  <span className="text-sm text-slate-500 ml-auto">
+                    ({entry.value})
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
         );
       case 'businessGroup':
-         return (
-            <div className="bg-white rounded-xl border border-slate-200 p-6 h-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={bgData} margin={{ top: 20, right: 30, left: 20, bottom: 100 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis 
-                       dataKey="name" 
-                       angle={-20} 
-                       textAnchor="end" 
-                       interval={0}
-                       tick={{fontSize: 12, fill: '#64748b'}} 
-                    />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="value" fill="#4f46e5" radius={[4, 4, 0, 0]} barSize={60}>
-                       {bgData.map((entry, index) => (
-                         <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                       ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-            </div>
-         );
+        return (
+          <div className="bg-white rounded-xl border border-slate-200 p-6 h-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={bgData} margin={{ top: 20, right: 30, left: 20, bottom: 100 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="name"
+                  angle={-20}
+                  textAnchor="end"
+                  interval={0}
+                  tick={{ fontSize: 12, fill: '#64748b' }}
+                />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="value" fill="#4f46e5" radius={[4, 4, 0, 0]} barSize={60}>
+                  {bgData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        );
       default: return <div className="flex items-center justify-center h-full text-slate-400">Chart not available</div>;
     }
   };
@@ -208,19 +232,19 @@ const ChartDetail: React.FC<ChartDetailProps> = ({ chartId, data, onBack }) => {
   return (
     <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 h-[calc(100vh-140px)]">
       <div className="flex items-center justify-between">
-         <div className="flex items-center gap-4">
-            <button 
-              onClick={onBack}
-              className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-600"
-            >
-              <ArrowLeft className="h-6 w-6" />
-            </button>
-            <h1 className="text-2xl font-bold text-slate-800">{getChartTitle()}</h1>
-         </div>
-         <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors shadow-sm">
-            <Download className="h-4 w-4" />
-            Export Data
-         </button>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={onBack}
+            className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-600"
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-2xl font-bold text-slate-800">{getChartTitle()}</h1>
+        </div>
+        <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors shadow-sm">
+          <Download className="h-4 w-4" />
+          Export Data
+        </button>
       </div>
 
       <div className="h-full pb-10">

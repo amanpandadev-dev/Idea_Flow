@@ -37,7 +37,8 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
     const fetchSessions = async () => {
         try {
             const response = await fetch('/api/chat/sessions', {
-                headers: { 'x-user-id': userId }
+                headers: { 'x-user-id': userId },
+                credentials: 'include'
             });
             if (response.ok) {
                 const data = await response.json();
@@ -74,6 +75,7 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                     'Content-Type': 'application/json',
                     'x-user-id': userId
                 },
+                credentials: 'include',
                 body: JSON.stringify({ title: editTitle })
             });
 
@@ -90,7 +92,8 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
         try {
             const response = await fetch(`/api/chat/sessions/${sessionId}`, {
                 method: 'DELETE',
-                headers: { 'x-user-id': userId }
+                headers: { 'x-user-id': userId },
+                credentials: 'include'
             });
 
             if (response.ok) {
@@ -159,25 +162,24 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                                 className="w-full flex items-center justify-between px-4 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800 transition-colors"
                             >
                                 <span>{group}</span>
-                                <ChevronRight 
-                                    className={`w-3 h-3 transition-transform ${expandedGroups.has(group) ? 'rotate-90' : ''}`} 
+                                <ChevronRight
+                                    className={`w-3 h-3 transition-transform ${expandedGroups.has(group) ? 'rotate-90' : ''}`}
                                 />
                             </button>
-                            
+
                             {expandedGroups.has(group) && (
                                 <div className="pb-2">
                                     {sessions[group].map(session => (
                                         <div
                                             key={session.id}
-                                            className={`group flex items-center gap-2 px-3 py-2 mx-2 rounded-lg cursor-pointer transition-colors ${
-                                                currentSessionId === session.id
-                                                    ? 'bg-slate-700'
-                                                    : 'hover:bg-slate-800'
-                                            }`}
+                                            className={`group flex items-center gap-2 px-3 py-2 mx-2 rounded-lg cursor-pointer transition-colors ${currentSessionId === session.id
+                                                ? 'bg-slate-700'
+                                                : 'hover:bg-slate-800'
+                                                }`}
                                             onClick={() => editingId !== session.id && onSelectSession(session.id)}
                                         >
                                             <MessageSquare className="w-4 h-4 flex-shrink-0 text-slate-400" />
-                                            
+
                                             {editingId === session.id ? (
                                                 <div className="flex-1 flex items-center gap-1">
                                                     <input

@@ -66,7 +66,7 @@ const App: React.FC = () => {
   });
 
   const [isExploreOpen, setIsExploreOpen] = useState(false);
-  const [globalFilters, setGlobalFilters] = useState<ExploreFilters>({ themes: [], businessGroups: [], technologies: [] });
+  const [globalFilters, setGlobalFilters] = useState<ExploreFilters>({ themes: [], businessGroups: [], technologies: [], statuses: [] });
 
   const [selectedAssociate, setSelectedAssociate] = useState<Associate | null>(null);
   const [associateLoading, setAssociateLoading] = useState(false);
@@ -157,7 +157,8 @@ const App: React.FC = () => {
       const matchesTheme = globalFilters.themes.length === 0 || globalFilters.themes.includes(idea.domain);
       const matchesBG = globalFilters.businessGroups.length === 0 || globalFilters.businessGroups.includes(idea.businessGroup);
       const matchesTech = globalFilters.technologies.length === 0 || idea.technologies.some(t => globalFilters.technologies.includes(t));
-      return matchesTheme && matchesBG && matchesTech;
+      const matchesStatus = !globalFilters.statuses || globalFilters.statuses.length === 0 || globalFilters.statuses.includes(idea.status);
+      return matchesTheme && matchesBG && matchesTech && matchesStatus;
     });
   }, [ideas, searchResults, globalFilters]);
 
@@ -274,6 +275,32 @@ const App: React.FC = () => {
     }
   };
 
+  // Filter Click Handlers
+  const handleFilterByTheme = (theme: string) => {
+    setGlobalFilters(prev => ({
+      ...prev,
+      themes: prev.themes.includes(theme) ? prev.themes : [...prev.themes, theme]
+    }));
+    handleTabChange('projects');
+  };
+
+  const handleFilterByStatus = (status: string | null) => {
+    if (status === null) {
+      // Clear status filter
+      setGlobalFilters(prev => ({
+        ...prev,
+        statuses: []
+      }));
+    } else {
+      // Add status to filter (replace existing, not accumulate)
+      setGlobalFilters(prev => ({
+        ...prev,
+        statuses: [status]
+      }));
+    }
+    handleTabChange('projects');
+  };
+
   if (!isAuthenticated) {
     if (authView === 'register') return <RegisterPage onNavigateToLogin={() => setAuthView('login')} />;
     if (authView === 'forgot-password') return <ForgotPasswordPage onNavigateToLogin={() => setAuthView('login')} />;
@@ -282,7 +309,7 @@ const App: React.FC = () => {
 
   if (loading && !activeTab.startsWith('detail') && activeTab !== 'wishlist') return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-indigo-600" /></div>;
 
-  const activeFiltersCount = globalFilters.themes.length + globalFilters.businessGroups.length + globalFilters.technologies.length;
+  const activeFiltersCount = globalFilters.themes.length + globalFilters.businessGroups.length + globalFilters.technologies.length + (globalFilters.statuses?.length || 0);
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex flex-col">
@@ -305,7 +332,7 @@ const App: React.FC = () => {
           <div className="mb-6 flex justify-end">
             <div className="flex items-center gap-2 text-sm text-slate-500 bg-white px-3 py-1.5 rounded-lg border shadow-sm">
               <Filter className="h-3 w-3" /> <span>Filters Active: {activeFiltersCount}</span>
-              <button onClick={() => { setGlobalFilters({ themes: [], businessGroups: [], technologies: [] }); handleTabChange('projects'); }} className="ml-2 hover:text-red-500"><X className="h-3 w-3" /></button>
+              <button onClick={() => { setGlobalFilters({ themes: [], businessGroups: [], technologies: [], statuses: [] }); handleTabChange('projects'); }} className="ml-2 hover:text-red-500"><X className="h-3 w-3" /></button>
             </div>
           </div>
         )}
@@ -327,6 +354,8 @@ const App: React.FC = () => {
               onLikeToggle={handleLikeToggle}
               onSearch={handleSearch}
               isSearching={isSearching}
+              onFilterByTheme={handleFilterByTheme}
+              onFilterByStatus={handleFilterByStatus}
             />
           )}
 
@@ -392,6 +421,7 @@ const App: React.FC = () => {
           availableTechnologies={allTechnologies}
           availableThemes={allThemes}
           availableBusinessGroups={allBusinessGroups}
+          userId={user?.id}
         />
       )}
     </div>

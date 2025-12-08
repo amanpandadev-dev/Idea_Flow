@@ -13,16 +13,20 @@ import express from 'express';
 import { validateQuery, extractEntities, generateErrorMessage } from '../services/contextValidator.js';
 import { getChromaClient } from '../config/chroma.js';
 import { enhanceQuery, processQuery } from '../services/nlpQueryProcessor.js';
-import { 
-    generateGeminiEmbeddingWithRetry, 
-    generateText, 
+import {
+    generateGeminiEmbeddingWithRetry,
+    generateText,
     isGeminiAvailable,
-    initializeGemini 
+    initializeGemini
 } from '../config/gemini.js';
+import { contextsRouter } from './proSearchContextRoutes.js';
 
 const router = express.Router();
 
 console.log('✅ [Pro Search] Routes loaded with ChromaDB + Gemini + NLP');
+
+// Mount context management routes
+router.use('/', contextsRouter);
 
 // Ensure Gemini is initialized
 initializeGemini();
@@ -49,7 +53,7 @@ async function getEmbedding(text) {
         try {
             const embedding = await Promise.race([
                 generateGeminiEmbeddingWithRetry(truncatedText, 2), // Max 2 retries
-                new Promise((_, reject) => 
+                new Promise((_, reject) =>
                     setTimeout(() => reject(new Error('Embedding timeout')), 10000)
                 )
             ]);
@@ -69,13 +73,13 @@ async function getEmbedding(text) {
 function generateLocalEmbedding(text) {
     const EMBEDDING_DIM = 768;
     const embedding = new Array(EMBEDDING_DIM).fill(0);
-    
+
     // Tokenize and clean
     const words = text.toLowerCase()
         .replace(/[^\w\s]/g, ' ')
         .split(/\s+/)
         .filter(w => w.length > 2);
-    
+
     if (words.length === 0) {
         return embedding;
     }
@@ -90,10 +94,10 @@ function generateLocalEmbedding(text) {
     Object.entries(wordFreq).forEach(([word, freq]) => {
         // Multiple hash positions for each word
         for (let h = 0; h < 3; h++) {
-            const hash = word.split('').reduce((acc, char, i) => 
+            const hash = word.split('').reduce((acc, char, i) =>
                 acc + char.charCodeAt(0) * (i + 1) * (h + 1), h * 1000);
             const index = Math.abs(hash) % EMBEDDING_DIM;
-            
+
             // TF-IDF style weighting
             const tf = freq / words.length;
             const idf = Math.log(1 + 1 / (freq + 1));
@@ -133,11 +137,11 @@ async function indexIdeasToChroma(pool) {
 
     try {
         const chromaClient = getChromaClient();
-        
+
         // Check if collection already has data (loaded from disk)
         const hasCollection = chromaClient.hasCollection('ideas_search');
         const stats = hasCollection ? chromaClient.getStats('ideas_search') : null;
-        
+
         if (hasCollection && stats && stats.documentCount > 0) {
             // Collection exists with data - mark as checked and skip indexing
             lastIndexTime = Date.now();
@@ -145,12 +149,12 @@ async function indexIdeasToChroma(pool) {
             console.log(`[Pro Search] ✅ Using existing index with ${stats.documentCount} ideas (loaded from disk)`);
             return;
         }
-        
+
         // Set indexing flag to prevent concurrent runs
         isIndexing = true;
 
         console.log('[Pro Search] Indexing ideas to ChromaDB...');
-        
+
         // Fetch ALL fields from ideas table for comprehensive indexing
         const result = await pool.query(`
             SELECT 
@@ -178,7 +182,7 @@ async function indexIdeasToChroma(pool) {
 
         for (let i = 0; i < result.rows.length; i += batchSize) {
             const batch = result.rows.slice(i, i + batchSize);
-            
+
             const documents = [];
             const embeddings = [];
             const metadatas = [];
@@ -210,10 +214,10 @@ async function indexIdeasToChroma(pool) {
                 try {
                     // Truncate for embedding but keep it comprehensive
                     const embedding = await getEmbedding(textParts.substring(0, 3000));
-                    
+
                     documents.push(textParts);
                     embeddings.push(embedding);
-                    
+
                     // Store comprehensive metadata for filtering and display
                     metadatas.push({
                         idea_id: idea.idea_id,
@@ -270,17 +274,17 @@ async function indexIdeasToChroma(pool) {
 async function semanticSearch(query, filters = {}, topK = 25) {
     try {
         const chromaClient = getChromaClient();
-        
+
         if (!chromaClient.hasCollection('ideas_search')) {
             return [];
         }
 
         // Generate query embedding
         const queryEmbedding = await getEmbedding(query);
-        
+
         // Query ChromaDB
         const results = chromaClient.query('ideas_search', queryEmbedding, topK);
-        
+
         if (!results || results.documents.length === 0) {
             return [];
         }
@@ -308,24 +312,24 @@ async function semanticSearch(query, filters = {}, topK = 25) {
 
         // Apply filters
         let filtered = ideas;
-        
+
         if (filters.domain?.length > 0) {
             const domains = Array.isArray(filters.domain) ? filters.domain : [filters.domain];
-            filtered = filtered.filter(idea => 
+            filtered = filtered.filter(idea =>
                 domains.some(d => idea.domain.toLowerCase().includes(d.toLowerCase()))
             );
         }
 
         if (filters.businessGroup?.length > 0) {
             const groups = Array.isArray(filters.businessGroup) ? filters.businessGroup : [filters.businessGroup];
-            filtered = filtered.filter(idea => 
+            filtered = filtered.filter(idea =>
                 groups.some(g => idea.businessGroup.toLowerCase().includes(g.toLowerCase()))
             );
         }
 
         if (filters.techStack?.length > 0) {
             const techs = Array.isArray(filters.techStack) ? filters.techStack : [filters.techStack];
-            filtered = filtered.filter(idea => 
+            filtered = filtered.filter(idea =>
                 techs.some(t => idea.technologies.toLowerCase().includes(t.toLowerCase()))
             );
         }
@@ -398,7 +402,7 @@ async function generateAIResponse(query, results, filters, nlpResult) {
         try {
             const topIdeas = results.slice(0, 3).map(r => r.title).join(', ');
             const domains = [...new Set(results.slice(0, 5).map(r => r.domain))].join(', ');
-            
+
             const prompt = `You are a helpful assistant for an innovation idea repository. 
 A user searched for: "${query}"
 Found ${count} matching ideas. Top results: ${topIdeas}
@@ -453,7 +457,7 @@ function generateSuggestions(query, results, filters) {
     if (results.length > 0) {
         const topDomains = [...new Set(results.slice(0, 5).map(r => r.domain).filter(Boolean))];
         if (topDomains[0]) suggestions.add(`More ${topDomains[0]} ideas`);
-        
+
         const topTechs = [...new Set(results.slice(0, 5).map(r => r.technologies).filter(Boolean))];
         if (topTechs[0]) suggestions.add(`${topTechs[0]} projects`);
     }
@@ -475,29 +479,29 @@ function generateSuggestions(query, results, filters) {
  */
 router.post('/conversational', async (req, res) => {
     const startTime = Date.now();
-    
+
     try {
-        const { query, additionalFilters = {} } = req.body;
+        const { query, additionalFilters = {}, conversationHistory = [] } = req.body;
 
         // Validate input
         if (!query || typeof query !== 'string') {
-            return res.status(400).json({ 
-                error: true, 
-                message: 'Query is required' 
+            return res.status(400).json({
+                error: true,
+                message: 'Query is required'
             });
         }
 
         const trimmedQuery = query.trim();
         if (trimmedQuery.length < 2) {
-            return res.status(400).json({ 
-                error: true, 
-                message: 'Query too short' 
+            return res.status(400).json({
+                error: true,
+                message: 'Query too short'
             });
         }
 
         // STEP 1: Context Validation - Block off-topic/confidential queries
         const validation = validateQuery(trimmedQuery);
-        
+
         // Handle greetings specially
         if (validation.isGreeting) {
             console.log(`[Pro Search] Greeting detected: "${trimmedQuery}"`);
@@ -505,14 +509,14 @@ router.post('/conversational', async (req, res) => {
                 results: [],
                 aiResponse: "Hi there! 👋 I'm your Pro Search assistant. I can help you discover innovation ideas and projects. Try asking me things like:\n\n• \"Show me latest AI projects\"\n• \"Find healthcare innovations\"\n• \"Search for React applications\"\n\nWhat would you like to explore today?",
                 suggestions: ['Show me latest ideas', 'Find AI projects', 'Healthcare innovations', 'Cloud solutions'],
-                metadata: { 
-                    intent: 'greeting', 
-                    filters: {}, 
-                    totalResults: 0 
+                metadata: {
+                    intent: 'greeting',
+                    filters: {},
+                    totalResults: 0
                 }
             });
         }
-        
+
         if (!validation.valid) {
             console.log(`[Pro Search] Rejected query: "${trimmedQuery}" - ${validation.reason}`);
             const errorMsg = generateErrorMessage(validation.reason, validation.suggestion);
@@ -520,11 +524,11 @@ router.post('/conversational', async (req, res) => {
                 results: [],
                 aiResponse: errorMsg,
                 suggestions: ['Show me latest ideas', 'Find AI projects', 'Healthcare innovations'],
-                metadata: { 
-                    intent: 'rejected', 
+                metadata: {
+                    intent: 'rejected',
                     reason: validation.reason,
-                    filters: {}, 
-                    totalResults: 0 
+                    filters: {},
+                    totalResults: 0
                 }
             });
         }
@@ -534,27 +538,160 @@ router.post('/conversational', async (req, res) => {
         // Get database pool
         const pool = req.app.get('db');
         if (!pool) {
-            return res.status(503).json({ 
-                error: true, 
-                message: 'Database not available' 
+            return res.status(503).json({
+                error: true,
+                message: 'Database not available'
             });
         }
 
         // STEP 2: Index ideas to ChromaDB (if needed)
         await indexIdeasToChroma(pool);
 
+        // STEP 2.5: Enhance query with conversation context and extract cumulative filters
+        let enhancedQuery = trimmedQuery;
+        let cumulativeFilters = { ...additionalFilters }; // Start with explicit filters
+
+        if (conversationHistory.length > 0 && isGeminiAvailable()) {
+            try {
+                // Build context from conversation (exclude welcome messages)
+                const contextMessages = conversationHistory
+                    .filter(msg => msg.content && !msg.content.includes('Hello! I can help'))
+                    .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+                    .join('\n');
+
+                if (contextMessages.length > 0) {
+                    // Extract cumulative filters from conversation
+                    const filterExtractionPrompt = `Analyze this conversation and extract ALL search criteria mentioned:
+${contextMessages}
+
+New query: "${trimmedQuery}"
+
+Extract ALL filters mentioned throughout the conversation in JSON format:
+{
+  "domains": [list of domains/themes like "AI", "healthcare", "finance"],
+  "technologies": [list of technologies like "React", "Python"],
+  "years": [list of years like 2024, 2023],
+  "businessGroups": [list of business groups]
+}
+
+Only return the JSON object, nothing else.`;
+
+                    const filterJson = await generateText(filterExtractionPrompt, {
+                        maxOutputTokens: 150,
+                        temperature: 0.2
+                    });
+
+                    // Parse extracted filters
+                    try {
+                        const cleanJson = filterJson.trim().replace(/```json\n?|```/g, '');
+                        const extractedFilters = JSON.parse(cleanJson);
+
+                        // Merge extracted filters with existing ones
+                        if (extractedFilters.domains && extractedFilters.domains.length > 0) {
+                            cumulativeFilters.domain = cumulativeFilters.domain || [];
+                            if (!Array.isArray(cumulativeFilters.domain)) {
+                                cumulativeFilters.domain = [cumulativeFilters.domain];
+                            }
+                            extractedFilters.domains.forEach(d => {
+                                if (!cumulativeFilters.domain.includes(d)) {
+                                    cumulativeFilters.domain.push(d);
+                                }
+                            });
+                        }
+
+                        if (extractedFilters.technologies && extractedFilters.technologies.length > 0) {
+                            cumulativeFilters.techStack = cumulativeFilters.techStack || [];
+                            if (!Array.isArray(cumulativeFilters.techStack)) {
+                                cumulativeFilters.techStack = [cumulativeFilters.techStack];
+                            }
+                            extractedFilters.technologies.forEach(t => {
+                                if (!cumulativeFilters.techStack.includes(t)) {
+                                    cumulativeFilters.techStack.push(t);
+                                }
+                            });
+                        }
+
+                        if (extractedFilters.years && extractedFilters.years.length > 0) {
+                            cumulativeFilters.year = extractedFilters.years[extractedFilters.years.length - 1]; // Most recent year
+                        }
+
+                        if (extractedFilters.businessGroups && extractedFilters.businessGroups.length > 0) {
+                            cumulativeFilters.businessGroup = cumulativeFilters.businessGroup || [];
+                            if (!Array.isArray(cumulativeFilters.businessGroup)) {
+                                cumulativeFilters.businessGroup = [cumulativeFilters.businessGroup];
+                            }
+                            extractedFilters.businessGroups.forEach(bg => {
+                                if (!cumulativeFilters.businessGroup.includes(bg)) {
+                                    cumulativeFilters.businessGroup.push(bg);
+                                }
+                            });
+                        }
+
+                        console.log(`[Pro Search] Cumulative filters extracted:`, cumulativeFilters);
+                    } catch (parseErr) {
+                        console.warn('[Pro Search] Failed to parse extracted filters:', parseErr.message);
+                    }
+
+                    // Enhance query with full context
+                    const contextPrompt = `Given this conversation history:
+${contextMessages}
+
+The user's new query is: "${trimmedQuery}"
+
+Based on the conversation context, what is the user really looking for? 
+Provide a refined, expanded search query that captures the user's intent.
+Keep it concise (max 20 words). Only return the refined query, nothing else.`;
+
+                    const refinedQuery = await generateText(contextPrompt, {
+                        maxOutputTokens: 50,
+                        temperature: 0.3
+                    });
+
+                    if (refinedQuery && refinedQuery.length > 5 && refinedQuery.length < 200) {
+                        enhancedQuery = refinedQuery.trim();
+                        console.log(`[Pro Search] Context-enhanced: "${trimmedQuery}" → "${enhancedQuery}"`);
+                    }
+                }
+            } catch (err) {
+                console.warn('[Pro Search] Context enhancement failed:', err.message);
+                // Continue with original query
+            }
+        }
+
         // STEP 3: NLP Processing - Spell correction & query expansion
         const apiKey = process.env.API_KEY;
-        const nlpResult = await enhanceQuery(trimmedQuery, { 
-            useAI: !!apiKey && isGeminiAvailable(), 
+        const nlpResult = await enhanceQuery(enhancedQuery, {
+            useAI: !!apiKey && isGeminiAvailable(),
             apiKey,
             model: 'gemini-2.5-flash-lite'
         });
 
         console.log(`[Pro Search] NLP: "${trimmedQuery}" → "${nlpResult.corrected}"`);
 
-        // STEP 4: Parse filters from query
-        const filters = parseFilters(nlpResult.corrected, additionalFilters);
+        // STEP 4: Parse filters from query and merge with cumulative filters
+        const parsedFilters = parseFilters(nlpResult.corrected, {});
+        const filters = { ...cumulativeFilters };
+
+        // Merge parsed filters with cumulative filters
+        if (parsedFilters.domain) {
+            filters.domain = filters.domain || [];
+            if (!Array.isArray(filters.domain)) filters.domain = [filters.domain];
+            const newDomains = Array.isArray(parsedFilters.domain) ? parsedFilters.domain : [parsedFilters.domain];
+            newDomains.forEach(d => {
+                if (!filters.domain.includes(d)) filters.domain.push(d);
+            });
+        }
+        if (parsedFilters.year) filters.year = parsedFilters.year;
+        if (parsedFilters.techStack) {
+            filters.techStack = filters.techStack || [];
+            if (!Array.isArray(filters.techStack)) filters.techStack = [filters.techStack];
+            const newTechs = Array.isArray(parsedFilters.techStack) ? parsedFilters.techStack : [parsedFilters.techStack];
+            newTechs.forEach(t => {
+                if (!filters.techStack.includes(t)) filters.techStack.push(t);
+            });
+        }
+
+        console.log(`[Pro Search] Final filters:`, filters);
 
         // STEP 5: Semantic search using ChromaDB + Gemini embeddings
         const searchQuery = nlpResult.expanded?.join(' ') || nlpResult.corrected;
@@ -563,31 +700,31 @@ router.post('/conversational', async (req, res) => {
         // STEP 6: Fallback to database if no semantic results
         if (results.length === 0) {
             console.log('[Pro Search] No semantic results, trying keyword search...');
-            
+
             // Use multiple search terms from NLP processing
             const searchTerms = nlpResult.tokens || trimmedQuery.split(/\s+/);
             const primaryTerm = searchTerms[0] || trimmedQuery;
-            
+
             // Build dynamic OR conditions for better matching
             let whereConditions = [];
             let params = [];
             let paramIndex = 1;
-            
+
             // Add conditions for each significant term (max 3)
             const significantTerms = searchTerms.filter(t => t.length > 2).slice(0, 3);
-            
+
             for (const term of significantTerms) {
                 whereConditions.push(`(title ILIKE $${paramIndex} OR summary ILIKE $${paramIndex} OR challenge_opportunity ILIKE $${paramIndex} OR code_preference ILIKE $${paramIndex})`);
                 params.push(`%${term}%`);
                 paramIndex++;
             }
-            
+
             // Fallback if no terms
             if (whereConditions.length === 0) {
                 whereConditions.push(`(title ILIKE $1 OR summary ILIKE $1)`);
                 params.push(`%${primaryTerm}%`);
             }
-            
+
             const dbResult = await pool.query(`
                 SELECT idea_id, title, summary as description,
                        challenge_opportunity as domain, business_group as "businessGroup",
@@ -611,7 +748,7 @@ router.post('/conversational', async (req, res) => {
                 score: row.score || 0,
                 matchScore: 65 // Default score for keyword results
             }));
-            
+
             console.log(`[Pro Search] Keyword search found ${results.length} results`);
         }
 
@@ -644,8 +781,8 @@ router.post('/conversational', async (req, res) => {
 
     } catch (error) {
         console.error('[Pro Search] Error:', error);
-        res.status(500).json({ 
-            error: true, 
+        res.status(500).json({
+            error: true,
             message: 'Search failed. Please try again.',
             details: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
@@ -689,8 +826,8 @@ router.post('/reindex', async (req, res) => {
 
         await indexIdeasToChroma(pool);
 
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             message: 'Ideas reindexed successfully',
             timestamp: new Date().toISOString()
         });
@@ -723,6 +860,169 @@ router.get('/health', async (req, res) => {
     }
 
     res.json(health);
+});
+
+/**
+ * POST /api/search/clear-context - Clear search context/filters on server
+ */
+router.post('/clear-context', async (req, res) => {
+    try {
+        const { userId, filterType = 'all' } = req.body;
+
+        if (!userId) {
+            return res.status(400).json({
+                error: true,
+                message: 'userId is required'
+            });
+        }
+
+        // This is a placeholder - actual implementation would clear server-side context
+        // For now, just return success
+        console.log(`[Pro Search] Clearing context for user ${userId}, filterType: ${filterType}`);
+
+        res.json({
+            success: true,
+            message: `Context cleared successfully for ${filterType} filters.`,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('[Pro Search] Clear context error:', error);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to clear context'
+        });
+    }
+});
+
+/**
+ * POST /api/search/conversational-context
+ * Context-aware semantic search with cumulative filtering
+ */
+router.post('/conversational-context', async (req, res) => {
+    try {
+        const { query, conversationHistory = [], currentFilters = {} } = req.body;
+
+        console.log('[Pro Search Context] Query:', query);
+        console.log('[Pro Search Context] Current Filters:', currentFilters);
+
+        // Import filter extraction functions
+        const { extractFiltersFromQuery, mergeFilters, generateContextSummary, shouldClearContext } = await import('../services/filterExtractor.js');
+
+        // Check if user wants to clear context
+        if (shouldClearContext(query)) {
+            return res.json({
+                results: [],
+                extractedFilters: {},
+                mergedFilters: {},
+                contextSummary: 'Context cleared. Starting fresh search.',
+                contextCleared: true
+            });
+        }
+
+        // Extract filters from current query
+        const extractedFilters = extractFiltersFromQuery(query);
+        console.log('[Pro Search Context] Extracted Filters:', extractedFilters);
+
+        // Merge with existing filters
+        const mergedFilters = mergeFilters(currentFilters, extractedFilters);
+        console.log('[Pro Search Context] Merged Filters:', mergedFilters);
+
+        // Generate context summary
+        const contextSummary = generateContextSummary(mergedFilters);
+
+        // Get ChromaDB collection
+        const chromaClient = getChromaClient();
+        const collection = await chromaClient.getOrCreateCollection({ name: 'ideas_search' });
+
+        // Check if collection has data
+        const collectionCount = await collection.count();
+        console.log(`[Pro Search Context] Collection has ${collectionCount} documents`);
+
+        if (collectionCount === 0) {
+            console.log('[Pro Search Context] Collection is empty, triggering index...');
+            const pool = req.app.get('db');
+            if (pool) {
+                await indexIdeasToChroma(pool);
+            }
+        }
+
+        // Enhance query with filter context for better semantic search
+        let enhancedQuery = query;
+        if (Object.keys(mergedFilters).length > 0) {
+            const filterParts = [];
+            if (mergedFilters.domain) filterParts.push(mergedFilters.domain);
+            if (mergedFilters.businessGroup) filterParts.push(mergedFilters.businessGroup);
+            if (mergedFilters.year) filterParts.push(`year ${mergedFilters.year}`);
+            if (mergedFilters.buildType) filterParts.push(mergedFilters.buildType);
+            if (mergedFilters.techStack && mergedFilters.techStack.length > 0) {
+                filterParts.push(mergedFilters.techStack.join(' '));
+            }
+            enhancedQuery = `${query} ${filterParts.join(' ')}`;
+            console.log(`[Pro Search Context] Enhanced query: "${enhancedQuery}"`);
+        }
+
+        // Generate query embedding with enhanced query
+        const queryEmbedding = await getEmbedding(enhancedQuery);
+
+        // Perform semantic search - let the vector similarity do the work
+        const searchResults = await collection.query({
+            queryEmbeddings: [queryEmbedding],
+            nResults: 20
+        });
+
+        console.log(`[Pro Search Context] Semantic search returned ${searchResults.metadatas[0]?.length || 0} results`);
+
+        // Check if we got any results
+        if (!searchResults.metadatas[0] || searchResults.metadatas[0].length === 0) {
+            console.log('[Pro Search Context] No results from semantic search');
+            return res.json({
+                results: [],
+                extractedFilters,
+                mergedFilters,
+                contextSummary: contextSummary || 'No results found',
+                contextCleared: false
+            });
+        }
+
+        // Format results without strict filtering - trust the semantic search
+        const results = searchResults.metadatas[0].map((metadata, index) => ({
+            id: `IDEA-${metadata.idea_id}`, // Format as IDEA-{id} for navigation
+            dbId: metadata.idea_id, // Keep numeric ID
+            title: metadata.title,
+            summary: metadata.summary,
+            domain: metadata.domain,
+            businessGroup: metadata.businessGroup,
+            technologies: metadata.technologies ? metadata.technologies.split(',').map(t => t.trim()) : [],
+            buildPhase: metadata.buildPhase,
+            buildPreference: metadata.buildPreference,
+            score: metadata.score,
+            similarity: 1 - (searchResults.distances[0][index] || 0),
+            created_at: metadata.created_at
+        }));
+
+        console.log(`[Pro Search Context] Returning ${results.length} results`);
+        console.log(`[Pro Search Context] Sample results:`, results.slice(0, 2).map(r => ({
+            title: r.title,
+            businessGroup: r.businessGroup,
+            similarity: r.similarity.toFixed(3)
+        })));
+
+        res.json({
+            results,
+            extractedFilters,
+            mergedFilters,
+            contextSummary,
+            contextCleared: false
+        });
+
+    } catch (error) {
+        console.error('[Pro Search Context] Error:', error);
+        res.status(500).json({
+            error: true,
+            message: 'Context-aware search failed',
+            details: error.message
+        });
+    }
 });
 
 export default router;

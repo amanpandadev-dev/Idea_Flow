@@ -16,6 +16,9 @@ interface IdeaTableProps {
   // External Search Props
   onSearch?: (query: string) => void;
   isSearching?: boolean;
+  // Filter Click Handlers
+  onFilterByTheme?: (theme: string) => void;
+  onFilterByStatus?: (status: string | null) => void;
 }
 
 type SortField = 'date' | 'status' | 'domain' | 'score' | 'likes' | 'match';
@@ -33,7 +36,9 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
   showExplore = true,
   showSearch = true, // Default to true
   onSearch,
-  isSearching
+  isSearching,
+  onFilterByTheme,
+  onFilterByStatus
 }) => {
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -41,6 +46,8 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
   const [currentPage, setCurrentPage] = useState(1);
   const [likingId, setLikingId] = useState<string | null>(null);
   const [localIdeas, setLocalIdeas] = useState<Idea[]>([]);
+  const [showStatusDropdown, setShowStatusDropdown] = useState(false);
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<string | null>(null);
 
   // Initialize local ideas when data changes
   useEffect(() => {
@@ -248,7 +255,7 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
         <table className="min-w-full divide-y divide-slate-200">
           <thead className="bg-slate-50">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider min-w-[200px] max-w-[380px]">Idea Title</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider min-w-[176px] max-w-[334px]">Idea Title</th>
               {hasExternalSearch && (
                 <th
                   className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-700 w-20"
@@ -260,10 +267,62 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
                   </div>
                 </th>
               )}
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-32" onClick={() => handleSort('domain')}>Theme</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-32" onClick={() => handleSort('status')}>Status</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-20" onClick={() => handleSort('likes')}><Heart className="h-3 w-3 inline mr-1" /> Likes</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-20" onClick={() => handleSort('score')}><Trophy className="h-3 w-3 inline mr-1" /> Score</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-36" onClick={() => handleSort('domain')}>Theme</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider w-32 relative">
+                <div
+                  className="flex items-center gap-1 cursor-pointer hover:text-slate-700"
+                  onClick={() => setShowStatusDropdown(!showStatusDropdown)}
+                >
+                  <span>Status</span>
+                  <Filter className={`h-3 w-3 ${selectedStatusFilter ? 'text-indigo-600' : ''}`} />
+                  {selectedStatusFilter && (
+                    <span className="ml-1 w-2 h-2 bg-indigo-600 rounded-full"></span>
+                  )}
+                </div>
+                {showStatusDropdown && (
+                  <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 min-w-[180px]">
+                    <div className="py-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedStatusFilter(null);
+                          if (onFilterByStatus) onFilterByStatus(null);
+                          setShowStatusDropdown(false);
+                        }}
+                        className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-50 ${!selectedStatusFilter ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-700'}`}
+                      >
+                        All Statuses
+                      </button>
+                      {['MVP', 'Prototype', 'Development'].map((status) => (
+                        <button
+                          key={status}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedStatusFilter(status);
+                            if (onFilterByStatus) onFilterByStatus(status);
+                            setShowStatusDropdown(false);
+                          }}
+                          className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-50 ${selectedStatusFilter === status ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-700'}`}
+                        >
+                          {status}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-20" onClick={() => handleSort('likes')}>
+                <div className="flex items-center justify-center gap-1">
+                  <Heart className="h-3 w-3" />
+                  <span>Likes</span>
+                </div>
+              </th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-20" onClick={() => handleSort('score')}>
+                <div className="flex items-center justify-center gap-1">
+                  <Trophy className="h-3 w-3" />
+                  <span>Score</span>
+                </div>
+              </th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-slate-200">
@@ -276,8 +335,8 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
             ) : (
               displayData.map((idea) => (
                 <tr key={idea.id} className="hover:bg-slate-50 transition-colors group">
-                  <td className="px-4 py-3">
-                    <div className="flex flex-col max-w-[380px]">
+                  <td className="px-3 py-3">
+                    <div className="flex flex-col max-w-[334px]">
                       <span className="text-sm font-medium text-indigo-600 cursor-pointer hover:underline line-clamp-2" onClick={() => onViewDetails(idea)}>{idea.title}</span>
                       <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 truncate"><User className="h-3 w-3 shrink-0" /> <span className="truncate">{idea.associateAccount}</span></div>
                     </div>
@@ -287,8 +346,31 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold border ${(idea.matchScore || 0) > 80 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>{(idea.matchScore || 0)}%</span>
                     </td>
                   )}
-                  <td className="px-4 py-3"><span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-white text-slate-800 truncate max-w-[120px]" style={{ borderColor: DOMAIN_COLORS[idea.domain] || '#ccc' }}>{idea.domain}</span></td>
-                  <td className="px-4 py-3"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border truncate max-w-[120px] ${getStatusColor(idea.status)}`}>{idea.status}</span></td>
+                  <td className="px-4 py-3">
+                    <span
+                      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-white text-slate-800 truncate max-w-[120px] cursor-pointer hover:ring-2 hover:ring-indigo-300 transition-all"
+                      style={{ borderColor: DOMAIN_COLORS[idea.domain] || '#ccc' }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onFilterByTheme) onFilterByTheme(idea.domain);
+                      }}
+                      title="Click to filter by this theme"
+                    >
+                      {idea.domain}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border truncate max-w-[120px] cursor-pointer hover:ring-2 hover:ring-indigo-300 transition-all ${getStatusColor(idea.status)}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onFilterByStatus) onFilterByStatus(idea.status);
+                      }}
+                      title="Click to filter by this status"
+                    >
+                      {idea.status}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-center">
                     <button onClick={(e) => handleLike(e, idea)} disabled={likingId === idea.id} className={`flex items-center justify-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium mx-auto ${idea.isLiked ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-500'}`}>
                       <Heart className={`h-3 w-3 ${idea.isLiked ? 'fill-red-600' : ''}`} /> {idea.likesCount}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Loader2, Sparkles, X, Filter, TrendingUp, Calendar, Code, Building2, Compass, PanelLeftClose, PanelLeft } from 'lucide-react';
+import { Send, Loader2, Sparkles, X, Filter, TrendingUp, Calendar, Code, Building2, Compass, PanelLeftClose, PanelLeft, Save, Trash2 } from 'lucide-react';
 import type { Idea } from '../types';
 import ExploreModal, { ExploreFilters } from './ExploreModal';
 import ChatHistorySidebar from './ChatHistorySidebar';
@@ -48,7 +48,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     availableTechnologies = [],
     availableThemes = [],
     availableBusinessGroups = [],
-    userId = 'anonymous'
+    userId
 }) => {
     const [query, setQuery] = useState('');
     const [messages, setMessages] = useState<Message[]>([]);
@@ -86,8 +86,42 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
         technologies: []
     });
 
+    // Context Management State
+    const [savedContext, setSavedContext] = useState<any>(null);
+    const [contextLoading, setContextLoading] = useState(false);
+    const [contextMessage, setContextMessage] = useState<string>('');
+
+    // Conversational Context State - NEW
+    const [conversationContext, setConversationContext] = useState<{
+        history: Array<{
+            role: 'user' | 'assistant';
+            content: string;
+            filters?: any;
+            timestamp: number;
+        }>;
+        cumulativeFilters: {
+            domain?: string;
+            businessGroup?: string;
+            techStack?: string[];
+            year?: number;
+            buildType?: string;
+            status?: string;
+        };
+    }>({
+        history: [],
+        cumulativeFilters: {}
+    });
+    const [contextSummary, setContextSummary] = useState<string>('');
+    const [showContextBanner, setShowContextBanner] = useState(false);
+
+    // Resizable Panels State
+    const [sidebarWidth, setSidebarWidth] = useState(260);
+    const [chatWidth, setChatWidth] = useState(450); // px
+    const [isResizing, setIsResizing] = useState<'sidebar' | 'chat' | null>(null);
+
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const chatContainerRef = useRef<HTMLDivElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
 
     // Auto-scroll to bottom of chat
     useEffect(() => {
@@ -128,9 +162,194 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
         setActiveResultMessageId(null);
     };
 
+    // Load most recent session on mount or show welcome
+    const loadMostRecentSession = async () => {
+        try {
+            const response = await fetch('/api/chat/sessions', {
+                headers: { 'x-user-id': userId || '' },
+                credentials: 'include'
+            });
+
+            // Handle authentication errors gracefully
+            if (response.status === 401) {
+                console.warn('[ProSearch] Authentication failed when loading sessions');
+                // Only show welcome if we don't have a userId
+                if (!userId) {
+                    initializeNewChat();
+                }
+                return;
+            }
+
+            if (response.ok) {
+                const data = await response.json();
+                const sessions = data.sessions;
+
+                // Get most recent session from all groups
+                let mostRecentSession = null;
+                for (const group in sessions) {
+                    if (sessions[group].length > 0) {
+                        const groupMostRecent = sessions[group][0]; // Already sorted by updated_at DESC
+                        if (!mostRecentSession ||
+                            new Date(groupMostRecent.updatedAt) > new Date(mostRecentSession.updatedAt)) {
+                            mostRecentSession = groupMostRecent;
+                        }
+                    }
+                }
+
+                if (mostRecentSession) {
+                    console.log(`[ProSearch] Loading most recent session: ${mostRecentSession.id}`);
+                    await loadSession(mostRecentSession.id);
+                } else {
+                    // No sessions exist, show welcome
+                    console.log('[ProSearch] No previous sessions, showing welcome');
+                    initializeNewChat();
+                }
+            } else {
+                console.warn('[ProSearch] Failed to load sessions, showing welcome');
+                initializeNewChat();
+            }
+        } catch (err) {
+            console.error('[ProSearch] Failed to load recent session:', err);
+            initializeNewChat();
+        }
+    };
+
     useEffect(() => {
-        initializeNewChat();
-    }, []);
+        console.log('[ProSearch] Component mounted, userId:', userId);
+        // Load chat history if userId is provided (even if it's a string ID)
+        if (userId) {
+            console.log('[ProSearch] Loading chat history for user:', userId);
+            loadMostRecentSession();
+            loadContext(); // Load saved context on mount
+        } else {
+            console.log('[ProSearch] No userId, showing welcome');
+            initializeNewChat();
+        }
+    }, [userId]);
+
+    // Resize Handlers
+    const startResizing = (type: 'sidebar' | 'chat') => {
+        setIsResizing(type);
+    };
+
+    const stopResizing = () => {
+        setIsResizing(null);
+    };
+
+    const handleResize = (e: MouseEvent) => {
+        if (!isResizing || !containerRef.current) return;
+
+        const containerRect = containerRef.current.getBoundingClientRect();
+
+        if (isResizing === 'sidebar') {
+            const newWidth = e.clientX - containerRect.left;
+            if (newWidth >= 150 && newWidth <= 500) {
+                setSidebarWidth(newWidth);
+            }
+        } else if (isResizing === 'chat') {
+            // Chat width = Mouse X - Sidebar Width (if visible)
+            const sidebarOffset = showSidebar ? sidebarWidth : 0;
+            const newWidth = e.clientX - containerRect.left - sidebarOffset;
+            if (newWidth >= 300 && newWidth <= 800) {
+                setChatWidth(newWidth);
+            }
+        }
+    };
+
+    useEffect(() => {
+        if (isResizing) {
+            window.addEventListener('mousemove', handleResize);
+            window.addEventListener('mouseup', stopResizing);
+        }
+        return () => {
+            window.removeEventListener('mousemove', handleResize);
+            window.removeEventListener('mouseup', stopResizing);
+        };
+    }, [isResizing, sidebarWidth, showSidebar]);
+
+    // Context Management Functions
+    const saveContext = async () => {
+        setContextLoading(true);
+        setContextMessage('');
+
+        try {
+            const response = await fetch('/api/search/context/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId,
+                    filters: exploreFilters,
+                    query,
+                    minSimilarity: 30,
+                    pagination: { page: 1, limit: 20 }
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setSavedContext(data.context);
+                setContextMessage('✓ Context saved');
+                setTimeout(() => setContextMessage(''), 3000);
+            } else {
+                setContextMessage('✗ Failed to save');
+            }
+        } catch (error) {
+            console.error('Save context error:', error);
+            setContextMessage('✗ Error saving');
+        } finally {
+            setContextLoading(false);
+        }
+    };
+
+    const clearContext = async () => {
+        if (!confirm('Clear saved search context and filters?')) {
+            return;
+        }
+
+        setContextLoading(true);
+        setContextMessage('');
+
+        try {
+            const response = await fetch(`/api/search/context/${userId}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                setSavedContext(null);
+                setExploreFilters({
+                    themes: [],
+                    businessGroups: [],
+                    technologies: []
+                });
+                setContextMessage('✓ Cleared');
+                setTimeout(() => setContextMessage(''), 3000);
+            } else {
+                setContextMessage('✗ Failed to clear');
+            }
+        } catch (error) {
+            console.error('Clear context error:', error);
+            setContextMessage('✗ Error clearing');
+        } finally {
+            setContextLoading(false);
+        }
+    };
+
+    const loadContext = async () => {
+        try {
+            const response = await fetch(`/api/search/context/${userId}`);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.context && data.context.savedAt) {
+                    setSavedContext(data.context);
+                    if (data.context.filters) {
+                        setExploreFilters(data.context.filters);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Load context error:', error);
+        }
+    };
 
     // Create a new session when first message is sent
     const createSession = async (): Promise<number | null> => {
@@ -139,10 +358,17 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-user-id': userId
+                    'x-user-id': userId || ''
                 },
+                credentials: 'include',
                 body: JSON.stringify({ title: 'New Chat' })
             });
+
+            if (response.status === 401) {
+                console.warn('[ProSearch] Not authenticated, cannot create session');
+                return null;
+            }
+
             if (response.ok) {
                 const data = await response.json();
                 return data.session.id;
@@ -156,14 +382,20 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     // Save message to session
     const saveMessage = async (sessionId: number, role: string, content: string, metadata?: any) => {
         try {
-            await fetch(`/api/chat/sessions/${sessionId}/messages`, {
+            const response = await fetch(`/api/chat/sessions/${sessionId}/messages`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-user-id': userId
+                    'x-user-id': userId || ''
                 },
+                credentials: 'include',
                 body: JSON.stringify({ role, content, metadata })
             });
+
+            if (response.status === 401) {
+                console.warn('[ProSearch] Not authenticated, message not saved');
+                return;
+            }
         } catch (err) {
             console.error('Failed to save message:', err);
         }
@@ -173,8 +405,19 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     const loadSession = async (sessionId: number) => {
         try {
             const response = await fetch(`/api/chat/sessions/${sessionId}/messages`, {
-                headers: { 'x-user-id': userId }
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-user-id': userId || ''
+                },
+                credentials: 'include'
             });
+
+            if (response.status === 401) {
+                console.warn('[ProSearch] Not authenticated, cannot load session');
+                initializeNewChat();
+                return;
+            }
+
             if (response.ok) {
                 const data = await response.json();
                 if (data.messages.length > 0) {
@@ -190,14 +433,14 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                             resultsCount: msg.metadata.resultsCount || 0
                         } : undefined
                     }));
-                    
+
                     setMessages(loadedMessages);
-                    
+
                     // Find the last assistant message with results metadata and show those results
                     const lastAssistantMsg = [...data.messages]
                         .reverse()
                         .find((msg: any) => msg.role === 'assistant' && msg.metadata?.results?.length > 0);
-                    
+
                     if (lastAssistantMsg?.metadata?.results) {
                         setResults(lastAssistantMsg.metadata.results);
                         setMetadata(lastAssistantMsg.metadata.searchMetadata || null);
@@ -268,64 +511,96 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
         }
 
         try {
-            const mappedFilters: any = {};
-            if (exploreFilters.technologies.length > 0) mappedFilters.techStack = exploreFilters.technologies;
-            if (exploreFilters.businessGroups.length > 0) mappedFilters.businessGroup = exploreFilters.businessGroups;
-            if (exploreFilters.themes.length > 0) mappedFilters.domain = exploreFilters.themes;
-
-            const response = await fetch('/api/search/conversational', {
+            // Use context-aware API endpoint
+            const response = await fetch('/api/search/conversational-context', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
                 body: JSON.stringify({
                     query: searchQuery,
-                    additionalFilters: mappedFilters
+                    conversationHistory: conversationContext.history,
+                    currentFilters: conversationContext.cumulativeFilters
                 })
             });
 
-            if (!response.ok) throw new Error('Search failed');
+            if (!response.ok) throw new Error('Context-aware search failed');
 
             const data = await response.json();
 
+            // Check if context was cleared
+            if (data.contextCleared) {
+                setConversationContext({
+                    history: [],
+                    cumulativeFilters: {}
+                });
+                setContextSummary('');
+                setShowContextBanner(false);
+            } else {
+                // Update conversation context
+                setConversationContext(prev => ({
+                    history: [
+                        ...prev.history,
+                        {
+                            role: 'user',
+                            content: searchQuery,
+                            filters: data.extractedFilters,
+                            timestamp: Date.now()
+                        },
+                        {
+                            role: 'assistant',
+                            content: `Found ${data.results.length} results`,
+                            timestamp: Date.now()
+                        }
+                    ],
+                    cumulativeFilters: data.mergedFilters
+                }));
+
+                // Update context summary
+                setContextSummary(data.contextSummary);
+                setShowContextBanner(Object.keys(data.mergedFilters).length > 0);
+            }
+
             const searchResults = data.results || [];
-            const searchMeta = data.metadata || null;
-            
+
             const aiMessage: Message = {
                 id: `ai_${Date.now()}`,
                 role: 'assistant',
-                content: data.aiResponse || `Found ${searchResults.length} results`,
+                content: data.contextSummary || `Found ${searchResults.length} results`,
                 timestamp: new Date().toISOString(),
                 metadata: {
                     results: searchResults,
-                    searchMetadata: searchMeta,
+                    searchMetadata: null,
                     resultsCount: searchResults.length
                 }
             };
 
             setMessages(prev => [...prev, aiMessage]);
             setResults(searchResults);
-            setSuggestions(data.suggestions || []);
-            setMetadata(searchMeta);
+            setSuggestions([]);
+            setMetadata(null);
             setActiveResultMessageId(aiMessage.id);
 
-            // Save AI response with results for later retrieval
+            // Save AI message
             if (sessionId) {
                 saveMessage(sessionId, 'assistant', aiMessage.content, {
+                    results: searchResults,
                     resultsCount: searchResults.length,
-                    filters: searchMeta?.filters,
-                    results: searchResults, // Store results for session restore
-                    searchMetadata: searchMeta
+                    extractedFilters: data.extractedFilters,
+                    mergedFilters: data.mergedFilters
                 });
             }
 
         } catch (err: any) {
+            console.error('Search error:', err);
             setError(err.message || 'Search failed');
+
             const errorMessage: Message = {
                 id: `error_${Date.now()}`,
                 role: 'assistant',
-                content: 'Sorry, I encountered an error. Please try again.',
+                content: `Sorry, I encountered an error: ${err.message}`,
                 timestamp: new Date().toISOString()
             };
+
             setMessages(prev => [...prev, errorMessage]);
         } finally {
             setIsSearching(false);
@@ -377,9 +652,9 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     const activeFilterCount = exploreFilters.themes.length + exploreFilters.businessGroups.length + exploreFilters.technologies.length;
 
     return (
-        <div className="flex h-full bg-gradient-to-br from-slate-50 to-blue-50">
+        <div ref={containerRef} className="flex h-full w-full bg-gradient-to-br from-slate-50 to-blue-50 overflow-hidden relative selection:bg-blue-100">
             {/* Chat History Sidebar */}
-            {showSidebar && (
+            {showSidebar && userId && (
                 <ChatHistorySidebar
                     currentSessionId={currentSessionId}
                     onSelectSession={handleSelectSession}
@@ -389,8 +664,21 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                 />
             )}
 
+            {/* RESIZE HANDLE: Sidebar <-> Chat */}
+            {showSidebar && (
+                <div
+                    className="w-1 hover:w-1.5 bg-slate-200 hover:bg-blue-400 cursor-col-resize z-50 transition-all flex items-center justify-center group"
+                    onMouseDown={() => startResizing('sidebar')}
+                >
+                    <div className="w-0.5 h-8 bg-slate-300 group-hover:bg-white rounded-full" />
+                </div>
+            )}
+
             {/* LEFT SIDE - CHAT */}
-            <div className={`${showSidebar ? 'w-2/5' : 'w-1/2'} flex flex-col border-r border-slate-200 bg-white shadow-lg transition-all`}>
+            <div
+                className="flex flex-col border-r border-slate-200 bg-white shadow-lg transition-all min-w-[300px] flex-shrink-0"
+                style={{ width: `${chatWidth}px` }}
+            >
                 {/* Chat Header */}
                 <div className="px-4 py-3 border-b border-slate-200 bg-gradient-to-r from-blue-600 to-purple-600">
                     <div className="flex items-center justify-between">
@@ -413,17 +701,56 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                 <h2 className="text-base font-bold text-white">Pro Search</h2>
                             </div>
                         </div>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-2">
+                            {/* Context Management Buttons */}
+                            <button
+                                onClick={saveContext}
+                                disabled={contextLoading}
+                                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors ${contextLoading
+                                    ? 'bg-white/10 cursor-not-allowed'
+                                    : 'bg-white/20 hover:bg-white/30'
+                                    }`}
+                                title="Save current filters and query"
+                            >
+                                <Save className="w-4 h-4 text-white" />
+                                <span className="text-white text-xs font-medium">Save</span>
+                            </button>
+
+                            {savedContext && (
+                                <button
+                                    onClick={clearContext}
+                                    disabled={contextLoading}
+                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors ${contextLoading
+                                        ? 'bg-white/10 cursor-not-allowed'
+                                        : 'bg-red-500/80 hover:bg-red-500'
+                                        }`}
+                                    title="Clear saved context"
+                                >
+                                    <Trash2 className="w-4 h-4 text-white" />
+                                    <span className="text-white text-xs font-medium">Clear</span>
+                                </button>
+                            )}
+
+                            {contextMessage && (
+                                <span className="text-white text-xs font-medium px-2 py-1 bg-white/20 rounded">
+                                    {contextMessage}
+                                </span>
+                            )}
+
                             <button
                                 onClick={() => setIsExploreOpen(true)}
-                                className="p-1.5 hover:bg-white/20 rounded-lg transition-colors relative"
-                                title="Explore Filters"
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg transition-colors relative"
+                                title="Open filter explorer"
                             >
                                 <Compass className="w-4 h-4 text-white" />
+                                <span className="text-white text-xs font-medium">Explore</span>
                                 {activeFilterCount > 0 && (
-                                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-blue-600" />
+                                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border border-white text-white text-[10px] flex items-center justify-center font-bold">
+                                        {activeFilterCount}
+                                    </span>
                                 )}
                             </button>
+
                             <button
                                 onClick={handleClearChat}
                                 className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
@@ -435,6 +762,67 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                     </div>
                 </div>
 
+                {/* Context Status Indicator */}
+                {savedContext && savedContext.savedAt && (
+                    <div className="px-4 py-2 bg-green-50 border-b border-green-200 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                            <span className="text-sm text-green-800">
+                                Context saved on {new Date(savedContext.savedAt).toLocaleString()}
+                            </span>
+                        </div>
+                        {savedContext.filters && (
+                            <span className="text-xs text-green-700 font-medium">
+                                {Object.keys(savedContext.filters).filter(k =>
+                                    savedContext.filters[k]?.length > 0
+                                ).length} filters active
+                            </span>
+                        )}
+                    </div>
+                )}
+
+                {/* Conversational Context Banner - NEW */}
+                {showContextBanner && contextSummary && (
+                    <div className="mx-4 mb-2 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                                <Filter className="h-4 w-4 text-indigo-600" />
+                                <span className="text-sm font-medium text-indigo-900">
+                                    Active Context: {contextSummary}
+                                </span>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setConversationContext({ history: [], cumulativeFilters: {} });
+                                    setContextSummary('');
+                                    setShowContextBanner(false);
+                                }}
+                                className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1 px-2 py-1 hover:bg-indigo-100 rounded transition-colors"
+                                title="Clear conversation context"
+                            >
+                                <X className="h-3 w-3" />
+                                Clear Context
+                            </button>
+                        </div>
+
+                        {/* Show active filters as badges */}
+                        <div className="flex flex-wrap gap-2">
+                            {Object.entries(conversationContext.cumulativeFilters).map(([key, value]) => {
+                                if (!value || (Array.isArray(value) && value.length === 0)) return null;
+                                return (
+                                    <span
+                                        key={key}
+                                        className="inline-flex items-center px-2 py-1 bg-white border border-indigo-200 rounded text-xs text-indigo-700"
+                                    >
+                                        <strong className="mr-1">{key}:</strong>
+                                        {Array.isArray(value) ? value.join(', ') : value}
+                                    </span>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
                 {/* Chat Messages */}
                 <div
                     ref={chatContainerRef}
@@ -444,7 +832,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                     {messages.map((message) => {
                         const hasResults = message.role === 'assistant' && message.metadata?.results && message.metadata.results.length > 0;
                         const isActiveResult = hasResults && activeResultMessageId === message.id;
-                        
+
                         return (
                             <div
                                 key={message.id}
@@ -454,10 +842,10 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                     onClick={() => hasResults && handleMessageClick(message)}
                                     className={`max-w-[85%] rounded-2xl px-4 py-3 ${message.role === 'user'
                                         ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
-                                        : hasResults 
+                                        : hasResults
                                             ? `bg-slate-100 text-slate-800 cursor-pointer hover:bg-slate-200 transition-colors ${isActiveResult ? 'ring-2 ring-blue-500' : ''}`
                                             : 'bg-slate-100 text-slate-800'
-                                    }`}
+                                        }`}
                                 >
                                     <p className="text-sm leading-relaxed">{message.content}</p>
                                     <div className={`flex items-center justify-between mt-1 ${message.role === 'user' ? 'text-blue-100' : 'text-slate-500'}`}>
@@ -548,8 +936,16 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                 </form>
             </div>
 
+            {/* RESIZE HANDLE: Chat <-> Results */}
+            <div
+                className="w-1 hover:w-1.5 bg-slate-200 hover:bg-blue-400 cursor-col-resize z-50 transition-all flex items-center justify-center group flex-shrink-0"
+                onMouseDown={() => startResizing('chat')}
+            >
+                <div className="w-0.5 h-8 bg-slate-300 group-hover:bg-white rounded-full" />
+            </div>
+
             {/* RIGHT SIDE - RESULTS */}
-            <div className={`${showSidebar ? 'w-3/5' : 'w-1/2'} flex flex-col bg-slate-50 transition-all`}>
+            <div className="flex-1 flex flex-col bg-slate-50 transition-all min-w-[350px]">
                 {/* Results Header */}
                 <div className="px-6 py-4 bg-white border-b border-slate-200">
                     <div className="flex items-center justify-between">
@@ -608,12 +1004,12 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                             {results.map((idea, index) => {
                                 // Safely handle technologies - could be string or array
                                 const techs = idea.technologies as string | string[] | undefined;
-                                const techArray: string[] = Array.isArray(techs) 
-                                    ? techs 
+                                const techArray: string[] = Array.isArray(techs)
+                                    ? techs
                                     : (typeof techs === 'string' && techs)
                                         ? techs.split(',').map(t => t.trim()).filter(Boolean)
                                         : [];
-                                
+
                                 return (
                                     <div
                                         key={idea.id || `result-${index}`}
