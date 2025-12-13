@@ -66,7 +66,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                 // If user changed, clear old data INCLUDING search input and document context
                 if (storedUserId && storedUserId !== String(newUserId)) {
                     console.log('[AgentChat] User changed, clearing old search data, input, and suggested questions');
-                    
+
                     // Clear all semantic search data from sessionStorage
                     Object.keys(sessionStorage).forEach(key => {
                         if (key.startsWith(SEMANTIC_RESULTS_KEY_PREFIX) ||
@@ -74,7 +74,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                             sessionStorage.removeItem(key);
                         }
                     });
-                    
+
                     // Clear user-specific localStorage data
                     const userSpecificKeys = [
                         `agent_last_query_${storedUserId}`,
@@ -82,7 +82,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                         SESSION_STORAGE_KEY
                     ];
                     userSpecificKeys.forEach(key => localStorage.removeItem(key));
-                    
+
                     // PRIVACY FIX: Clear all state when user changes
                     setQuery('');
                     setSemanticResults([]);
@@ -100,7 +100,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                 if (newUserId) {
                     sessionStorage.setItem(CURRENT_USER_KEY, String(newUserId));
                     setCurrentUserId(String(newUserId));
-                    
+
                     // Load user-specific search input
                     const userSpecificQuery = localStorage.getItem(`agent_last_query_${newUserId}`);
                     if (userSpecificQuery) {
@@ -668,27 +668,35 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                 </div>
             )}
 
-            <DocumentUpload embeddingProvider={embeddingProvider} onQuestionsGenerated={handleQuestionsGenerated} />
-
-            {suggestedQuestions.length > 0 && (
-                <div className="bg-white rounded-xl border border-slate-200 p-4">
-                    <h3 className="font-semibold text-slate-900 mb-3 flex items-center gap-2">
-                        <Sparkles className="h-5 w-5 text-indigo-600" />
-                        Suggested Questions
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {suggestedQuestions.map((question, idx) => (
-                            <button
-                                key={idx}
-                                onClick={() => setQuery(question)}
-                                className="text-left p-4 bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-colors text-sm border border-indigo-200 h-full"
-                            >
-                                {question}
-                            </button>
-                        ))}
-                    </div>
+            {/* Grid Layout: Document Upload and Suggested Questions Side by Side */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Document Upload Component */}
+                <div>
+                    <DocumentUpload embeddingProvider={embeddingProvider} onQuestionsGenerated={handleQuestionsGenerated} />
                 </div>
-            )}
+
+                {/* Suggested Questions Component */}
+                {suggestedQuestions.length > 0 && (
+                    <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-col">
+                        <h3 className="font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                            <Sparkles className="h-5 w-5 text-indigo-600" />
+                            Suggested Questions
+                        </h3>
+                        {/* Scrollable container with max height */}
+                        <div className="flex-1 overflow-y-auto max-h-[400px] pr-2 space-y-3 custom-scrollbar">
+                            {suggestedQuestions.map((question, idx) => (
+                                <button
+                                    key={idx}
+                                    onClick={() => setQuery(question)}
+                                    className="w-full text-left p-4 bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-colors text-sm border border-indigo-200"
+                                >
+                                    {question}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
 
             <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
                 {/* Mode Selector */}

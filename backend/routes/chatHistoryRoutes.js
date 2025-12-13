@@ -18,8 +18,13 @@ router.get('/sessions', async (req, res) => {
     if (!pool) return res.status(503).json({ error: 'Database not connected' });
 
     try {
-        const userId = req.session?.userId || req.headers['x-user-id'] || 'anonymous';
-        
+        // Get user ID from JWT token
+        const userId = req.headers['x-user-id'];
+
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID required' });
+        }
+
         const result = await pool.query(`
             SELECT 
                 cs.id,
@@ -84,7 +89,13 @@ router.post('/sessions', async (req, res) => {
     if (!pool) return res.status(503).json({ error: 'Database not connected' });
 
     try {
-        const userId = req.session?.userId || req.headers['x-user-id'] || 'anonymous';
+        // Get user ID from JWT token
+        const userId = req.headers['x-user-id'];
+
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID required' });
+        }
+
         const { title } = req.body;
 
         const result = await pool.query(`
@@ -109,7 +120,7 @@ router.get('/sessions/:sessionId/messages', async (req, res) => {
 
     try {
         const { sessionId } = req.params;
-        
+
         const result = await pool.query(`
             SELECT id, role, content, metadata, created_at
             FROM chat_messages
@@ -117,7 +128,7 @@ router.get('/sessions/:sessionId/messages', async (req, res) => {
             ORDER BY created_at ASC
         `, [sessionId]);
 
-        res.json({ 
+        res.json({
             messages: result.rows.map(msg => ({
                 id: msg.id,
                 role: msg.role,
@@ -173,7 +184,7 @@ router.post('/sessions/:sessionId/messages', async (req, res) => {
                 'SELECT COUNT(*) FROM chat_messages WHERE session_id = $1 AND role = $2',
                 [sessionId, 'user']
             );
-            
+
             if (parseInt(countResult.rows[0].count) === 1) {
                 const title = content.length > 50 ? content.substring(0, 47) + '...' : content;
                 await pool.query(
@@ -188,7 +199,7 @@ router.post('/sessions/:sessionId/messages', async (req, res) => {
             }
         }
 
-        res.json({ 
+        res.json({
             message: {
                 id: msgResult.rows[0].id,
                 role: msgResult.rows[0].role,
@@ -212,7 +223,12 @@ router.delete('/sessions/:sessionId', async (req, res) => {
 
     try {
         const { sessionId } = req.params;
-        const userId = req.session?.userId || req.headers['x-user-id'] || 'anonymous';
+        // Get user ID from JWT token
+        const userId = req.headers['x-user-id'];
+
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID required' });
+        }
 
         await pool.query('DELETE FROM chat_messages WHERE session_id = $1', [sessionId]);
         await pool.query(
@@ -237,7 +253,12 @@ router.patch('/sessions/:sessionId', async (req, res) => {
     try {
         const { sessionId } = req.params;
         const { title } = req.body;
-        const userId = req.session?.userId || req.headers['x-user-id'] || 'anonymous';
+        // Get user ID from JWT token
+        const userId = req.headers['x-user-id'];
+
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID required' });
+        }
 
         const result = await pool.query(`
             UPDATE chat_sessions 
