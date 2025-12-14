@@ -1,9 +1,8 @@
 import pdf from 'pdf-parse';
 import mammoth from 'mammoth';
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { generateStructuredJSON } from '../config/ollama.js';
 
-// Initialize Gemini API
-const genAI = process.env.API_KEY ? new GoogleGenerativeAI(process.env.API_KEY) : null;
+// No more Gemini - using Ollama/Llama for AI features
 
 /**
  * Native text splitter - no LangChain dependency
@@ -175,22 +174,14 @@ export async function chunkText(text, chunkSize = 400, overlap = 50) {
 }
 
 /**
- * Extract key themes/topics using Gemini 1.5 Flash with structured JSON output
+ * Extract key themes/topics using Llama (Ollama) with structured JSON output
  * @param {string} text - The full document text (or a summary/subset)
  * @returns {Promise<Object>} Structured RAG data with themes, keywords, and suggested questions
  */
 export async function extractThemesWithAI(text) {
-    if (!genAI) {
-        console.warn('Gemini API not initialized, falling back to simple extraction');
-        return extractThemesSimple(text);
-    }
-
     try {
-        // Using Gemini 2.0 Flash Experimental - Latest fast model
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
-
-        // Truncate text if too long to avoid token limits (approx 15k chars is safe for Flash input context)
-        const inputContext = text.length > 15000 ? text.substring(0, 15000) + "..." : text;
+        // Truncate text if too long (Llama context limit ~4k tokens)
+        const inputContext = text.length > 8000 ? text.substring(0, 8000) + "..." : text;
 
         const prompt = `Analyze the following document text and extract key insights for a RAG (Retrieval Augmented Generation) system.
 
@@ -212,16 +203,10 @@ IMPORTANT for suggestedQuestions:
 Document Text:
 ${inputContext}`;
 
-        const result = await model.generateContent({
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
-            generationConfig: {
-                responseMimeType: "application/json",
-                maxOutputTokens: 1000,
-            }
+        const data = await generateStructuredJSON(prompt, {
+            temperature: 0.3,
+            maxOutputTokens: 1000
         });
-
-        const responseText = result.response.text();
-        const data = JSON.parse(responseText);
 
         // Validate and normalize the response structure
         const topics = Array.isArray(data.topics) ? data.topics.slice(0, 5) : [];
@@ -238,7 +223,7 @@ ${inputContext}`;
         // Combine topics, techStack, and industry into themes array
         const themes = [...topics, ...techStack, ...industry].slice(0, 10);
 
-        console.log(`[AI Extraction] Extracted ${themes.length} themes, ${keywords.length} keywords, ${suggestedQuestions.length} questions using Gemini 1.5 Flash`);
+        console.log(`[AI Extraction] Extracted ${themes.length} themes, ${keywords.length} keywords, ${suggestedQuestions.length} questions using Llama`);
 
         // Return structured data for RAG functionality
         return {

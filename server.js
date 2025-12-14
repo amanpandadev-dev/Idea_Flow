@@ -6,10 +6,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import session from 'express-session';
 
 import { initChromaDB } from './backend/config/chroma.js';
+import { checkOllamaHealth, verifyModels } from './backend/config/ollama.js';
 
 // Import Routers
 import contextRoutes from './backend/routes/contextRoutes.js';
@@ -31,28 +31,14 @@ if (!process.env.JWT_SECRET || !process.env.REFRESH_SECRET) {
 const JWT_SECRET = process.env.JWT_SECRET;
 const REFRESH_SECRET = process.env.REFRESH_SECRET;
 
-// Initialize Google GenAI
-let ai = null;
-let aiAvailable = false;
-
-if (process.env.API_KEY) {
-  try {
-    ai = new GoogleGenerativeAI(process.env.API_KEY);
-    aiAvailable = true;
-    console.log("✅ Google GenAI initialized successfully");
-  } catch (e) {
-    console.error("❌ Failed to initialize GenAI:", e.message);
-    aiAvailable = false;
-  }
-}
-
 // Fix __dirname for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // --- Middleware ---
 app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));  // Increased limit for large search results
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Session middleware (required for agent routes)
 app.use(session({
@@ -94,7 +80,25 @@ if (process.env.DATABASE_URL) {
   console.warn("⚠️ No DATABASE_URL found in .env file.");
 }
 
+// --- Initialize ChromaDB ---
 const chromaClient = await initChromaDB();
+console.log('✅ ChromaDB initialized');
+
+// --- Health Check Ollama ---
+(async () => {
+  const ollamaHealthy = await checkOllamaHealth();
+  if (!ollamaHealthy) {
+    console.error('❌ WARNING: Ollama is not running or not accessible');
+    console.error('   Start Ollama with: ollama serve');
+  }
+
+  const models = await verifyModels();
+  if (!models.reasoning || !models.embedding) {
+    console.error('❌ WARNING: Required Ollama models not found');
+    if (!models.embedding) console.error('   Pull embedding model: ollama pull nomic-embed-text');
+    if (!models.reasoning) console.error('   Pull reasoning model: ollama pull llama3.1');
+  }
+})();
 
 // Ensure ideas_collection exists on startup
 import { ensureIdeasCollection } from './backend/services/ideaIndexingService.js';
@@ -447,11 +451,22 @@ app.post('/api/auth/reset-password', async (req, res) => {
 });
 // 5. Similar Ideas
 app.get('/api/ideas/:id/similar', auth, async (req, res) => {
-  console.log(`[Similar] Request for idea: ${req.params.id}`);
-  if (!pool) return res.status(503).json({ error: 'No database connection' });
+  const { id } = req.params; // Define id here
+  console.log('[Similar] Request for idea:', id); // Use id here
 
   try {
-    const { id } = req.params;
+    // Check if AI is available
+    // Assuming checkOllamaHealth is defined elsewhere and returns a boolean
+    const aiAvailable = await checkOllamaHealth();
+
+    if (!aiAvailable) {
+      return res.status(503).json({
+        error: 'AI service unavailable',
+        similar: []
+      });
+    }
+    if (!pool) return res.status(503).json({ error: 'No database connection' });
+
     const userId = req.user ? req.user.user.emp_id : '';
     const numericId = id.replace('IDEA-', '');
 
@@ -669,7 +684,7 @@ try {
     console.log(`\n🚀 Server running on port ${port}`);
     console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🔐 JWT Authentication: Enabled`);
-    console.log(`🤖 AI Features: ${aiAvailable ? 'Enabled' : 'Disabled'}`);
+    console.log(`🤖 AI Provider: Ollama/Llama (Local)`);
   });
 } catch (e) {
   console.error('❌ Server startup error:', e);

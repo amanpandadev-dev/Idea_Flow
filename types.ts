@@ -57,29 +57,24 @@ export interface Associate {
 }
 
 export interface Idea {
-  id: string; // Display ID (e.g., IDEA-101)
-  dbId: number; // Actual DB ID
-  title: string;
-  description: string;
-  domain: Domain;
-  status: Status;
-  businessGroup: BusinessGroup; // From Ideas Table
-  buildType: BuildType;
-  technologies: string[];
-  submissionDate: string; // ISO String
-
-  // Associate Info mapped from DB
-  associateId: number;
-  associateAccount: string; // Used for display instead of Name
-  associateBusinessGroup: string; // From Associates Table (via Idea Team/Associates)
-
-  // Metrics
-  score: number; // Actual score from DB (Mapped to 'score' column)
-  likesCount: number;
-  isLiked: boolean;
+  // Core hybrid search fields
+  id?: string;
+  title?: string;
+  description?: string;
+  domain?: string;
+  businessGroup?: string;
+  technologies?: string;
+  submissionDate?: string;
 
   // Search Relevance Metadata
   matchScore?: number;
+  hybridScore?: number;
+  scoreBreakdown?: {
+    vector?: number;
+    metadata?: number;
+    keyword?: number;
+    raw_similarity?: number;
+  };
 
   // AI Analysis Fields (Optional/Computed)
   futureScope?: string;

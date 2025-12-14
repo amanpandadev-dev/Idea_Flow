@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { generateChatCompletion, getModelNames } from '../config/ollama.js';
 import TavilyTool from './tools/tavilyTool.js';
 import InternalRAGTool from './tools/internalRAGTool.js';
@@ -6,7 +5,7 @@ import { formatResponse } from './responseFormatter.js';
 import sessionManager from '../services/sessionManager.js';
 import ConversationService from '../services/conversationService.js';
 
-const API_KEY = process.env.API_KEY;
+// No more Gemini - using Ollama/Llama only
 
 /**
  * Asynchronously executes the agent process for a given job.
@@ -52,73 +51,21 @@ export async function executeAgent(jobId, userQuery, pool, httpSessionId = null,
             toolOutputs: { internalData, externalData }
         });
 
-        // --- Step 2: Synthesize results with Gemini 1.5 Flash ---
-        let synthesizedAnswer;
-
-        // Try Gemini first, fallback to Ollama if unavailable
-        if (API_KEY && API_KEY !== 'your-google-genai-api-key-here') {
-            try {
-                const genAI = new GoogleGenerativeAI(API_KEY);
-                const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
-
-                const prompt = `You are an AI assistant helping analyze innovation ideas. Your task is to synthesize information from internal and external sources to answer user questions comprehensively.
-
-When answering:
-1. Combine insights from both internal and external sources.
-2. Cite specific ideas by their IDEA-XXX identifiers when referencing internal data (format: IDEA-123).
-3. Include URLs when referencing external sources.
-4. Be concise but thorough.
-5. If information is limited, acknowledge it.
-
-Question: ${userQuery}
-
-Internal Search Results:
-${internalData}
-
-External Search Results:
-${externalData}
-
-Please provide a comprehensive answer that synthesizes both sources.`;
-
-                const result = await model.generateContent(prompt);
-                synthesizedAnswer = result.response.text();
-                console.log(`[Agent Job ${jobId}] Synthesis completed with Gemini`);
-
-            } catch (geminiError) {
-                console.warn(`[Agent Job ${jobId}] Gemini synthesis failed, falling back to Ollama:`, geminiError.message);
-
-                // Fallback to Ollama
-                const { reasoning: modelName } = getModelNames();
-                const messages = [
-                    {
-                        role: 'system',
-                        content: `You are an AI assistant helping analyze innovation ideas. Cite ideas as IDEA-XXX and include URLs for external sources.`
-                    },
-                    {
-                        role: 'user',
-                        content: `Question: ${userQuery}\n\nInternal: ${internalData}\n\nExternal: ${externalData}\n\nSynthesize both sources.`
-                    }
-                ];
-                const completion = await generateChatCompletion(messages, modelName, { temperature: 0.7, max_tokens: 1000 });
-                synthesizedAnswer = completion.message.content;
+        // --- Step 2: Synthesize results with Llama (Ollama) ---
+        console.log(`[Agent Job ${jobId}] Using Llama for synthesis`);
+        const { reasoning: modelName } = getModelNames();
+        const messages = [
+            {
+                role: 'system',
+                content: `You are an AI assistant helping analyze innovation ideas. Cite ideas as IDEA-XXX and include URLs for external sources.`
+            },
+            {
+                role: 'user',
+                content: `Question: ${userQuery}\n\nInternal: ${internalData}\n\nExternal: ${externalData}\n\nSynthesize both sources.`
             }
-        } else {
-            // Use Ollama if Gemini not configured
-            console.log(`[Agent Job ${jobId}] Using Ollama for synthesis`);
-            const { reasoning: modelName } = getModelNames();
-            const messages = [
-                {
-                    role: 'system',
-                    content: `You are an AI assistant helping analyze innovation ideas. Cite ideas as IDEA-XXX and include URLs for external sources.`
-                },
-                {
-                    role: 'user',
-                    content: `Question: ${userQuery}\n\nInternal: ${internalData}\n\nExternal: ${externalData}\n\nSynthesize both sources.`
-                }
-            ];
-            const completion = await generateChatCompletion(messages, modelName, { temperature: 0.7, max_tokens: 1000 });
-            synthesizedAnswer = completion.message.content;
-        }
+        ];
+        const completion = await generateChatCompletion(messages, modelName, { temperature: 0.7, max_tokens: 1000 });
+        const synthesizedAnswer = completion.message.content;
 
         // Check for cancellation
         if (sessionManager.getSession(jobId)?.status === 'cancelled') return;

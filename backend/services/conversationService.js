@@ -137,7 +137,7 @@ class ConversationService {
                         LIMIT 1
                     `;
                     const msgResult = await this.db.query(msgQuery, [conv.id]);
-                    
+
                     return {
                         ...conv,
                         firstMessage: msgResult.rows[0]?.content || null
@@ -517,9 +517,9 @@ class ConversationService {
             if (matchIndex > -1) {
                 const start = Math.max(0, matchIndex - 50);
                 const end = Math.min(highlighted.length, matchIndex + 150);
-                highlighted = (start > 0 ? '...' : '') + 
-                             highlighted.substring(start, end) + 
-                             (end < highlighted.length ? '...' : '');
+                highlighted = (start > 0 ? '...' : '') +
+                    highlighted.substring(start, end) +
+                    (end < highlighted.length ? '...' : '');
             } else {
                 highlighted = highlighted.substring(0, maxLength) + '...';
             }
@@ -644,33 +644,33 @@ class ConversationService {
      */
     _exportAsMarkdown(conversation) {
         let markdown = `# ${conversation.title}\n\n`;
-        
+
         // Metadata
         markdown += `**Created:** ${new Date(conversation.created_at).toLocaleString()}\n`;
         markdown += `**Last Updated:** ${new Date(conversation.updated_at).toLocaleString()}\n`;
         markdown += `**Messages:** ${conversation.message_count}\n`;
-        
+
         if (conversation.tags && conversation.tags.length > 0) {
             markdown += `**Tags:** ${conversation.tags.join(', ')}\n`;
         }
-        
+
         markdown += `\n---\n\n`;
 
         // Messages
         conversation.messages.forEach((msg, index) => {
             const timestamp = new Date(msg.timestamp).toLocaleString();
             const role = msg.role === 'user' ? '👤 User' : '🤖 Agent';
-            
+
             markdown += `## ${role} - ${timestamp}\n\n`;
             markdown += `${msg.content}\n\n`;
-            
+
             // Add metadata if present
             if (msg.metadata && Object.keys(msg.metadata).length > 0) {
                 markdown += `<details>\n<summary>Metadata</summary>\n\n`;
                 markdown += `\`\`\`json\n${JSON.stringify(msg.metadata, null, 2)}\n\`\`\`\n\n`;
                 markdown += `</details>\n\n`;
             }
-            
+
             if (index < conversation.messages.length - 1) {
                 markdown += `---\n\n`;
             }
@@ -719,6 +719,72 @@ class ConversationService {
 
         return title;
     }
+}
+
+/**
+ * ProSearch-specific helper functions
+ * These functions derive search state from conversation message history
+ */
+
+/**
+ * Derive base query from messages (first semantic_search)
+ */
+export function deriveBaseQuery(messages) {
+    for (const msg of messages) {
+        if (msg.role === 'user' && msg.metadata?.intent === 'semantic_search') {
+            return msg.content;
+        }
+    }
+    return null;
+}
+
+/**
+ * Derive applied filters from message history
+ * Replays filter operations to compute final state
+ */
+export function deriveFiltersFromMessages(messages) {
+    const filters = {
+        technologies: [],
+        years: [],
+        domains: [],
+        businessGroups: [],
+        themes: []
+    };
+
+    for (const msg of messages) {
+        const intent = msg.metadata?.intent;
+        const filterInfo = msg.metadata?.filterInfo;
+
+        if (intent === 'apply_filter' && filterInfo) {
+            const { type, value, action } = filterInfo;
+            const normalizedType = type.endsWith('s') ? type : type + 's'; // Ensure plural
+
+            if (!filters[normalizedType]) continue;
+
+            if (action === 'REPLACE') {
+                filters[normalizedType] = Array.isArray(value) ? value : [value];
+            } else if (action === 'ADD') {
+                const values = Array.isArray(value) ? value : [value];
+                values.forEach(v => {
+                    if (!filters[normalizedType].includes(v)) {
+                        filters[normalizedType].push(v);
+                    }
+                });
+            } else if (action === 'REMOVE') {
+                const values = Array.isArray(value) ? value : [value];
+                values.forEach(v => {
+                    filters[normalizedType] = filters[normalizedType].filter(f => f !== v);
+                });
+            }
+        }
+
+        if (intent === 'reset_filters') {
+            // Clear all filters
+            Object.keys(filters).forEach(key => filters[key] = []);
+        }
+    }
+
+    return filters;
 }
 
 export default ConversationService;

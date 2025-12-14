@@ -33,6 +33,14 @@ interface SearchMetadata {
     sortBy?: string;
     sortOrder?: string;
     totalResults: number;
+    processingTime?: number;
+    nlpEnhanced?: boolean;
+    correctedQuery?: string;
+    originalQuery?: string;
+    context?: {
+        query?: string;
+        filters?: Record<string, string[]>;
+    };
 }
 
 interface ProSearchChatProps {
@@ -55,8 +63,11 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     const [results, setResults] = useState<Idea[]>([]);
     const [suggestions, setSuggestions] = useState<string[]>([]);
     const [metadata, setMetadata] = useState<SearchMetadata | null>(null);
+    const [filtersApplied, setFiltersApplied] = useState<any>({}); // From backend
+    const [resultContext, setResultContext] = useState<any>(null); // NEW: Result origin metadata
     const [isSearching, setIsSearching] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [conversationId, setConversationId] = useState<string | null>(null); // Progressive narrowing
     const [activeResultMessageId, setActiveResultMessageId] = useState<string | null>(null);
     const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
 
@@ -137,6 +148,15 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
         setMetadata(null);
         setCurrentSessionId(null);
         setActiveResultMessageId(null);
+
+        // CRITICAL: Clear conversation state for new chat
+        setConversationId(null);
+        setResultContext(null);
+        setFiltersApplied({});
+        sessionStorage.removeItem(`prosearch_conversationId_${userId}`);
+        sessionStorage.removeItem(`prosearch_results_${userId}`);
+
+        console.log('[ProSearch] New chat initialized - conversation state cleared');
     };
 
     // Load most recent session on mount or show welcome
@@ -191,13 +211,45 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
         }
     };
 
+    // Component Mount: Load chat history and restore results from sessionStorage
     useEffect(() => {
         console.log('[ProSearch] Component mounted, userId:', userId);
+
+        // PROGRESSIVE NARROWING: Check for existing conversationId
+        const savedConversationId = sessionStorage.getItem(`prosearch_conversationId_${userId}`);
+        if (savedConversationId) {
+            console.log(`[ProSearch] Found conversationId: ${savedConversationId}`);
+            setConversationId(savedConversationId);
+
+            // Reload conversation from backend
+            loadConversation(savedConversationId);
+        } else {
+            // Restore results from sessionStorage as backup
+            try {
+                const savedResults = sessionStorage.getItem(`prosearch_results_${userId}`);
+                const savedMetadata = sessionStorage.getItem(`prosearch_metadata_${userId}`);
+
+                if (savedResults) {
+                    const parsedResults = JSON.parse(savedResults);
+                    if (parsedResults && parsedResults.length > 0) {
+                        console.log(`[ProSearch] Restored ${parsedResults.length} results from sessionStorage`);
+                        setResults(parsedResults);
+                    }
+                }
+
+                if (savedMetadata) {
+                    setMetadata(JSON.parse(savedMetadata));
+                }
+            } catch (error) {
+                console.error('[ProSearch] Error restoring from sessionStorage:', error);
+            }
+        }
+
         // Load chat history if userId is provided (even if it's a string ID)
         if (userId) {
             console.log('[ProSearch] Loading chat history for user:', userId);
             loadMostRecentSession();
-            loadContext(); // Load saved context on mount
+            // loadContext() removed - not needed in hybrid search architecture
         } else {
             console.log('[ProSearch] No userId, showing welcome');
             initializeNewChat();
@@ -312,19 +364,80 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     };
 
     const loadContext = async () => {
+        setContextLoading(true);
         try {
             const response = await fetch(`/api/search/context/${userId}`);
-            if (response.ok) {
-                const data = await response.json();
-                if (data.context && data.context.savedAt) {
-                    setSavedContext(data.context);
-                    if (data.context.filters) {
-                        setExploreFilters(data.context.filters);
-                    }
-                }
+
+            // Handle 404 - endpoint doesn't exist in new hybrid search
+            if (response.status === 404) {
+                console.log('[ProSearch] Context endpoint not available (hybrid search mode)');
+                setContextLoading(false);
+                return;
             }
+
+            if (!response.ok) {
+                throw new Error('Failed to load context');
+            }
+
+            const data = await response.json();
+            if (data.filters) {
+                setExploreFilters(data.filters);
+            }
+        } catch (err) {
+            // Silently handle errors - context is optional
+            console.log('[ProSearch] Context not loaded:', err);
+        } finally {
+            setContextLoading(false);
+        }
+    };
+
+    /**
+     * Load conversation state from backend (Progressive Narrowing)
+     * Restores results WITHOUT re-searching
+     */
+    const loadConversation = async (convId: string) => {
+        try {
+            console.log(`[ProSearch] Loading conversation: ${convId}`);
+
+            const response = await fetch(`/api/search/conversation/${convId}`);
+
+            if (!response.ok) {
+                console.warn('[ProSearch] Conversation not found or expired');
+                // Clear stale conversationId
+                sessionStorage.removeItem(`prosearch_conversationId_${userId}`);
+                setConversationId(null);
+                return;
+            }
+
+            const data = await response.json();
+
+            if (data.success && data.results) {
+                console.log(`[ProSearch] Restored ${data.results.length} results from conversation`);
+
+                setResults(data.results);
+                setMetadata({
+                    intent: 'reload',
+                    totalResults: data.results.length,
+                    filters: data.filters,
+                    processingTime: 0,
+                    context: {
+                        query: data.currentQuery,
+                        filters: data.filters
+                    }
+                });
+
+                // Show reload message
+                const reloadMsg: Message = {
+                    id: `reload_${Date.now()}`,
+                    role: 'assistant',
+                    content: `Conversation restored! Showing ${data.results.length} results.`,
+                    timestamp: new Date().toISOString()
+                };
+                setMessages(prev => [...prev, reloadMsg]);
+            }
+
         } catch (error) {
-            console.error('Load context error:', error);
+            console.error('[ProSearch] Failed to load conversation:', error);
         }
     };
 
@@ -507,6 +620,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                 credentials: 'include',
                 body: JSON.stringify({
                     query: searchQuery,
+                    conversationId, // Send existing conversationId or undefined for new chat
                     additionalFilters: mappedFilters,
                     conversationHistory: conversationHistory // Include conversation context
                 })
@@ -518,6 +632,59 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
 
             const searchResults = data.results || [];
             const searchMeta = data.metadata || null;
+
+            // PROGRESSIVE NARROWING: Save conversationId
+            if (data.conversationId) {
+                setConversationId(data.conversationId);
+                sessionStorage.setItem(`prosearch_conversationId_${userId}`, data.conversationId);
+                console.log(`[ProSearch] Saved conversationId: ${data.conversationId}`);
+
+                // Log progressive narrowing stats
+                if (data.metadata?.progressive) {
+                    const prog = data.metadata.progressive;
+                    console.log(`[Progressive] Base: ${prog.baseResultCount}, Current: ${prog.currentResultCount}, Ratio: ${prog.narrowingRatio}`);
+                }
+            }
+
+            // NEW: Save result context for UI display
+            if (data.resultContext) {
+                setResultContext(data.resultContext);
+                console.log(`[ResultContext] Action: ${data.resultContext.action}, Query: "${data.resultContext.query}"`);
+            }
+
+            // Save filters from backend
+            if (data.filtersApplied) {
+                setFiltersApplied(data.filtersApplied);
+                console.log(`[FiltersApplied]`, data.filtersApplied);
+            }
+
+            // Handle clear chat request
+            if (data.intent === 'reset_chat') {
+                console.log('[ProSearch] Chat reset requested');
+
+                // Clear UI state
+                setResults([]);
+                setMetadata(null);
+                setSuggestions([]);
+                setActiveResultMessageId(null);
+                setExploreFilters({ themes: [], businessGroups: [], technologies: [] });
+
+                // Clear sessionStorage
+                sessionStorage.removeItem(`prosearch_results_${userId}`);
+                sessionStorage.removeItem(`prosearch_metadata_${userId}`);
+
+                // Add reset message
+                const resetMessage: Message = {
+                    id: `reset_${Date.now()}`,
+                    role: 'assistant',
+                    content: data.aiResponse || 'Chat cleared! Start a fresh search.',
+                    timestamp: new Date().toISOString()
+                };
+
+                setMessages(prev => [...prev, resetMessage]);
+                setIsSearching(false);
+                return;
+            }
 
             const aiMessage: Message = {
                 id: `ai_${Date.now()}`,
@@ -537,12 +704,27 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
             setMetadata(searchMeta);
             setActiveResultMessageId(aiMessage.id);
 
+            // FILTER UI SYNC: Save filters from backend
+            if (data.filtersApplied) {
+                setFiltersApplied(data.filtersApplied);
+                console.log('[ProSearch] Filters from backend:', data.filtersApplied);
+            }
+
+            // Persist results in sessionStorage for navigation persistence
+            try {
+                sessionStorage.setItem(`prosearch_results_${userId}`, JSON.stringify(searchResults));
+                sessionStorage.setItem(`prosearch_metadata_${userId}`, JSON.stringify(searchMeta));
+            } catch (error) {
+                console.warn('[ProSearch] Failed to save to sessionStorage:', error);
+            }
+
             // Save AI response with results for later retrieval
+            // NOTE: Only save result IDs to avoid database payload limits
             if (sessionId) {
                 saveMessage(sessionId, 'assistant', aiMessage.content, {
                     resultsCount: searchResults.length,
                     filters: searchMeta?.filters,
-                    results: searchResults, // Store results for session restore
+                    resultIds: searchResults.map((r: any) => r.id || r.dbId), // Only save IDs
                     searchMetadata: searchMeta
                 });
             }
@@ -559,6 +741,29 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
         } finally {
             setIsSearching(false);
         }
+    };
+
+    // Helper function to format active filters for display
+    const formatActiveFilters = (filters: any) => {
+        const parts: string[] = [];
+
+        if (filters.technologies?.length > 0) {
+            parts.push(filters.technologies.join(', '));
+        }
+        if (filters.years?.length > 0) {
+            parts.push(`year ${filters.years.join(', ')}`);
+        }
+        if (filters.domains?.length > 0) {
+            parts.push(filters.domains.join(', '));
+        }
+        if (filters.businessGroups?.length > 0) {
+            parts.push(filters.businessGroups.join(', '));
+        }
+        if (filters.themes?.length > 0) {
+            parts.push(filters.themes.join(', '));
+        }
+
+        return parts.join(', ');
     };
 
     const handleSubmit = (e: React.FormEvent) => {
@@ -861,36 +1066,76 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                 {/* Results Header */}
                 <div className="px-6 py-4 bg-white border-b border-slate-200">
                     <div className="flex items-center justify-between">
-                        <div>
+                        <div className="flex-1">
                             <h3 className="text-lg font-bold text-slate-800">
                                 Search Results {results.length > 0 && `(${results.length})`}
                             </h3>
+
+                            {/* NEW: Result Context Header */}
+                            {resultContext && results.length > 0 && (
+                                <p className="text-sm text-slate-600 mt-1">
+                                    {resultContext.action === 'base_search' && (
+                                        <>Showing results for <span className="font-medium">"{resultContext.query}"</span></>
+                                    )}
+                                    {resultContext.action === 'refine' && (
+                                        <>Refined to {results.length} results from <span className="font-medium">"{resultContext.query}"</span></>
+                                    )}
+                                    {resultContext.action === 'filter' && (
+                                        <>
+                                            Showing results for <span className="font-medium">"{resultContext.query}"</span>
+                                            {Object.values(resultContext.filters || {}).some((f: any) => f?.length > 0) && (
+                                                <> filtered by {formatActiveFilters(resultContext.filters)}</>
+                                            )}
+                                        </>
+                                    )}
+                                    {resultContext.action === 'reset' && (
+                                        <>All results for <span className="font-medium">"{resultContext.query}"</span></>
+                                    )}
+                                </p>
+                            )}
+
                             {metadata && (
                                 <div className="flex items-center gap-2 mt-2 flex-wrap">
-                                    {metadata.filters.domain && (
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs">
-                                            <Filter className="w-3 h-3" />
-                                            {metadata.filters.domain}
-                                        </span>
-                                    )}
-                                    {metadata.filters.businessGroup && (
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs">
-                                            <Building2 className="w-3 h-3" />
-                                            {metadata.filters.businessGroup}
-                                        </span>
-                                    )}
-                                    {metadata.filters.techStack && metadata.filters.techStack.length > 0 && (
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs">
+                                    {/* Technologies - from backend filtersApplied */}
+                                    {filtersApplied.technologies?.map((tech: string) => (
+                                        <span key={tech} className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-xs">
                                             <Code className="w-3 h-3" />
-                                            {metadata.filters.techStack.join(', ')}
+                                            {tech}
                                         </span>
-                                    )}
-                                    {metadata.filters.year && (
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-xs">
+                                    ))}
+
+                                    {/* Years - from backend filtersApplied */}
+                                    {filtersApplied.years?.map((year: number) => (
+                                        <span key={year} className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs">
                                             <Calendar className="w-3 h-3" />
-                                            {metadata.filters.year}
+                                            {year}
                                         </span>
-                                    )}
+                                    ))}
+
+                                    {/* Domains - from backend filtersApplied */}
+                                    {filtersApplied.domains?.map((domain: string) => (
+                                        <span key={domain} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs">
+                                            <Filter className="w-3 h-3" />
+                                            {domain}
+                                        </span>
+                                    ))}
+
+                                    {/* Business Groups - from backend filtersApplied */}
+                                    {filtersApplied.businessGroups?.map((group: string) => (
+                                        <span key={group} className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs">
+                                            <Building2 className="w-3 h-3" />
+                                            {group}
+                                        </span>
+                                    ))}
+
+                                    {/* Themes - from backend filtersApplied */}
+                                    {filtersApplied.themes?.map((theme: string) => (
+                                        <span key={theme} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs">
+                                            <Filter className="w-3 h-3" />
+                                            {theme}
+                                        </span>
+                                    ))}
+
                                     {metadata.sortBy && (
                                         <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-pink-100 text-pink-700 rounded-full text-xs">
                                             <TrendingUp className="w-3 h-3" />
@@ -937,11 +1182,29 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                                     {idea.description || 'No description available'}
                                                 </p>
                                             </div>
-                                            {idea.matchScore && idea.matchScore > 0 && (
+                                            {/* High-Recall Hybrid Score Display */}
+                                            {(idea.hybridScore !== undefined || (idea.matchScore && idea.matchScore > 0)) && (
                                                 <div className="ml-4 flex-shrink-0">
-                                                    <div className="px-3 py-1 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-full text-xs font-bold">
-                                                        {idea.matchScore}% Match
+                                                    <div
+                                                        className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-full text-xs font-bold shadow-lg flex items-center gap-2"
+                                                        title={idea.scoreBreakdown ?
+                                                            `Vector: ${(idea.scoreBreakdown.vector * 100).toFixed(0)}% | Metadata: ${(idea.scoreBreakdown.metadata * 100).toFixed(0)}% | Keyword: ${(idea.scoreBreakdown.keyword * 100).toFixed(0)}%`
+                                                            : 'Match score'}
+                                                    >
+                                                        {idea.hybridScore !== undefined ? (
+                                                            <>
+                                                                <TrendingUp className="w-3 h-3" />
+                                                                <span>{(idea.hybridScore * 100).toFixed(0)}%</span>
+                                                            </>
+                                                        ) : (
+                                                            <span>{idea.matchScore}%</span>
+                                                        )}
                                                     </div>
+                                                    {idea.scoreBreakdown && (
+                                                        <div className="text-[10px] text-slate-500 text-center mt-1">
+                                                            Hybrid
+                                                        </div>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>

@@ -110,50 +110,50 @@ const SPELL_CORRECTIONS = {
   'optmization': 'optimization',
 };
 
-// Domain-specific query expansions
+// Domain-specific query expansions (REDUCED - 2-3 intelligent synonyms only)
 const QUERY_EXPANSIONS = {
   // Monitoring & Observability
-  'monitoring': ['monitoring', 'observability', 'tracking', 'surveillance', 'health check', 'metrics', 'alerting'],
-  'health': ['health', 'wellness', 'status', 'vitals', 'diagnostics', 'monitoring'],
+  'monitoring': ['monitoring', 'observability', 'tracking'],
+  'health': ['health', 'wellness', 'diagnostics'],
 
   // Banking & Finance
-  'banking': ['banking', 'financial services', 'fintech', 'payment', 'transaction', 'finance'],
-  'payment': ['payment', 'transaction', 'billing', 'checkout', 'financial'],
-  'loan': ['loan', 'credit', 'lending', 'mortgage', 'financing'],
+  'banking': ['banking', 'finance', 'fintech'],
+  'payment': ['payment', 'transaction', 'billing'],
+  'loan': ['loan', 'credit', 'lending'],
 
   // Healthcare
-  'hospital': ['hospital', 'healthcare', 'medical', 'clinical', 'patient care', 'health services'],
-  'patient': ['patient', 'healthcare', 'medical records', 'clinical', 'treatment'],
-  'medical': ['medical', 'healthcare', 'clinical', 'diagnosis', 'treatment'],
+  'hospital': ['hospital', 'healthcare', 'medical'],
+  'patient': ['patient', 'healthcare', 'medical'],
+  'medical': ['medical', 'healthcare', 'clinical'],
 
   // E-commerce & Retail
-  'shop': ['shop', 'store', 'retail', 'e-commerce', 'marketplace', 'shopping'],
-  'cart': ['cart', 'shopping cart', 'basket', 'checkout', 'purchase'],
-  'inventory': ['inventory', 'stock', 'warehouse', 'supply chain', 'logistics'],
+  'shop': ['shop', 'store', 'retail'],
+  'cart': ['cart', 'checkout', 'basket'],
+  'inventory': ['inventory', 'stock', 'warehouse'],
 
   // Security
-  'security': ['security', 'cybersecurity', 'protection', 'authentication', 'authorization', 'encryption'],
-  'auth': ['authentication', 'authorization', 'login', 'access control', 'identity'],
+  'security': ['security', 'cybersecurity', 'protection'],
+  'auth': ['authentication', 'authorization', 'login'],
 
   // AI/ML
-  'ai': ['artificial intelligence', 'AI', 'machine learning', 'ML', 'deep learning', 'neural network'],
-  'ml': ['machine learning', 'ML', 'artificial intelligence', 'AI', 'predictive analytics'],
-  'chatbot': ['chatbot', 'conversational AI', 'virtual assistant', 'bot', 'automated chat'],
+  'ai': ['AI', 'artificial intelligence', 'machine learning'],
+  'ml': ['machine learning', 'ML', 'AI'],
+  'chatbot': ['chatbot', 'virtual assistant', 'bot'],
 
-  // Cloud & Infrastructure
-  'cloud': ['cloud', 'cloud computing', 'AWS', 'Azure', 'GCP', 'infrastructure'],
-  'server': ['server', 'backend', 'infrastructure', 'hosting', 'compute'],
-  'database': ['database', 'DB', 'data storage', 'SQL', 'NoSQL', 'data management'],
+  // Cloud & Infrastructure (CLEANED - no AWS/Azure/GCP pollution)
+  'cloud': ['cloud', 'cloud computing'],  // Removed AWS/Azure/GCP
+  'server': ['server', 'backend', 'infrastructure'],
+  'database': ['database', 'DB', 'data storage'],
 
   // Development
-  'app': ['application', 'app', 'software', 'system', 'platform'],
-  'mobile': ['mobile', 'mobile app', 'iOS', 'Android', 'smartphone'],
-  'web': ['web', 'website', 'web application', 'online', 'internet'],
+  'app': ['application', 'app', 'software'],
+  'mobile': ['mobile', 'mobile app'],
+  'web': ['web', 'website', 'web application'],
 
   // Analytics & Data
-  'analytics': ['analytics', 'data analysis', 'insights', 'reporting', 'metrics', 'KPI'],
-  'dashboard': ['dashboard', 'visualization', 'reporting', 'metrics', 'analytics'],
-  'report': ['report', 'reporting', 'analytics', 'insights', 'dashboard'],
+  'analytics': ['analytics', 'data analysis', 'insights'],
+  'dashboard': ['dashboard', 'visualization', 'reporting'],
+  'report': ['report', 'reporting', 'analytics'],
 };
 
 // Levenshtein distance for fuzzy matching
@@ -229,7 +229,7 @@ export function correctSpelling(word) {
     if (Math.abs(misspelled.length - lowerWord.length) > 2) {
       continue;
     }
-    
+
     const distance = levenshteinDistance(lowerWord, misspelled);
     if (distance < bestDistance) {
       bestDistance = distance;

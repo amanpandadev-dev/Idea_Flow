@@ -77,8 +77,8 @@ export const validateAgentQuery = (req, res, next) => {
     throw new AppError('Query too long (max 1000 characters)', 400);
   }
 
-  if (embeddingProvider && !['llama', 'grok'].includes(embeddingProvider)) {
-    throw new AppError('Invalid embedding provider. Must be "llama" or "grok"', 400);
+  if (embeddingProvider && embeddingProvider !== 'llama') {
+    throw new AppError('Invalid embedding provider. Must be "llama"', 400);
   }
 
   next();

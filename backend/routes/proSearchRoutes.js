@@ -3,33 +3,51 @@
  * 
  * Features:
  * - ChromaDB for fast vector similarity search
- * - Google Gemini for embeddings and AI responses
+ * - Ollama/Llama for embeddings and AI responses
  * - NLP query processing with spell correction
  * - Context validation to block off-topic queries
- * - Smart suggestions and query expansion
+ * - Intent classification (Llama)
+ * - Clean semantic queries (no NLP mutation)
+ * - User-controlled metadata filtering (after semantic search)
+ * - Multi-turn context management
+ * - Unlimited results
+ * - Hybrid scoring
  */
 
 import express from 'express';
-import { validateQuery, extractEntities, generateErrorMessage } from '../services/contextValidator.js';
-import { getChromaClient } from '../config/chroma.js';
-import { enhanceQuery, processQuery } from '../services/nlpQueryProcessor.js';
+import pg from 'pg';
+import { getChromaClient, initChromaDB } from '../config/chroma.js';
+import { getEmbeddingVector } from '../services/embeddingProvider.js';
+import { generateText } from '../config/ollama.js';
+
+// Hybrid search services
+import { classifyIntent, INTENTS } from '../services/intentClassifier.js';
+import { buildSemanticQuery, buildRefinedQuery } from '../services/queryBuilder.js';
+import { applyMetadataFilters, countActiveFilters } from '../services/metadataFilter.js';
+import { extractFilterInfo, normalizeFilterType, normalizeFilterValue } from '../services/filterExtractor.js';
 import {
-    generateGeminiEmbeddingWithRetry,
-    generateText,
-    isGeminiAvailable,
-    initializeGemini
-} from '../config/gemini.js';
-import { contextsRouter } from './proSearchContextRoutes.js';
+    getOrCreateContext,
+    hasContext,
+    getContext,
+    getSessionByConversationId
+} from '../services/sessionContextManager.js';
+import ConversationService, { deriveBaseQuery, deriveFiltersFromMessages } from '../services/conversationService.js';
+import {
+    calculateHybridScore,
+    calculateMetadataScore,
+    calculateKeywordScore,
+    formatResults,
+    generateConversationalResponse,
+    generateSearchResponse,
+    generateSmartSuggestions
+} from '../services/hybridSearchHelpers.js';
 
 const router = express.Router();
+const { Pool } = pg;
 
-console.log('✅ [Pro Search] Routes loaded with ChromaDB + Gemini + NLP');
-
-// Mount context management routes
-router.use('/', contextsRouter);
-
-// Ensure Gemini is initialized
-initializeGemini();
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL
+});
 
 // Cache for ideas collection
 let ideasCollection = null;
@@ -37,8 +55,20 @@ let lastIndexTime = null;
 let isIndexing = false; // Prevent concurrent indexing
 const INDEX_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
 
+// Optimized search configuration for Llama embeddings
+const CONFIG = {
+    TOP_K_INITIAL: 250,        // Reduced for performance (was 500)
+    COSINE_THRESHOLD: 0.50,    // Lowered for Llama embeddings (was 0.70)
+    MIN_RESULTS_WARNING: 5     // Warn if < 5 results after filtering
+};
+
+// Embedding cache for performance
+const embeddingCache = new Map();  // sessionId:query → embedding
+const CACHE_MAX_SIZE = 100;
+const CACHE_TTL_MS = 30 * 60 * 1000;  // 30 minutes
+
 /**
- * Generate embedding using Gemini (with robust fallback)
+ * Generate embedding using Ollama/Llama
  */
 async function getEmbedding(text) {
     if (!text || text.trim().length === 0) {
@@ -48,23 +78,14 @@ async function getEmbedding(text) {
     // Truncate to avoid token limits
     const truncatedText = text.substring(0, 1500);
 
-    // Try Gemini first, but with quick timeout
-    if (isGeminiAvailable()) {
-        try {
-            const embedding = await Promise.race([
-                generateGeminiEmbeddingWithRetry(truncatedText, 2), // Max 2 retries
-                new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Embedding timeout')), 10000)
-                )
-            ]);
-            return embedding;
-        } catch (error) {
-            console.warn('[Pro Search] Gemini embedding failed, using local fallback');
-        }
+    try {
+        // Use Ollama embedding (768-dim)
+        return await getEmbeddingVector(truncatedText, 'llama');
+    } catch (error) {
+        console.warn('[Pro Search] Ollama embedding failed:', error.message);
+        // Fallback to local TF-IDF if Ollama unavailable
+        return generateLocalEmbedding(truncatedText);
     }
-
-    // Fallback: TF-IDF style embedding (more meaningful than simple hash)
-    return generateLocalEmbedding(truncatedText);
 }
 
 /**
@@ -269,9 +290,592 @@ async function indexIdeasToChroma(pool) {
 }
 
 /**
- * Semantic search using ChromaDB
+ * Conversation Rehydration Endpoint
+ * GET /api/search/conversation/:conversationId
+ * 
+ * Reconstructs search results from PostgreSQL conversation history
+ * WITHOUT storing results in DB - uses ChromaDB + progressive filtering
  */
-async function semanticSearch(query, filters = {}, topK = 25) {
+router.get('/conversation/:conversationId', async (req, res) => {
+    try {
+        const { conversationId } = req.params;
+        const userId = req.query.userId || 'anonymous';
+
+        console.log(`\n[Rehydration] Loading conversation: ${conversationId.substring(0, 20)}...`);
+
+        // Validate UUID format (reject old-format conversationIds)
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(conversationId)) {
+            console.warn(`[Rehydration] Invalid UUID format: ${conversationId}`);
+            return res.status(404).json({
+                error: true,
+                message: 'Conversation not found (invalid ID format)',
+                hint: 'Please start a new chat'
+            });
+        }
+
+        // Step 1: Get conversation messages from PostgreSQL
+        const conversationService = new ConversationService(pool);
+        const conversation = await conversationService.getConversationById(conversationId, userId);
+
+        if (!conversation || !conversation.messages) {
+            console.warn(`[Rehydration] Conversation not found: ${conversationId}`);
+            return res.status(404).json({
+                error: true,
+                message: 'Conversation not found'
+            });
+        }
+
+        const messages = conversation.messages;
+        console.log(`[Rehydration] Loaded ${messages.length} messages from DB`);
+
+        // Step 2: Derive state from messages
+        const baseQuery = deriveBaseQuery(messages);
+        const appliedFilters = deriveFiltersFromMessages(messages);
+
+        if (!baseQuery) {
+            console.warn(`[Rehydration] No base query found in conversation`);
+            return res.json({
+                success: true,
+                results: [],
+                resultContext: {
+                    query: '',
+                    action: 'base_search',
+                    conversationId,
+                    filters: {}
+                },
+                messages: messages.map(m => ({ role: m.role, content: m.content }))
+            });
+        }
+
+        console.log(`[Rehydration] Base query: "${baseQuery}"`);
+        console.log(`[Rehydration] Applied filters:`, appliedFilters);
+
+        // Step 3: Re-run semantic search on ChromaDB
+        const embeddingStart = Date.now();
+        const embedding = await generateEmbedding(baseQuery);
+        const embeddingTime = Date.now() - embeddingStart;
+
+        const chromaResults = await chromaCollections.ideas.query({
+            queryEmbeddings: [embedding],
+            nResults: 500
+        });
+
+        let results = [];
+        const threshold = 0.40;
+
+        if (chromaResults.ids[0] && chromaResults.ids[0].length > 0) {
+            for (let i = 0; i < chromaResults.ids[0].length; i++) {
+                const distance = chromaResults.distances[0][i];
+                const similarity = 1 - distance;
+
+                if (similarity >= threshold) {
+                    results.push({
+                        id: chromaResults.ids[0][i],
+                        document: chromaResults.documents[0][i],
+                        metadata: chromaResults.metadatas[0][i],
+                        similarity
+                    });
+                }
+            }
+        }
+
+        console.log(`[Rehydration] ChromaDB: ${results.length} results (${embeddingTime}ms)`);
+
+        // Step 4: Apply filters progressively
+        if (Object.values(appliedFilters).some(f => f && f.length > 0)) {
+            const beforeFiltering = results.length;
+            results = applyMetadataFilters(results, appliedFilters);
+            console.log(`[Rehydration] Filtered: ${beforeFiltering} → ${results.length}`);
+        }
+
+        // Step 5: Format response
+        const formattedResults = formatResults(results);
+
+        console.log(`[Rehydration] Complete: ${formattedResults.length} results restored\n`);
+
+        res.json({
+            success: true,
+            results: formattedResults,
+            resultContext: {
+                query: baseQuery,
+                action: 'reload',
+                conversationId,
+                filters: appliedFilters
+            },
+            filtersApplied: appliedFilters,
+            messages: messages.map(m => ({ role: m.role, content: m.content }))
+        });
+
+    } catch (error) {
+        console.error('[Rehydration] Error:', error);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to rehydrate conversation'
+        });
+    }
+});
+
+/**
+ * Hybrid Conversational Search Endpoint
+ * Features:
+ * - Intent classification (Llama)
+ * - Clean semantic queries (no NLP mutation)
+ * - User-controlled metadata filtering
+ * - Multi-turn context management
+ * - Unlimited results
+ * - Hybrid scoring
+ */
+router.post('/conversational', async (req, res) => {
+    const startTime = Date.now();
+
+    try {
+        const { query, conversationId, conversationHistory = [] } = req.body;
+        const userId = req.user?.id || req.session?.userId || req.headers['x-session-id'] || 'anonymous';
+
+        if (!query || query.trim().length === 0) {
+            return res.status(400).json({
+                error: true,
+                message: 'Query cannot be empty'
+            });
+        }
+
+        const trimmedQuery = query.trim();
+        console.log(`\n========== PROSEARCH ==========`);
+        console.log(`[User: ${userId}] Query: "${trimmedQuery}"`);
+        console.log(`[Conversation: ${conversationId || 'NEW'}]`);
+
+        // STEP 1: Get or create conversation-scoped context
+        const context = getOrCreateContext(userId, conversationId);
+
+        // CRITICAL: Persist conversation to PostgreSQL if new
+        if (!conversationId) {
+            try {
+                const conversationService = new ConversationService(pool);
+                const newConversation = await conversationService.createConversation(userId, {
+                    title: trimmedQuery.substring(0, 50),
+                    sessionId: userId,
+                    embeddingProvider: 'llama'
+                });
+
+                // Use DB-generated UUID as conversationId
+                conversationId = newConversation.id;
+                context.conversationId = conversationId;
+
+                console.log(`[DB] Created conversation in PostgreSQL: ${conversationId}`);
+            } catch (dbError) {
+                console.warn(`[DB] Failed to create conversation in PostgreSQL:`, dbError.message);
+                // Continue with in-memory context even if DB save fails
+            }
+        }
+
+        // Save user message to PostgreSQL
+        try {
+            const conversationService = new ConversationService(pool);
+            await conversationService.addMessage(conversationId, userId, {
+                role: 'user',
+                content: trimmedQuery,
+                metadata: { intent: 'pending' } // Will update after classification
+            });
+            console.log(`[DB] Saved user message to PostgreSQL`);
+        } catch (dbError) {
+            console.warn(`[DB] Failed to save message:`, dbError.message);
+        }
+
+        // STEP 2: Classify intent (Stage 1)
+        let intent = await classifyIntent(trimmedQuery, context.intentHistory);
+        context.addIntent(intent, trimmedQuery);
+
+        console.log(`[Intent Stage 1] ${intent}`);
+
+        // STAGE 2: Context-Aware Intent Override (WITH CONVERSATION GUARD)
+        const hasExistingContext = hasContext(userId, conversationId) && context.baseResults.length > 0;
+
+        if (hasExistingContext && intent === INTENTS.SEMANTIC_SEARCH) {
+            const filterKeywords = ['using', 'from', 'year', 'domain', 'tech', 'language', 'only', 'also', 'created', 'at', 'in', 'with'];
+            const isShort = trimmedQuery.split(' ').length <= 4;
+            const hasFilterKeyword = filterKeywords.some(kw => trimmedQuery.toLowerCase().includes(kw));
+
+            if (isShort || hasFilterKeyword) {
+                console.log(`[Intent Override] semantic_search → refine_search (conversational context)`);
+                intent = INTENTS.REFINE_SEARCH;
+            }
+        }
+
+        console.log(`[Intent Final] ${intent}`);
+
+        let semanticResults = [];
+        let finalResults = [];
+
+        // STEP 3: Route based on intent
+        switch (intent) {
+            case INTENTS.SEMANTIC_SEARCH:
+                // Run semantic search with clean query (no mutation!)
+                const cleanQuery = buildSemanticQuery(trimmedQuery);
+
+                console.log(`[Semantic] Searching with clean query: "${cleanQuery}"`);
+                console.log(`[Progressive] Phase 1: Initial semantic search`);
+
+                // Generate embedding
+                const embedding = await getEmbeddingVector(cleanQuery, 'llama');
+
+                // Query ChromaDB
+                const chromaClient = getChromaClient();
+                const collection = await chromaClient.getOrCreateCollection({ name: 'ideas_search' });
+
+                const chromaResults = await collection.query({
+                    queryEmbeddings: [embedding],
+                    nResults: 200  // High recall
+                });
+
+                // Map and filter by threshold
+                semanticResults = chromaResults.ids[0].map((id, i) => ({
+                    id,
+                    document: chromaResults.documents[0][i],
+                    metadata: chromaResults.metadatas[0][i],
+                    similarity: 1 - chromaResults.distances[0][i]
+                })).filter(r => r.similarity >= 0.40);
+
+                console.log(`[Semantic] ${semanticResults.length} results above threshold 0.40`);
+
+                // PROGRESSIVE NARROWING: Set as immutable base results
+                context.setBaseResults(cleanQuery, semanticResults);
+                console.log(`[Progressive] Base result set established: ${semanticResults.length} items`);
+
+                break;
+
+            case INTENTS.APPLY_FILTER:
+                // Extract filter info with action (REPLACE/ADD/REMOVE)
+                const filterInfo = await extractFilterInfo(trimmedQuery);
+                if (filterInfo.type && filterInfo.value) {
+                    const normalizedType = normalizeFilterType(filterInfo.type);
+                    const normalizedValue = normalizeFilterValue(filterInfo.value, normalizedType);
+
+                    if (normalizedType && normalizedValue) {
+                        // Handle action: REPLACE, ADD, or REMOVE
+                        switch (filterInfo.action) {
+                            case 'REPLACE':
+                                context.replaceFilters(normalizedType, normalizedValue);
+                                break;
+
+                            case 'REMOVE':
+                                if (Array.isArray(normalizedValue)) {
+                                    normalizedValue.forEach(v => context.removeFilter(normalizedType, v));
+                                } else {
+                                    context.removeFilter(normalizedType, normalizedValue);
+                                }
+                                break;
+
+                            case 'ADD':
+                            default:
+                                context.addFilter(normalizedType, normalizedValue);
+                                break;
+                        }
+                    }
+                }
+
+                // IN-MEMORY FILTER on currentResults
+                const filterStart = Date.now();
+                semanticResults = context.narrowResults(result => {
+                    return applyMetadataFilters([result], context.filters).length > 0;
+                });
+
+                const filterTime = Date.now() - filterStart;
+
+                // Clean summary with active filters
+                const activeFilters = Object.entries(context.filters)
+                    .filter(([_, values]) => values.length > 0)
+                    .map(([key, values]) => `${key}:${values.join(',')}`)
+                    .join(' ');
+
+                console.log(`[Filter] {${activeFilters}} → ${context.previousCount} → ${semanticResults.length} (${filterTime}ms)`);
+
+                break;
+
+            case INTENTS.REMOVE_FILTER:
+                // Extract and remove filter
+                const removeInfo = await extractFilterInfo(trimmedQuery);
+                if (removeInfo.type) {
+                    const normalizedType = normalizeFilterType(removeInfo.type);
+
+                    if (removeInfo.value) {
+                        const normalizedValue = normalizeFilterValue(removeInfo.value, normalizedType);
+                        context.removeFilter(normalizedType, normalizedValue);
+                        console.log(`[Filter] Removed: ${normalizedType} = ${normalizedValue}`);
+                    } else {
+                        context.removeFilterType(normalizedType);
+                        console.log(`[Filter] Removed all ${normalizedType} filters`);
+                    }
+                }
+
+                // CRITICAL: Reset to base and reapply REMAINING filters
+                console.log(`[Filter] Resetting to base and reapplying remaining filters`);
+                context.resetToBase();
+
+                // Re-narrow with remaining filters
+                semanticResults = context.narrowResults(result => {
+                    return applyMetadataFilters([result], context.filters).length > 0;
+                });
+
+                break;
+
+            case INTENTS.RESET_FILTERS:
+                console.log(`[Progressive] Resetting to base results`);
+                context.resetToBase();
+                semanticResults = context.getCurrentResults();
+                console.log(`[Reset] Restored all ${semanticResults.length} base results`);
+                break;
+
+            case INTENTS.REFINE_SEARCH:
+                // GUARD: Prevent operating without base results
+                if (context.baseResults.length === 0) {
+                    console.warn('[Refine] No base results - cannot refine');
+                    semanticResults = [];
+                    break;
+                }
+
+                const refinedQuery = buildRefinedQuery(context.semanticQuery, trimmedQuery);
+                context.updateSemanticQuery(refinedQuery);
+
+                const refinementStart = Date.now();
+
+                // CRITICAL: Extract implicit filters from refinement query
+                // "using java" → technologies: ["Java"]
+                // "from 2024" → years: [2024]
+                const implicitFilterInfo = extractFilterInfo(trimmedQuery);
+
+                if (implicitFilterInfo && implicitFilterInfo.value) {
+                    const { type, value, action } = implicitFilterInfo;
+                    const normalizedType = normalizeFilterType(type);
+                    const normalizedValue = normalizeFilterValue(type, value);
+
+                    console.log(`[Refine Filter] Extracted: ${normalizedType} = ${normalizedValue} (${action})`);
+
+                    if (action === 'REPLACE') {
+                        context.replaceFilters(normalizedType, normalizedValue);
+                    } else if (action === 'ADD') {
+                        context.addFilter(normalizedType, normalizedValue);
+                    } else if (action === 'REMOVE') {
+                        context.removeFilter(normalizedType, normalizedValue);
+                    }
+                }
+
+                // IN-MEMORY KEYWORD FILTER on currentResults
+                const queryTerms = trimmedQuery.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+
+                semanticResults = context.narrowResults(result => {
+                    const metadata = result.metadata || {};
+                    const searchText = [
+                        metadata.title || '',
+                        metadata.summary || '',
+                        metadata.domain || '',
+                        metadata.technologies || '',
+                        result.document || ''
+                    ].join(' ').toLowerCase();
+
+                    // Match if ANY query term is found
+                    return queryTerms.some(term => searchText.includes(term));
+                });
+
+                const refinementTime = Date.now() - refinementStart;
+
+                // Clean summary log
+                console.log(`[Refine] "${trimmedQuery}" → ${context.previousCount} → ${semanticResults.length} (${refinementTime}ms)`);
+
+                if (refinementTime > 300) {
+                    console.warn(`[Performance] Refinement ${refinementTime}ms > 300ms target`);
+                }
+
+                break;
+
+            case INTENTS.ASK_QUESTION:
+            case INTENTS.FREE_FORM_CHAT:
+                // Check if user wants to clear chat/conversation
+                const clearKeywords = ['clear chat', 'clear conversation', 'clear all', 'reset chat', 'start over', 'new chat'];
+                const queryLower = trimmedQuery.toLowerCase();
+                const isClearRequest = clearKeywords.some(keyword => queryLower.includes(keyword));
+
+                console.log(`[Chat] Query: "${trimmedQuery}", Lower: "${queryLower}", IsClear: ${isClearRequest}`);
+
+                if (isClearRequest) {
+                    // Clear everything
+                    context.resetFilters();
+                    context.updateSemanticQuery('');
+                    context.cacheResults([]);
+
+                    console.log('[Chat] Cleared conversation context');
+
+                    const duration = Date.now() - startTime;
+                    return res.json({
+                        intent: 'reset_chat',
+                        results: [],
+                        aiResponse: 'Chat cleared! You can start a fresh search.',
+                        metadata: {
+                            intent: 'reset_chat',
+                            totalResults: 0,
+                            processingTime: duration,
+                            context: {
+                                query: '',
+                                filters: {}
+                            }
+                        }
+                    });
+                }
+
+                // Regular conversational response
+                const chatResponse = await generateConversationalResponse(trimmedQuery, context);
+                const duration = Date.now() - startTime;
+
+                return res.json({
+                    intent,
+                    results: formatResults(context.cachedResults),
+                    aiResponse: chatResponse,
+                    metadata: {
+                        intent,
+                        totalResults: context.cachedResults.length,
+                        processingTime: duration,
+                        context: {
+                            query: context.semanticQuery,
+                            filters: context.getFilterSummary()
+                        }
+                    }
+                });
+        }
+
+        // STEP 4: Apply metadata filters (AFTER semantic search)
+        finalResults = applyMetadataFilters(semanticResults, context.filters);
+
+        console.log(`[Metadata Filter] ${finalResults.length} of ${semanticResults.length} results passed filters`);
+
+        //STEP 5: Apply hybrid scoring
+        const scoredResults = finalResults.map(result => {
+            const hybridScore = calculateHybridScore(
+                result.similarity,
+                result.metadata,
+                context.filters,
+                trimmedQuery
+            );
+
+            return {
+                ...result,
+                hybridScore,
+                scoreBreakdown: {
+                    vector: result.similarity,
+                    metadata: calculateMetadataScore(result.metadata, context.filters),
+                    keyword: calculateKeywordScore(result.metadata, trimmedQuery),
+                    raw_similarity: result.similarity
+                }
+            };
+        });
+
+        // STEP 6: Sort by hybrid score
+        scoredResults.sort((a, b) => b.hybridScore - a.hybridScore);
+
+        console.log(`[Hybrid Scoring] Ranked ${scoredResults.length} results`);
+
+        // STEP 7: Format results for frontend
+        const formattedResults = formatResults(scoredResults);
+
+        // STEP 8: Generate AI response
+        const aiResponse = await generateSearchResponse(trimmedQuery, formattedResults, context);
+
+        // STEP 9: Generate suggestions
+        const suggestions = generateSmartSuggestions(formattedResults, context);
+
+        // STEP 10: Determine action type for result context
+        let actionType = 'base_search';
+        if (intent === INTENTS.REFINE_SEARCH) actionType = 'refine';
+        else if (intent === INTENTS.APPLY_FILTER || intent === INTENTS.REMOVE_FILTER) actionType = 'filter';
+        else if (intent === INTENTS.RESET_FILTERS) actionType = 'reset';
+
+        context.lastActionType = actionType;
+
+        const duration = Date.now() - startTime;
+
+        console.log(`[Complete] ${formattedResults.length} results in ${duration}ms`);
+        console.log(`====================================\n`);
+
+        // Save assistant response to PostgreSQL
+        try {
+            const conversationService = new ConversationService(pool);
+            await conversationService.addMessage(conversationId, userId, {
+                role: 'agent',
+                content: aiResponse,
+                metadata: {
+                    intent,
+                    resultCount: formattedResults.length,
+                    filters: context.filters,
+                    action: actionType
+                }
+            });
+            console.log(`[DB] Saved assistant message to PostgreSQL`);
+        } catch (dbError) {
+            console.warn(`[DB] Failed to save assistant message:`, dbError.message);
+        }
+
+        // Return UNLIMITED results
+        res.json({
+            intent,
+            conversationId: context.conversationId,  // For frontend persistence
+            results: formattedResults,  // ALL results, no limit!
+            aiResponse,
+            suggestions,
+            filtersApplied: context.filters,  // ← For UI synchronization
+            resultContext: {  // ← NEW: Result origin metadata
+                query: context.baseQuery,
+                action: actionType,
+                conversationId: context.conversationId,
+                filters: context.filters
+            },
+            narrowingCounts: {  // ← Show true narrowing
+                base: context.baseResultIds.length,
+                before: context.previousCount,
+                after: context.currentResultIds.length
+            },
+            metadata: {
+                intent,
+                totalResults: formattedResults.length,
+                processingTime: duration,
+                context: {
+                    query: context.semanticQuery,
+                    filters: context.getFilterSummary()
+                },
+                searchConfig: {
+                    topKInitial: 200,
+                    threshold: 0.40,
+                    hybridScoringEnabled: true
+                },
+                // Progressive narrowing stats
+                progressive: {
+                    baseResultCount: context.baseResultIds.length,
+                    currentResultCount: context.currentResultIds.length,
+                    narrowingRatio: context.baseResultIds.length > 0
+                        ? (context.currentResultIds.length / context.baseResultIds.length * 100).toFixed(1) + '%'
+                        : 'N/A'
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('[Hybrid Search] Error:', error);
+        const duration = Date.now() - startTime;
+
+        res.status(500).json({
+            error: true,
+            message: 'Search failed',
+            details: error.message,
+            metadata: {
+                processingTime: duration
+            }
+        });
+    }
+});
+
+/**
+ * High-Recall Semantic Search with Threshold-Based Filtering
+ * Returns ALL results above cosine similarity threshold (no hard limit)
+ */
+async function semanticSearch(query, filters = {}, context = null, threshold = CONFIG.COSINE_THRESHOLD) {
     try {
         const chromaClient = getChromaClient();
 
@@ -279,70 +883,129 @@ async function semanticSearch(query, filters = {}, topK = 25) {
             return [];
         }
 
+        console.log(`[Pro Search] High-recall search: query="${query}", threshold=${threshold}, topK=${CONFIG.TOP_K_INITIAL}`);
+
         // Generate query embedding
         const queryEmbedding = await getEmbedding(query);
 
-        // Query ChromaDB
-        const results = chromaClient.query('ideas_search', queryEmbedding, topK);
+        // STEP 1: Retrieve large candidate set (high recall)
+        const results = chromaClient.query('ideas_search', queryEmbedding, CONFIG.TOP_K_INITIAL);
 
         if (!results || results.documents.length === 0) {
+            console.log('[Pro Search] No candidates found in ChromaDB');
             return [];
         }
 
-        // Map results with similarity scores
-        const ideas = results.documents.map((doc, idx) => {
+        console.log(`[Pro Search] Retrieved ${results.documents.length} candidates from ChromaDB`);
+
+        // STEP 2: Map results with similarity scores (distance → similarity)
+        const candidates = results.documents.map((doc, idx) => {
             const metadata = results.metadatas[idx] || {};
             const distance = results.distances[idx] || 1;
-            const similarity = Math.max(0, Math.round((1 - distance) * 100));
+            const similarity = Math.max(0, 1 - distance);  // Keep as float [0, 1]
             const dbId = metadata.idea_id;
 
             return {
-                id: `IDEA-${dbId}`, // Format as string ID for frontend
-                dbId: dbId, // Keep numeric ID for database operations
-                title: metadata.title || 'Untitled',
-                description: metadata.summary || doc.substring(0, 300),
-                domain: metadata.domain || 'General',
-                businessGroup: metadata.businessGroup || 'Unknown',
-                technologies: metadata.technologies || '',
-                score: metadata.score || 0,
-                submissionDate: metadata.created_at || new Date().toISOString(),
-                matchScore: similarity
+                similarity,  // Raw cosine similarity
+                idea: {
+                    id: `IDEA-${dbId}`,
+                    dbId: dbId,
+                    title: metadata.title || 'Untitled',
+                    description: metadata.summary || doc.substring(0, 300),
+                    domain: metadata.domain || 'General',
+                    businessGroup: metadata.businessGroup || 'Unknown',
+                    technologies: metadata.technologies || '',
+                    score: metadata.score || 0,
+                    submissionDate: metadata.created_at || new Date().toISOString()
+                }
             };
         });
 
-        // Apply filters
-        let filtered = ideas;
+        // STEP 3: Apply threshold filtering (NO HARD LIMIT)
+        const thresholdFiltered = candidates.filter(result => result.similarity >= threshold);
+        console.log(`[Pro Search] ${thresholdFiltered.length} results after threshold filter (>= ${threshold})`);
 
-        if (filters.domain?.length > 0) {
-            const domains = Array.isArray(filters.domain) ? filters.domain : [filters.domain];
-            filtered = filtered.filter(idea =>
-                domains.some(d => idea.domain.toLowerCase().includes(d.toLowerCase()))
-            );
+        if (thresholdFiltered.length === 0) {
+            console.log('[Pro Search] No results above threshold');
+            return [];
         }
 
-        if (filters.businessGroup?.length > 0) {
-            const groups = Array.isArray(filters.businessGroup) ? filters.businessGroup : [filters.businessGroup];
-            filtered = filtered.filter(idea =>
-                groups.some(g => idea.businessGroup.toLowerCase().includes(g.toLowerCase()))
-            );
-        }
+        // STEP 4: Apply OR-based metadata filtering (flexible matching)
+        let finalFiltered = thresholdFiltered;
 
-        if (filters.techStack?.length > 0) {
-            const techs = Array.isArray(filters.techStack) ? filters.techStack : [filters.techStack];
-            filtered = filtered.filter(idea =>
-                techs.some(t => idea.technologies.toLowerCase().includes(t.toLowerCase()))
-            );
-        }
+        // Only apply filters if they exist
+        const hasFilters =
+            (filters.domain?.length > 0) ||
+            (filters.businessGroup?.length > 0) ||
+            (filters.techStack?.length > 0) ||
+            (filters.year);
 
-        if (filters.year) {
-            filtered = filtered.filter(idea => {
-                const year = new Date(idea.submissionDate).getFullYear();
-                return year === filters.year;
+        if (hasFilters) {
+            finalFiltered = thresholdFiltered.filter(result => {
+                let matchCount = 0;
+                let totalFilters = 0;
+
+                // Domain filter (OR logic)
+                if (filters.domain?.length > 0) {
+                    totalFilters++;
+                    const domains = Array.isArray(filters.domain) ? filters.domain : [filters.domain];
+                    if (domains.some(d => result.idea.domain.toLowerCase().includes(d.toLowerCase()))) {
+                        matchCount++;
+                    }
+                }
+
+                // Business Group filter (OR logic)
+                if (filters.businessGroup?.length > 0) {
+                    totalFilters++;
+                    const groups = Array.isArray(filters.businessGroup) ? filters.businessGroup : [filters.businessGroup];
+                    if (groups.some(g => result.idea.businessGroup.toLowerCase().includes(g.toLowerCase()))) {
+                        matchCount++;
+                    }
+                }
+
+                // Technology filter (OR logic)
+                if (filters.techStack?.length > 0) {
+                    totalFilters++;
+                    const techs = Array.isArray(filters.techStack) ? filters.techStack : [filters.techStack];
+                    if (techs.some(t => result.idea.technologies.toLowerCase().includes(t.toLowerCase()))) {
+                        matchCount++;
+                    }
+                }
+
+                // Year filter
+                if (filters.year) {
+                    totalFilters++;
+                    const year = new Date(result.idea.submissionDate).getFullYear();
+                    if (year === filters.year) {
+                        matchCount++;
+                    }
+                }
+
+                // Return if at least ONE filter matches (OR logic)
+                return matchCount > 0;
             });
+
+            console.log(`[Pro Search] ${finalFiltered.length} results after OR-based metadata filtering (matched ${finalFiltered.length} of ${thresholdFiltered.length})`);
+        } else {
+            console.log(`[Pro Search] No metadata filters applied, keeping all ${thresholdFiltered.length} threshold-filtered results`);
         }
 
-        // Sort by match score
-        return filtered.sort((a, b) => b.matchScore - a.matchScore);
+        // STEP 5: Apply hybrid scoring and re-rank (if context available)
+        if (context && finalFiltered.length > 0) {
+            const reranked = applyThresholdAndRerank(finalFiltered, query, context, threshold);
+            console.log(`[Pro Search] Hybrid scoring complete, returning ${reranked.length} ranked results`);
+            return reranked;
+        }
+
+        // Fallback: sort by similarity only
+        const sorted = metadataFiltered.sort((a, b) => b.similarity - a.similarity);
+
+        // Convert to legacy format for backward compatibility
+        return sorted.map(result => ({
+            ...result.idea,
+            matchScore: Math.round(result.similarity * 100),  // Convert to percentage
+            similarity: result.similarity  // Keep raw float for frontend
+        }));
 
     } catch (error) {
         console.error('[Pro Search] Semantic search error:', error.message);
@@ -382,7 +1045,7 @@ function parseFilters(query, additionalFilters = {}) {
 }
 
 /**
- * Generate AI-powered response using Gemini
+ * Generate AI-powered response using Llama
  */
 async function generateAIResponse(query, results, filters, nlpResult) {
     const count = results.length;
@@ -397,8 +1060,8 @@ async function generateAIResponse(query, results, filters, nlpResult) {
         return response;
     }
 
-    // Try AI-generated response
-    if (isGeminiAvailable() && count > 0) {
+    // Try AI-generated response with Llama
+    if (count > 0) {
         try {
             const topIdeas = results.slice(0, 3).map(r => r.title).join(', ');
             const domains = [...new Set(results.slice(0, 5).map(r => r.domain))].join(', ');
@@ -544,158 +1207,49 @@ router.post('/conversational', async (req, res) => {
             });
         }
 
-        // STEP 2: Index ideas to ChromaDB (if needed)
-        await indexIdeasToChroma(pool);
+        // STEP 2.5: Get/Create conversation context for this user
+        const userId = req.user?.id || req.session?.userId || 'anonymous';
+        const userContext = contextManager.getContext(userId);
 
-        // STEP 2.5: Enhance query with conversation context and extract cumulative filters
-        let enhancedQuery = trimmedQuery;
-        let cumulativeFilters = { ...additionalFilters }; // Start with explicit filters
+        // Extract constraints from current query and update context
+        await contextManager.extractConstraints(trimmedQuery, userContext);
 
-        if (conversationHistory.length > 0 && isGeminiAvailable()) {
-            try {
-                // Build context from conversation (exclude welcome messages)
-                const contextMessages = conversationHistory
-                    .filter(msg => msg.content && !msg.content.includes('Hello! I can help'))
-                    .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
-                    .join('\n');
+        // Synthesize enhanced query from current message + context
+        const enhancedQuery = userContext.synthesizeQuery(trimmedQuery);
+        console.log(`[Pro Search] Synthesized query: "${enhancedQuery}"`);
 
-                if (contextMessages.length > 0) {
-                    // Extract cumulative filters from conversation
-                    const filterExtractionPrompt = `Analyze this conversation and extract ALL search criteria mentioned:
-${contextMessages}
+        // Get metadata filters from context
+        const contextFilters = userContext.getMetadataFilters();
+        const filters = { ...additionalFilters, ...contextFilters };
 
-New query: "${trimmedQuery}"
-
-Extract ALL filters mentioned throughout the conversation in JSON format:
-{
-  "domains": [list of domains/themes like "AI", "healthcare", "finance"],
-  "technologies": [list of technologies like "React", "Python"],
-  "years": [list of years like 2024, 2023],
-  "businessGroups": [list of business groups]
-}
-
-Only return the JSON object, nothing else.`;
-
-                    const filterJson = await generateText(filterExtractionPrompt, {
-                        maxOutputTokens: 150,
-                        temperature: 0.2
-                    });
-
-                    // Parse extracted filters
-                    try {
-                        const cleanJson = filterJson.trim().replace(/```json\n?|```/g, '');
-                        const extractedFilters = JSON.parse(cleanJson);
-
-                        // Merge extracted filters with existing ones
-                        if (extractedFilters.domains && extractedFilters.domains.length > 0) {
-                            cumulativeFilters.domain = cumulativeFilters.domain || [];
-                            if (!Array.isArray(cumulativeFilters.domain)) {
-                                cumulativeFilters.domain = [cumulativeFilters.domain];
-                            }
-                            extractedFilters.domains.forEach(d => {
-                                if (!cumulativeFilters.domain.includes(d)) {
-                                    cumulativeFilters.domain.push(d);
-                                }
-                            });
-                        }
-
-                        if (extractedFilters.technologies && extractedFilters.technologies.length > 0) {
-                            cumulativeFilters.techStack = cumulativeFilters.techStack || [];
-                            if (!Array.isArray(cumulativeFilters.techStack)) {
-                                cumulativeFilters.techStack = [cumulativeFilters.techStack];
-                            }
-                            extractedFilters.technologies.forEach(t => {
-                                if (!cumulativeFilters.techStack.includes(t)) {
-                                    cumulativeFilters.techStack.push(t);
-                                }
-                            });
-                        }
-
-                        if (extractedFilters.years && extractedFilters.years.length > 0) {
-                            cumulativeFilters.year = extractedFilters.years[extractedFilters.years.length - 1]; // Most recent year
-                        }
-
-                        if (extractedFilters.businessGroups && extractedFilters.businessGroups.length > 0) {
-                            cumulativeFilters.businessGroup = cumulativeFilters.businessGroup || [];
-                            if (!Array.isArray(cumulativeFilters.businessGroup)) {
-                                cumulativeFilters.businessGroup = [cumulativeFilters.businessGroup];
-                            }
-                            extractedFilters.businessGroups.forEach(bg => {
-                                if (!cumulativeFilters.businessGroup.includes(bg)) {
-                                    cumulativeFilters.businessGroup.push(bg);
-                                }
-                            });
-                        }
-
-                        console.log(`[Pro Search] Cumulative filters extracted:`, cumulativeFilters);
-                    } catch (parseErr) {
-                        console.warn('[Pro Search] Failed to parse extracted filters:', parseErr.message);
-                    }
-
-                    // Enhance query with full context
-                    const contextPrompt = `Given this conversation history:
-${contextMessages}
-
-The user's new query is: "${trimmedQuery}"
-
-Based on the conversation context, what is the user really looking for? 
-Provide a refined, expanded search query that captures the user's intent.
-Keep it concise (max 20 words). Only return the refined query, nothing else.`;
-
-                    const refinedQuery = await generateText(contextPrompt, {
-                        maxOutputTokens: 50,
-                        temperature: 0.3
-                    });
-
-                    if (refinedQuery && refinedQuery.length > 5 && refinedQuery.length < 200) {
-                        enhancedQuery = refinedQuery.trim();
-                        console.log(`[Pro Search] Context-enhanced: "${trimmedQuery}" → "${enhancedQuery}"`);
-                    }
-                }
-            } catch (err) {
-                console.warn('[Pro Search] Context enhancement failed:', err.message);
-                // Continue with original query
-            }
-        }
+        console.log(`[Pro Search] Context constraints:`, {
+            domains: Array.from(userContext.constraints.domains),
+            years: Array.from(userContext.constraints.years),
+            technologies: Array.from(userContext.constraints.technologies)
+        });
 
         // STEP 3: NLP Processing - Spell correction & query expansion
-        const apiKey = process.env.API_KEY;
         const nlpResult = await enhanceQuery(enhancedQuery, {
-            useAI: !!apiKey && isGeminiAvailable(),
-            apiKey,
-            model: 'gemini-2.5-flash-lite'
+            useAI: true,  // Always use Llama
+            model: 'llama3.1'
         });
 
         console.log(`[Pro Search] NLP: "${trimmedQuery}" → "${nlpResult.corrected}"`);
 
-        // STEP 4: Parse filters from query and merge with cumulative filters
+        // STEP 4: Parse additional filters from query text
         const parsedFilters = parseFilters(nlpResult.corrected, {});
-        const filters = { ...cumulativeFilters };
 
-        // Merge parsed filters with cumulative filters
-        if (parsedFilters.domain) {
-            filters.domain = filters.domain || [];
-            if (!Array.isArray(filters.domain)) filters.domain = [filters.domain];
-            const newDomains = Array.isArray(parsedFilters.domain) ? parsedFilters.domain : [parsedFilters.domain];
-            newDomains.forEach(d => {
-                if (!filters.domain.includes(d)) filters.domain.push(d);
-            });
-        }
-        if (parsedFilters.year) filters.year = parsedFilters.year;
-        if (parsedFilters.techStack) {
-            filters.techStack = filters.techStack || [];
-            if (!Array.isArray(filters.techStack)) filters.techStack = [filters.techStack];
-            const newTechs = Array.isArray(parsedFilters.techStack) ? parsedFilters.techStack : [parsedFilters.techStack];
-            newTechs.forEach(t => {
-                if (!filters.techStack.includes(t)) filters.techStack.push(t);
-            });
-        }
+        // Merge all filter sources (priority: explicit > context > parsed)
+        const finalFilters = { ...parsedFilters, ...contextFilters, ...additionalFilters };
 
-        console.log(`[Pro Search] Final filters:`, filters);
+        console.log(`[Pro Search] Final filters:`, finalFilters);
 
-        // STEP 5: Semantic search using ChromaDB + Gemini embeddings
+        // STEP 5: Semantic search with context-aware hybrid scoring
         const searchQuery = nlpResult.expanded?.join(' ') || nlpResult.corrected;
-        let results = await semanticSearch(searchQuery, filters, 25);
+        let results = await semanticSearch(searchQuery, finalFilters, userContext, CONFIG.COSINE_THRESHOLD);
+
+        // Add query to user context history
+        userContext.addQuery(trimmedQuery, results);
 
         // STEP 6: Fallback to database if no semantic results
         if (results.length === 0) {
@@ -752,11 +1306,11 @@ Keep it concise (max 20 words). Only return the refined query, nothing else.`;
             console.log(`[Pro Search] Keyword search found ${results.length} results`);
         }
 
-        // Limit results
-        results = results.slice(0, 10);
+        // NO LIMIT - return ALL threshold-filtered results
+        console.log(`[Pro Search] Returning ${results.length} unlimited results (threshold-filtered)`);
 
         // STEP 7: Generate AI response
-        const aiResponse = await generateAIResponse(trimmedQuery, results, filters, nlpResult);
+        const aiResponse = await generateAIResponse(trimmedQuery, results, finalFilters, nlpResult);
 
         // STEP 8: Generate suggestions
         const suggestions = generateSuggestions(trimmedQuery, results, filters);
@@ -770,12 +1324,24 @@ Keep it concise (max 20 words). Only return the refined query, nothing else.`;
             suggestions,
             metadata: {
                 intent: 'search',
-                filters,
+                filters: finalFilters,
                 totalResults: results.length,
                 processingTime: duration,
                 nlpEnhanced: nlpResult.aiEnhanced || false,
                 correctedQuery: nlpResult.corrected,
-                originalQuery: trimmedQuery
+                originalQuery: trimmedQuery,
+                // High-recall search metadata
+                searchConfig: {
+                    topKInitial: CONFIG.TOP_K_INITIAL,
+                    threshold: CONFIG.COSINE_THRESHOLD,
+                    hybridScoringEnabled: !!userContext
+                },
+                // Context state (for debugging)
+                contextConstraints: userContext ? {
+                    domains: Array.from(userContext.constraints.domains),
+                    years: Array.from(userContext.constraints.years),
+                    technologies: Array.from(userContext.constraints.technologies)
+                } : null
             }
         });
 
@@ -843,7 +1409,7 @@ router.post('/reindex', async (req, res) => {
 router.get('/health', async (req, res) => {
     const health = {
         status: 'ok',
-        gemini: isGeminiAvailable(),
+        ollama: true, // Always using Ollama/Llama
         chromaDB: false,
         timestamp: new Date().toISOString()
     };

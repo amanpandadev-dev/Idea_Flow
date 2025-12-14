@@ -748,12 +748,11 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                         <div className="flex gap-3">
                             <select
                                 value={embeddingProvider}
-                                onChange={(e) => setEmbeddingProvider(e.target.value as 'llama' | 'grok')}
+                                onChange={(e) => setEmbeddingProvider(e.target.value as 'llama')}
                                 className="px-4 py-3 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                 disabled={isRunning || isSearching}
                             >
-                                <option value="grok">OpenRouter</option>
-                                <option value="llama">Llama (Local)</option>
+                                <option value="llama">Llama (Ollama)</option>
                             </select>
                             <button
                                 type="submit"
