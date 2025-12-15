@@ -403,11 +403,21 @@ export const semanticSearchIdeas = async (
   embeddingProvider: 'llama' | 'grok',
   page: number = 1,
   limit: number = 20,
-  minSimilarity: number = 0.3
+  minSimilarity: number = 0.3,
+  mode: 'context' | 'search' | 'question' = 'search',
+  suggestedQuestion?: string
 ): Promise<SemanticSearchResponse> => {
   const data = await fetchWithAuth(`${API_URL}/ideas/semantic-search`, {
     method: 'POST',
-    body: JSON.stringify({ query, embeddingProvider, page, limit, minSimilarity })
+    body: JSON.stringify({
+      query,
+      embeddingProvider,
+      page,
+      limit,
+      minSimilarity,
+      mode,
+      suggestedQuestion
+    })
   });
   return data;
 };

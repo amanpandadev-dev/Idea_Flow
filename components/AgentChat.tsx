@@ -386,6 +386,31 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     const handleQuestionsGenerated = (questions: string[]) => {
         console.log(`[AgentChat] Received ${questions.length} suggested questions`);
         setSuggestedQuestions(questions);
+
+        // Auto-trigger context-aware search when document is uploaded
+        if (questions.length > 0 && searchMode === 'semantic') {
+            console.log('[AgentChat] Auto-triggering context-aware similar ideas search');
+            setIsSearching(true);
+            setSemanticResults([]);
+            setCurrentQuery('document context');
+            setCurrentPage(1);
+
+            // Trigger context mode search
+            semanticSearchIdeas('', embeddingProvider, 1, 20, 0.35, 'context')
+                .then(response => {
+                    setSemanticResults(response.results);
+                    setTotalPages(response.pagination.totalPages);
+                    setTotalResults(response.pagination.totalResults);
+                    console.log(`[AgentChat] Context search found ${response.pagination.totalResults} relevant ideas`);
+                })
+                .catch(err => {
+                    console.error('[AgentChat] Context search failed:', err);
+                    setError(err.message || 'Failed to load context-relevant ideas');
+                })
+                .finally(() => {
+                    setIsSearching(false);
+                });
+        }
     };
 
     const handleNavigate = (ideaId: string) => {
@@ -669,13 +694,33 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
             )}
 
             {/* Grid Layout: Document Upload and Suggested Questions Side by Side */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Document Upload Component */}
-                <div className="h-[500px]">
-                    <DocumentUpload embeddingProvider={embeddingProvider} onQuestionsGenerated={handleQuestionsGenerated} />
+            <div className={`grid gap-6 ${suggestedQuestions.length > 0 ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
+                {/* Document Upload Component - Dynamic height based on context */}
+                <div className={suggestedQuestions.length > 0 ? 'h-[500px]' : 'h-[250px]'}>
+                    <DocumentUpload
+                        embeddingProvider={embeddingProvider}
+                        onQuestionsGenerated={handleQuestionsGenerated}
+                        onReset={() => {
+                            console.log('[AgentChat] Reset triggered, clearing all state');
+                            setSuggestedQuestions([]);
+                            setSemanticResults([]);
+                            setCurrentQuery('');
+                            setQuery('');
+                            setTotalResults(0);
+                            setTotalPages(0);
+                            setCurrentPage(1);
+                            setSearchMode('agent'); // Reset to agent mode
+                            // Clear ALL session storage
+                            Object.keys(sessionStorage).forEach(key => {
+                                if (key.includes('agent') || key.includes('semantic') || key.includes('context')) {
+                                    sessionStorage.removeItem(key);
+                                }
+                            });
+                        }}
+                    />
                 </div>
 
-                {/* Suggested Questions Component */}
+                {/* Suggested Questions Component - Only show if context exists */}
                 {suggestedQuestions.length > 0 && (
                     <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-col h-[500px]">
                         <h3 className="font-semibold text-slate-900 mb-3 flex items-center gap-2">
@@ -698,76 +743,105 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                 )}
             </div>
 
-            <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
-                {/* Mode Selector */}
-                <div className="flex gap-2">
-                    <button
-                        onClick={() => setSearchMode('agent')}
-                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-colors ${searchMode === 'agent'
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                            }`}
-                    >
-                        <MessageSquare className="h-4 w-4" />
-                        Agent Q&A
-                    </button>
-                    <button
-                        onClick={() => setSearchMode('semantic')}
-                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-colors ${searchMode === 'semantic'
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                            }`}
-                    >
-                        <Search className="h-4 w-4" />
-                        Find Similar Ideas
-                    </button>
-                </div>
+            {/* Only show mode selector and search after document upload */}
+            {suggestedQuestions.length > 0 && (
+                <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+                    {/* Mode Selector */}
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => setSearchMode('agent')}
+                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-colors ${searchMode === 'agent'
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                }`}
+                        >
+                            <MessageSquare className="h-4 w-4" />
+                            Agent Q&A
+                        </button>
+                        <button
+                            onClick={() => {
+                                setSearchMode('semantic');
+                                // If switching to semantic mode and we have suggested questions (document uploaded),
+                                // auto-trigger context search (but only if not already searching)
+                                if (suggestedQuestions.length > 0 && !isSearching) {
+                                    console.log('[AgentChat] Switched to semantic mode, auto-loading context search');
+                                    setIsSearching(true);
+                                    setSemanticResults([]);
+                                    setCurrentQuery('document context');
+                                    setCurrentPage(1);
 
-                {/* Search Form */}
-                <form onSubmit={handleSubmit}>
-                    <div className="flex flex-wrap sm:flex-nowrap gap-3">
-                        <div className="relative flex-1">
-                            <input
-                                type="text"
-                                value={query}
-                                onChange={(e) => setQuery(e.target.value)}
-                                placeholder={getPlaceholder()}
-                                className="w-full px-4 py-3 pr-10 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                                disabled={isRunning || isSearching}
-                            />
-                            {query && (
-                                <button
-                                    type="button"
-                                    onClick={handleClearQuery}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                                >
-                                    <X className="h-4 w-4" />
-                                </button>
-                            )}
-                        </div>
-                        <div className="flex gap-3">
-                            {/* Hidden: Embedding provider selection - always uses Llama */}
-                            <button
-                                type="submit"
-                                disabled={isRunning || isSearching || !query.trim()}
-                                className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors font-medium flex items-center gap-2"
-                            >
-                                {searchMode === 'semantic' ? <Search className="h-5 w-5" /> : <Send className="h-5 w-5" />}
-                                {searchMode === 'semantic' ? 'Search' : 'Ask Agent'}
-                            </button>
-                            {isRunning && (
-                                <button
-                                    type="button"
-                                    onClick={handleCancel}
-                                    className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium flex items-center gap-2"
-                                >
-                                    <StopCircle className="h-5 w-5" /> Cancel
-                                </button>
-                            )}
-                        </div>
+                                    semanticSearchIdeas('', embeddingProvider, 1, 20, 0.35, 'context')
+                                        .then(response => {
+                                            setSemanticResults(response.results);
+                                            setTotalPages(response.pagination.totalPages);
+                                            setTotalResults(response.pagination.totalResults);
+                                            console.log(`[AgentChat] Context search found ${response.pagination.totalResults} relevant ideas`);
+                                        })
+                                        .catch(err => {
+                                            console.error('[AgentChat] Context search failed:', err);
+                                            setError(err.message || 'Failed to load context-relevant ideas');
+                                        })
+                                        .finally(() => {
+                                            setIsSearching(false);
+                                        });
+                                }
+                            }}
+                            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-colors ${searchMode === 'semantic'
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                }`}
+                        >
+                            <Search className="h-4 w-4" />
+                            Find Similar Ideas
+                        </button>
                     </div>
-                </form>
-            </div>
+
+                    {/* Search Form */}
+                    <form onSubmit={handleSubmit}>
+                        <div className="flex flex-wrap sm:flex-nowrap gap-3">
+                            <div className="relative flex-1">
+                                <input
+                                    type="text"
+                                    value={query}
+                                    onChange={(e) => setQuery(e.target.value)}
+                                    placeholder={getPlaceholder()}
+                                    className="w-full px-4 py-3 pr-10 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                    disabled={isRunning || isSearching}
+                                />
+                                {query && (
+                                    <button
+                                        type="button"
+                                        onClick={handleClearQuery}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                    >
+                                        <X className="h-4 w-4" />
+                                    </button>
+                                )}
+                            </div>
+                            <div className="flex gap-3">
+                                {/* Hidden: Embedding provider selection - always uses Llama */}
+                                <button
+                                    type="submit"
+                                    disabled={isRunning || isSearching || !query.trim()}
+                                    className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors font-medium flex items-center gap-2"
+                                >
+                                    {searchMode === 'semantic' ? <Search className="h-5 w-5" /> : <Send className="h-5 w-5" />}
+                                    {searchMode === 'semantic' ? 'Search' : 'Ask Agent'}
+                                </button>
+                                {isRunning && (
+                                    <button
+                                        type="button"
+                                        onClick={handleCancel}
+                                        className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium flex items-center gap-2"
+                                    >
+                                        <StopCircle className="h-5 w-5" /> Cancel
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            )}
 
             {error && (
                 <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-800">
@@ -787,7 +861,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                 </div>
             )}
 
-            {searchMode === 'semantic' && !isSearching && semanticResults.length >= 0 && query && (
+            {searchMode === 'semantic' && !isSearching && semanticResults.length > 0 && (
                 <div className="bg-white rounded-xl border border-slate-200 p-6">
                     {renderSemanticResults()}
                 </div>
@@ -797,17 +871,6 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
 
             {session?.status === 'failed' && <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-800"><div className="font-medium">Execution Failed</div><div className="text-sm mt-1">{session.error}</div></div>}
             {session?.status === 'cancelled' && <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 text-yellow-800"><div className="font-medium">Execution Cancelled</div></div>}
-
-            {!session && !isReconnecting && searchMode === 'agent' && semanticResults.length === 0 && (
-                <div className="bg-slate-50 rounded-xl p-6">
-                    <h3 className="font-semibold text-slate-900 mb-3">Example Questions</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {['What are the latest trends in AI for healthcare?', 'Show me innovations related to customer service automation', 'What AI solutions are we building for retail?', 'How can we use AI to improve operational efficiency?'].map((example, index) => (
-                            <button key={index} onClick={() => setQuery(example)} className="text-left p-4 bg-white border border-slate-200 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 transition-colors text-sm text-slate-700 h-full">{example}</button>
-                        ))}
-                    </div>
-                </div>
-            )}
 
             {/* History Detail Modal */}
             {showHistoryModal && selectedHistoryItem && (

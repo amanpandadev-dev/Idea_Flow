@@ -133,6 +133,48 @@ export async function deleteCollection(sessionId) {
 }
 
 /**
+ * Get all document embeddings from a collection
+ * Used for multi-vector context-aware similarity search
+ * @param {string} sessionId - Session identifier (e.g., user_{userId})
+ * @returns {Promise<Array>} Array of {id, embedding, metadata, document} objects
+ */
+export async function getAllDocumentEmbeddings(sessionId) {
+    const client = getChromaClient();
+
+    if (!client.hasCollection(sessionId)) {
+        console.log(`[VectorStore] No collection found for: ${sessionId}`);
+        return [];
+    }
+
+    try {
+        // Get the collection data directly from internal storage
+        const collection = client.collections.get(sessionId);
+
+        if (!collection || !collection.embeddings || collection.embeddings.length === 0) {
+            console.log(`[VectorStore] No embeddings found in collection: ${sessionId}`);
+            return [];
+        }
+
+        // Build array of {id, embedding, metadata, document} from collection properties
+        const results = [];
+        for (let i = 0; i < collection.embeddings.length; i++) {
+            results.push({
+                id: collection.ids[i] || `doc_${i}`,
+                embedding: collection.embeddings[i],
+                metadata: collection.metadatas[i] || {},
+                document: collection.documents[i] || ''
+            });
+        }
+
+        console.log(`[VectorStore] Retrieved ${results.length} document embeddings from ${sessionId}`);
+        return results;
+    } catch (error) {
+        console.error(`[VectorStore] Error getting embeddings from ${sessionId}:`, error.message);
+        return [];
+    }
+}
+
+/**
  * Get collection stats
  * @param {string} sessionId - Session identifier
  * @returns {Promise<Object|null>} Collection statistics
@@ -158,5 +200,6 @@ export default {
     addDocuments,
     queryCollection,
     deleteCollection,
-    getCollectionStats
+    getCollectionStats,
+    getAllDocumentEmbeddings
 };
