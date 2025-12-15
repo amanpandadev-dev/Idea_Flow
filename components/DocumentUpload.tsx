@@ -153,7 +153,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
     // Show loading state while checking for existing context
     if (isCheckingStatus) {
         return (
-            <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <div className="bg-white rounded-xl border border-slate-200 p-4 h-full flex flex-col">
                 <div className="flex items-center justify-between mb-3">
                     <h3 className="font-semibold text-slate-900 flex items-center gap-2">
                         <FileText className="h-5 w-5 text-indigo-600" />
@@ -169,7 +169,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
     }
 
     return (
-        <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <div className="bg-white rounded-xl border border-slate-200 p-4 h-full flex flex-col">
             <div className="flex items-center justify-between mb-3">
                 <div className="flex-1">
                     <h3 className="font-semibold text-slate-900 flex items-center gap-2">

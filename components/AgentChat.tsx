@@ -671,19 +671,19 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
             {/* Grid Layout: Document Upload and Suggested Questions Side by Side */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Document Upload Component */}
-                <div>
+                <div className="h-[500px]">
                     <DocumentUpload embeddingProvider={embeddingProvider} onQuestionsGenerated={handleQuestionsGenerated} />
                 </div>
 
                 {/* Suggested Questions Component */}
                 {suggestedQuestions.length > 0 && (
-                    <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-col">
+                    <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-col h-[500px]">
                         <h3 className="font-semibold text-slate-900 mb-3 flex items-center gap-2">
                             <Sparkles className="h-5 w-5 text-indigo-600" />
                             Suggested Questions
                         </h3>
-                        {/* Scrollable container with max height */}
-                        <div className="flex-1 overflow-y-auto max-h-[400px] pr-2 space-y-3 custom-scrollbar">
+                        {/* Scrollable container that fills remaining space */}
+                        <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar">
                             {suggestedQuestions.map((question, idx) => (
                                 <button
                                     key={idx}
@@ -746,14 +746,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                             )}
                         </div>
                         <div className="flex gap-3">
-                            <select
-                                value={embeddingProvider}
-                                onChange={(e) => setEmbeddingProvider(e.target.value as 'llama')}
-                                className="px-4 py-3 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                disabled={isRunning || isSearching}
-                            >
-                                <option value="llama">Llama (Ollama)</option>
-                            </select>
+                            {/* Hidden: Embedding provider selection - always uses Llama */}
                             <button
                                 type="submit"
                                 disabled={isRunning || isSearching || !query.trim()}
