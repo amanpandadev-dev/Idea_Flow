@@ -579,7 +579,7 @@ app.get('/api/ideas', auth, async (req, res) => {
     const userId = req.user ? req.user.user.emp_id : '';
     let query = `
       SELECT DISTINCT ON (i.idea_id)
-        i.score as idea_score, 
+        i.score as idea_score,
         i.*,
         i.business_group as idea_bg,
         a.associate_id,
