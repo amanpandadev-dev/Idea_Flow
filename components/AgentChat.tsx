@@ -9,6 +9,9 @@ const SEMANTIC_RESULTS_KEY_PREFIX = 'agent_semantic_results_';
 const SEMANTIC_PAGINATION_KEY_PREFIX = 'agent_semantic_pagination_';
 const CURRENT_USER_KEY = 'agent_current_user';
 const QUERY_STORAGE_KEY_PREFIX = 'agent_last_query_';
+const SUGGESTED_QUESTIONS_KEY = 'agent_suggested_questions';
+const SEARCH_MODE_KEY = 'agent_search_mode';
+const DOCUMENT_CONTEXT_KEY = 'agent_document_context';
 
 interface AgentChatProps {
     onNavigateToIdea?: (ideaId: string) => void;
@@ -106,6 +109,46 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                     if (userSpecificQuery) {
                         setQuery(userSpecificQuery);
                     }
+
+                    // RESTORE STATE: Load persisted state from sessionStorage
+                    const savedQuestions = sessionStorage.getItem(SUGGESTED_QUESTIONS_KEY);
+                    if (savedQuestions) {
+                        try {
+                            const questions = JSON.parse(savedQuestions);
+                            console.log(`[AgentChat] Restoring ${questions.length} suggested questions`);
+                            setSuggestedQuestions(questions);
+                        } catch (e) {
+                            console.error('[AgentChat] Failed to parse saved questions:', e);
+                        }
+                    }
+
+                    const savedMode = sessionStorage.getItem(SEARCH_MODE_KEY);
+                    if (savedMode && (savedMode === 'agent' || savedMode === 'semantic')) {
+                        console.log(`[AgentChat] Restoring search mode: ${savedMode}`);
+                        setSearchMode(savedMode as SearchMode);
+                    }
+
+                    // Restore semantic search results if in semantic mode
+                    const resultsKey = `${SEMANTIC_RESULTS_KEY_PREFIX}${newUserId}`;
+                    const paginationKey = `${SEMANTIC_PAGINATION_KEY_PREFIX}${newUserId}`;
+
+                    const savedResults = sessionStorage.getItem(resultsKey);
+                    const savedPagination = sessionStorage.getItem(paginationKey);
+
+                    if (savedResults && savedPagination) {
+                        try {
+                            const results = JSON.parse(savedResults);
+                            const pagination = JSON.parse(savedPagination);
+                            console.log(`[AgentChat] Restoring ${results.length} semantic results`);
+                            setSemanticResults(results);
+                            setCurrentPage(pagination.currentPage || 1);
+                            setTotalPages(pagination.totalPages || 0);
+                            setTotalResults(pagination.totalResults || 0);
+                            setCurrentQuery(pagination.currentQuery || '');
+                        } catch (e) {
+                            console.error('[AgentChat] Failed to parse saved results:', e);
+                        }
+                    }
                 }
             } catch (err) {
                 console.error('[AgentChat] Failed to load search history:', err);
@@ -123,12 +166,41 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
         };
         loadHistory();
 
-        // PRIVACY FIX: Cleanup function to clear search input on unmount
+        // STATE PERSISTENCE: Save state before unmount, restore on mount
         return () => {
-            console.log('[AgentChat] Component unmounting, clearing search input');
-            setQuery('');
+            console.log('[AgentChat] Component unmounting, persisting state');
+            // Save current state to sessionStorage for restoration
+            if (suggestedQuestions.length > 0) {
+                sessionStorage.setItem(SUGGESTED_QUESTIONS_KEY, JSON.stringify(suggestedQuestions));
+            }
+            sessionStorage.setItem(SEARCH_MODE_KEY, searchMode);
         };
     }, []);
+
+    // Persist semantic results and search mode whenever they change
+    useEffect(() => {
+        if (currentUserId && semanticResults.length > 0) {
+            const resultsKey = `${SEMANTIC_RESULTS_KEY_PREFIX}${currentUserId}`;
+            const paginationKey = `${SEMANTIC_PAGINATION_KEY_PREFIX}${currentUserId}`;
+
+            sessionStorage.setItem(resultsKey, JSON.stringify(semanticResults));
+            sessionStorage.setItem(paginationKey, JSON.stringify({
+                currentPage,
+                totalPages,
+                totalResults,
+                currentQuery
+            }));
+            console.log(`[AgentChat] Persisted ${semanticResults.length} semantic results`);
+        }
+    }, [semanticResults, currentPage, totalPages, totalResults, currentQuery, currentUserId]);
+
+    // Persist suggested questions and search mode
+    useEffect(() => {
+        if (suggestedQuestions.length > 0) {
+            sessionStorage.setItem(SUGGESTED_QUESTIONS_KEY, JSON.stringify(suggestedQuestions));
+        }
+        sessionStorage.setItem(SEARCH_MODE_KEY, searchMode);
+    }, [suggestedQuestions, searchMode]);
 
     // Polling effect
     useEffect(() => {

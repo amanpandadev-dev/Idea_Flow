@@ -7,11 +7,58 @@
 import { generateStructuredJSON } from '../config/ollama.js';
 
 /**
+ * Known categories/themes from the database
+ * These should be checked BEFORE sending to LLM to avoid misidentification
+ */
+const KNOWN_CATEGORIES = [
+    'GenAI & its techniques',
+    'Multi-modal UX',
+    'Edge AI',
+    'Agentic AI',
+    'Responsible AI',
+    'AI for accessibility',
+    'AI for Organization',
+    'AI for Industry',
+    'AI for Data & Data for AI',
+    'AI in service line',
+    'Classical AI/ML/DL for prediction/recommendations',
+    'Orchestration & MCP',
+    'Proprietary models'
+];
+
+/**
  * Extract filter information from message with action semantics
  * @param {string} message - User message
  * @returns {Promise<Object>} {type, value, action: 'REPLACE'|'ADD'|'REMOVE'}
  */
 export async function extractFilterInfo(message) {
+    // PRE-CHECK: Match against known categories first
+    const lowerMessage = message.toLowerCase();
+
+    // Check for category/theme matches
+    for (const category of KNOWN_CATEGORIES) {
+        if (lowerMessage.includes(category.toLowerCase())) {
+            console.log(`[Filter Extractor] Matched known category: "${category}"`);
+
+            // Determine action based on keywords
+            let action = 'ADD'; // default for categories
+            if (lowerMessage.includes('only') || lowerMessage.includes('just')) {
+                action = 'REPLACE';
+            } else if (lowerMessage.includes('remove') || lowerMessage.includes('without')) {
+                action = 'REMOVE';
+            } else if (lowerMessage.includes('also') || lowerMessage.includes('and')) {
+                action = 'ADD';
+            }
+
+            return {
+                type: 'theme',
+                value: category,
+                action: action
+            };
+        }
+    }
+
+    // If no category match, proceed with LLM extraction
     const prompt = `Extract filter information from this user message and determine the action.
 
 User message: "${message}"

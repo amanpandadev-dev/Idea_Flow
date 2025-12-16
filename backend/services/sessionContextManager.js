@@ -37,6 +37,17 @@ class ConversationContext {
 
         this.intentHistory = [];
 
+        // ENTERPRISE: In-memory indexes for O(1) refinement
+        this.indexes = {
+            byTechnology: new Map(),    // "Java" → Set([1, 5, 12])
+            byYear: new Map(),          // 2024 → Set([1, 3, 8])
+            byTheme: new Map(),         // "Agentic AI" → Set([2, 4, 9])
+            byBusinessGroup: new Map(), // "BFSI" → Set([1, 6, 11])
+            byDomain: new Map(),        // "Banking" → Set([1, 5, 10])
+            byStatus: new Map()         // "Implemented" → Set([3, 7, 14])
+        };
+        this.indexBuildTime = 0;
+
         // Legacy field for backward compatibility
         this.cachedResults = [];
     }
@@ -54,7 +65,177 @@ class ConversationContext {
         this.semanticQuery = query;
         this.lastUpdated = Date.now();
 
+        // ENTERPRISE: Build in-memory indexes for instant refinement
+        this._buildIndexes(results);
+
         console.log(`[Session ${this.sessionId}] Set base results: ${this.baseResultIds.length} items`);
+    }
+
+    /**
+     * Build in-memory indexes from base results
+     * Enables O(1) metadata filtering (< 10ms)
+     */
+    _buildIndexes(results) {
+        const start = Date.now();
+        console.log(`[Indexes] Building for ${results.length} results...`);
+
+        // Reset all indexes
+        this.indexes = {
+            byTechnology: new Map(),
+            byYear: new Map(),
+            byTheme: new Map(),
+            byBusinessGroup: new Map(),
+            byDomain: new Map(),
+            byStatus: new Map()
+        };
+
+        results.forEach(result => {
+            const meta = result.metadata || {};
+            const id = result.id || result.metadata?.idea_id || result.dbId;
+
+            if (!id) return; // Skip if no ID
+
+            // Index by technology stack (comma-separated)
+            if (meta.technologies) {
+                const techs = meta.technologies.split(',').map(t => t.trim().toLowerCase());
+                techs.forEach(tech => {
+                    if (!this.indexes.byTechnology.has(tech)) {
+                        this.indexes.byTechnology.set(tech, new Set());
+                    }
+                    this.indexes.byTechnology.get(tech).add(id);
+                });
+            }
+
+            // Index by year (extract from created_at)
+            if (meta.created_at) {
+                const year = new Date(meta.created_at).getFullYear();
+                if (!this.indexes.byYear.has(year)) {
+                    this.indexes.byYear.set(year, new Set());
+                }
+                this.indexes.byYear.get(year).add(id);
+            }
+
+            /// Index by business group (DATABASE FIELD: business_group)
+            if (meta.business_group || meta.businessGroup) {
+                const bg = (meta.business_group || meta.businessGroup).toLowerCase();
+                if (!this.indexes.byBusinessGroup.has(bg)) {
+                    this.indexes.byBusinessGroup.set(bg, new Set());
+                }
+                this.indexes.byBusinessGroup.get(bg).add(id);
+            }
+
+            // Index by domain (USE business_group as domain)
+            if (meta.business_group || meta.domain) {
+                const domain = (meta.business_group || meta.domain).toLowerCase();
+                if (!this.indexes.byDomain.has(domain)) {
+                    this.indexes.byDomain.set(domain, new Set());
+                }
+                this.indexes.byDomain.get(domain).add(id);
+            }
+            // Index by theme (if available)
+            if (meta.theme || meta.aiTheme) {
+                const theme = (meta.theme || meta.aiTheme).toLowerCase();
+                if (!this.indexes.byTheme.has(theme)) {
+                    this.indexes.byTheme.set(theme, new Set());
+                }
+                this.indexes.byTheme.get(theme).add(id);
+            }
+
+            // Index by status
+            if (meta.implementation_status || meta.status) {
+                const status = (meta.implementation_status || meta.status).toLowerCase();
+                if (!this.indexes.byStatus.has(status)) {
+                    this.indexes.byStatus.set(status, new Set());
+                }
+                this.indexes.byStatus.get(status).add(id);
+            }
+        });
+
+        this.indexBuildTime = Date.now() - start;
+        console.log(`[Indexes] Built in ${this.indexBuildTime}ms:`);
+        console.log(`  - Technology: ${this.indexes.byTechnology.size} values`);
+        console.log(`  - Year: ${this.indexes.byYear.size} values`);
+        console.log(`  - Business Group: ${this.indexes.byBusinessGroup.size} values`);
+        console.log(`  - Domain: ${this.indexes.byDomain.size} values`);
+    }
+
+    /**
+     * Refine results using in-memory indexes (O(1), <10ms)
+     * @param {Object} metadata - Extracted metadata filters
+     * @returns {Array} Refined results
+     */
+    refineByMetadata(metadata) {
+        const start = Date.now();
+        let resultIds = null;
+
+        console.log(`[Index Refine] Filters:`, metadata);
+
+        // Intersect all matching index sets
+        if (metadata.technology) {
+            const tech = metadata.technology.toLowerCase();
+            resultIds = this.indexes.byTechnology.get(tech) || new Set();
+            console.log(`  - Technology "${metadata.technology}": ${resultIds.size} results`);
+        }
+
+        if (metadata.year) {
+            const yearSet = this.indexes.byYear.get(metadata.year) || new Set();
+            console.log(`  - Year ${metadata.year}: ${yearSet.size} results`);
+            resultIds = resultIds
+                ? new Set([...resultIds].filter(id => yearSet.has(id)))
+                : yearSet;
+        }
+
+        if (metadata.businessGroup) {
+            const bg = metadata.businessGroup.toLowerCase();
+            const bgSet = this.indexes.byBusinessGroup.get(bg) || new Set();
+            console.log(`  - Business Group "${metadata.businessGroup}": ${bgSet.size} results`);
+            resultIds = resultIds
+                ? new Set([...resultIds].filter(id => bgSet.has(id)))
+                : bgSet;
+        }
+
+        if (metadata.domain) {
+            const domain = metadata.domain.toLowerCase();
+            const domainSet = this.indexes.byDomain.get(domain) || new Set();
+            console.log(`  - Domain "${metadata.domain}": ${domainSet.size} results`);
+            resultIds = resultIds
+                ? new Set([...resultIds].filter(id => domainSet.has(id)))
+                : domainSet;
+        }
+
+        if (metadata.aiTheme) {
+            const theme = metadata.aiTheme.toLowerCase();
+            const themeSet = this.indexes.byTheme.get(theme) || new Set();
+            console.log(`  - AI Theme "${metadata.aiTheme}": ${themeSet.size} results`);
+            resultIds = resultIds
+                ? new Set([...resultIds].filter(id => themeSet.has(id)))
+                : themeSet;
+        }
+
+        if (metadata.status) {
+            const status = metadata.status.toLowerCase();
+            const statusSet = this.indexes.byStatus.get(status) || new Set();
+            console.log(`  - Status "${metadata.status}": ${statusSet.size} results`);
+            resultIds = resultIds
+                ? new Set([...resultIds].filter(id => statusSet.has(id)))
+                : statusSet;
+        }
+
+        // Convert IDs back to result objects
+        const idSet = resultIds || new Set();
+        const refined = this.currentResults.filter(r => {
+            const id = r.id || r.metadata?.idea_id || r.dbId;
+            return idSet.has(id);
+        });
+
+        const refineTime = Date.now() - start;
+        console.log(`[Index Refine] ${this.currentResults.length} → ${refined.length} in ${refineTime}ms ${refineTime < 10 ? '✅' : '⚠️'}`);
+
+        this.previousCount = this.currentResults.length;
+        this.currentResults = refined;
+        this.currentResultIds = refined.map(r => r.id || r.metadata?.idea_id || r.dbId);
+
+        return refined;
     }
 
     /**
