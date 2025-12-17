@@ -115,6 +115,17 @@ app.set('db', pool);
 // Make pool available via app.locals for agent routes
 app.locals.pool = pool;
 
+// TIER-1 ENHANCEMENT: Start vector store cleanup job
+import { VectorCleanupJob } from './backend/jobs/vectorCleanupJob.js';
+const vectorCleanup = new VectorCleanupJob();
+const cleanupIntervalMinutes = parseInt(process.env.VECTOR_CLEANUP_INTERVAL_MINS || '60');
+vectorCleanup.start(cleanupIntervalMinutes);
+console.log(`✅ Vector cleanup job started (runs every ${cleanupIntervalMinutes} minutes)`);
+
+// Optional: Admin endpoint for cleanup stats
+app.get('/api/admin/vector-cleanup-stats', (req, res) => {
+  res.json(vectorCleanup.getStats());
+});
 
 
 // --- API Routes ---

@@ -147,7 +147,7 @@ export async function extractDocument(buffer, mimetype) {
 }
 
 /**
- * Chunk text with overlap using native text splitter
+ * Chunk text with overlap using semantic-aware chunking
  * @param {string} text - Text to chunk
  * @param {number} chunkSize - Size of each chunk in characters
  * @param {number} overlap - Overlap between chunks
@@ -158,14 +158,17 @@ export async function chunkText(text, chunkSize = 400, overlap = 50) {
         return [];
     }
 
-    const splitter = new RecursiveTextSplitter({
-        chunkSize,
-        chunkOverlap: overlap,
-        separators: ['\n\n', '\n', '. ', ' ', '']
-    });
-
     try {
-        const chunks = splitter.splitText(text);
+        // TIER-1 ENHANCEMENT: Use semantic chunking for better coherence
+        const { semanticChunk } = await import('../utils/semanticChunker.js');
+
+        const chunks = semanticChunk(text, {
+            targetSize: Math.ceil(chunkSize / 4), // Convert chars to approx tokens
+            minSize: Math.ceil((chunkSize - overlap) / 4),
+            maxSize: Math.ceil((chunkSize + overlap) / 4),
+            overlapParagraphs: 1
+        });
+
         return chunks.filter(chunk => chunk.trim().length > 0);
     } catch (error) {
         console.error('Error chunking text:', error.message);

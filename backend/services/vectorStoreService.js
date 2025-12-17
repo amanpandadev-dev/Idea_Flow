@@ -21,9 +21,25 @@ export async function createEphemeralCollection(sessionId) {
             client.deleteCollection(sessionId);
         }
 
-        // Create new collection
-        const collection = client.createCollection(sessionId);
+        // TIER-1 ENHANCEMENT: Add TTL metadata for automatic cleanup
+        const now = Date.now();
+        const ttlHours = parseInt(process.env.VECTOR_STORE_TTL_HOURS || '24');
+        const ttl = ttlHours * 60 * 60 * 1000;
+        const expiresAt = now + ttl;
+
+        // Create new collection with TTL metadata
+        const collection = client.createCollection(sessionId, {
+            metadata: {
+                createdAt: now,
+                expiresAt: expiresAt,
+                ttl: ttl,
+                ttlHours: ttlHours
+            }
+        });
+
         sessionCollections.set(sessionId, collection);
+
+        console.log(`✅ [VectorStore] Created collection ${sessionId} with ${ttlHours}h TTL (expires: ${new Date(expiresAt).toISOString()})`);
 
         return collection;
     } catch (error) {

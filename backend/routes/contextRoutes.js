@@ -4,6 +4,8 @@ import { processDocument } from '../services/documentService.js';
 import { generateEmbeddings } from '../services/embeddingService.js';
 import { addDocuments, deleteCollection, getCollectionStats } from '../services/vectorStoreService.js';
 import auth from '../middleware/auth.js';
+import { EmbeddingCache } from '../services/embeddingCache.js';
+import { EmbeddingCache } from '../services/embeddingCache.js';
 
 const router = express.Router();
 
@@ -68,14 +70,22 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         let actualProvider = embeddingProvider;
 
         try {
-            embeddings = await generateEmbeddings(processed.chunks, embeddingProvider);
+            // TIER-1 ENHANCEMENT: Use embedding cache for deduplication
+            const pool = req.app.locals.pool;
+            const cache = new EmbeddingCache(pool);
+
+            embeddings = await cache.getBatchEmbeddings(processed.chunks, embeddingProvider);
+
+            const cacheStats = cache.getStats();
+            console.log(`📊 [EmbeddingCache] ${cacheStats.hits} hits, ${cacheStats.misses} misses (${cacheStats.hitRate} hit rate)`);
+
         } catch (error) {
-            // If Grok fails, automatically fallback to Gemini
-            if (embeddingProvider === 'grok') {
-                console.warn(`⚠️  Grok embeddings failed: ${error.message}`);
-                console.log(`🔄 Falling back to Gemini embeddings...`);
-                actualProvider = 'gemini';
-                embeddings = await generateEmbeddings(processed.chunks, 'gemini');
+            // If cache fails or Gr fails, automatically fallback to Gemini
+            if (embeddingProvider === 'grok' || error.message.includes('cache')) {
+                console.warn(`⚠️  Embedding generation failed: ${error.message}`);
+                console.log(`🔄 Falling back to direct embedding generation...`);
+                actualProvider = embeddingProvider === 'grok' ? 'gemini' : embeddingProvider;
+                embeddings = await generateEmbeddings(processed.chunks, actualProvider);
             } else {
                 throw error;
             }
