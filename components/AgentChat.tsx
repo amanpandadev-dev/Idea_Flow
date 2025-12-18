@@ -43,6 +43,8 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     const [currentUserId, setCurrentUserId] = useState<string | null>(null);
     const [showHistoryModal, setShowHistoryModal] = useState(false);
     const [selectedHistoryItem, setSelectedHistoryItem] = useState<AgentHistoryItem | null>(null);
+    const [localSearchQuery, setLocalSearchQuery] = useState('');
+    const [isResetting, setIsResetting] = useState(false);
 
     // Helper functions to get user-specific storage keys
     const getSemanticResultsKey = () => currentUserId ? `${SEMANTIC_RESULTS_KEY_PREFIX}${currentUserId}` : null;
@@ -382,7 +384,9 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     };
 
     const handleReset = () => {
+        setIsResetting(true); // Show loader
         setQuery('');
+        setLocalSearchQuery(''); // Clear local search too
         setJobId(null);
         setSession(null);
         setError(null);
@@ -396,6 +400,11 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
         const paginationKey = getSemanticPaginationKey();
         if (resultsKey) sessionStorage.removeItem(resultsKey);
         if (paginationKey) sessionStorage.removeItem(paginationKey);
+
+        // Small delay to ensure UI renders before removing loader
+        setTimeout(() => {
+            setIsResetting(false);
+        }, 300);
     };
 
     const handleClearQuery = () => {
@@ -525,23 +534,64 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                 </div>
             );
         }
+
+        // Filter results based on local search query
+        const filteredResults = semanticResults.filter(idea => {
+            if (!localSearchQuery.trim()) return true;
+
+            const searchLower = localSearchQuery.toLowerCase();
+            const matchesTitle = idea.title?.toLowerCase().includes(searchLower);
+            const matchesDesc = idea.description?.toLowerCase().includes(searchLower);
+            const matchesTags = idea.tags?.some(tag => tag.toLowerCase().includes(searchLower));
+
+            return matchesTitle || matchesDesc || matchesTags;
+        });
+
         return (
             <div className="space-y-4">
                 <div className="flex items-center justify-between">
                     <h3 className="text-lg font-semibold text-slate-800">
-                        Similar Ideas ({totalResults} total)
+                        Similar Ideas ({filteredResults.length}{localSearchQuery ? ` of ${totalResults}` : ` total`})
                     </h3>
-                    <div className="flex items-center gap-4">
+
+                    {/* Local Search Bar - Top Right */}
+                    <div className="flex items-center gap-3">
+                        <div className="relative w-64">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                            <input
+                                type="text"
+                                value={localSearchQuery}
+                                onChange={(e) => setLocalSearchQuery(e.target.value)}
+                                placeholder="Filter results..."
+                                className="w-full pl-9 pr-8 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                            {localSearchQuery && (
+                                <button
+                                    onClick={() => setLocalSearchQuery('')}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2"
+                                >
+                                    <X className="h-3.5 w-3.5 text-slate-400 hover:text-slate-600" />
+                                </button>
+                            )}
+                        </div>
                         <div className="text-sm text-slate-600">
                             Page {currentPage} of {totalPages}
                         </div>
-                        <button onClick={handleReset} className="text-xs text-indigo-600 hover:text-indigo-700 flex items-center gap-1">
-                            <RefreshCcw className="h-3 w-3" /> New Search
+                        <button
+                            onClick={handleReset}
+                            disabled={isResetting}
+                            className={`text-xs flex items-center gap-1 ${isResetting
+                                ? 'text-slate-400 cursor-not-allowed'
+                                : 'text-indigo-600 hover:text-indigo-700'
+                                }`}
+                        >
+                            <RefreshCcw className="h-3 w-3" />
+                            New Search
                         </button>
                     </div>
                 </div>
                 <div className="grid gap-4">
-                    {semanticResults.map((idea) => (
+                    {filteredResults.map((idea) => (
                         <div
                             key={idea.id}
                             className="bg-white border border-slate-200 rounded-lg p-4 hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer"
@@ -868,50 +918,55 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                         </button>
                     </div>
 
-                    {/* Search Form */}
-                    <form onSubmit={handleSubmit}>
-                        <div className="flex flex-wrap sm:flex-nowrap gap-3">
-                            <div className="relative flex-1">
-                                <input
-                                    type="text"
-                                    value={query}
-                                    onChange={(e) => setQuery(e.target.value)}
-                                    placeholder={getPlaceholder()}
-                                    className="w-full px-4 py-3 pr-10 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                                    disabled={isRunning || isSearching}
-                                />
-                                {query && (
+                    {/* Search Form - Only show in Agent Q/A mode */}
+                    {searchMode === 'agent' && (
+                        <form onSubmit={handleSubmit}>
+                            <div className="flex flex-wrap sm:flex-nowrap gap-3">
+                                <div className="relative flex-1">
+                                    <input
+                                        type="text"
+                                        value={query}
+                                        onChange={(e) => setQuery(e.target.value)}
+                                        placeholder={getPlaceholder()}
+                                        className={`w-full px-4 py-3 pr-10 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${searchMode === 'semantic' && semanticResults.length > 0
+                                            ? 'opacity-50 cursor-not-allowed bg-slate-50'
+                                            : ''
+                                            }`}
+                                        disabled={isRunning || isSearching || (searchMode === 'semantic' && semanticResults.length > 0)}
+                                    />
+                                    {query && (
+                                        <button
+                                            type="button"
+                                            onClick={handleClearQuery}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                        >
+                                            <X className="h-4 w-4" />
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="flex gap-3">
+                                    {/* Hidden: Embedding provider selection - always uses Llama */}
                                     <button
-                                        type="button"
-                                        onClick={handleClearQuery}
-                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                                        type="submit"
+                                        disabled={isRunning || isSearching || !query.trim()}
+                                        className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors font-medium flex items-center gap-2"
                                     >
-                                        <X className="h-4 w-4" />
+                                        {searchMode === 'semantic' ? <Search className="h-5 w-5" /> : <Send className="h-5 w-5" />}
+                                        {searchMode === 'semantic' ? 'Search' : 'Ask Agent'}
                                     </button>
-                                )}
+                                    {isRunning && (
+                                        <button
+                                            type="button"
+                                            onClick={handleCancel}
+                                            className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium flex items-center gap-2"
+                                        >
+                                            <StopCircle className="h-5 w-5" /> Cancel
+                                        </button>
+                                    )}
+                                </div>
                             </div>
-                            <div className="flex gap-3">
-                                {/* Hidden: Embedding provider selection - always uses Llama */}
-                                <button
-                                    type="submit"
-                                    disabled={isRunning || isSearching || !query.trim()}
-                                    className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors font-medium flex items-center gap-2"
-                                >
-                                    {searchMode === 'semantic' ? <Search className="h-5 w-5" /> : <Send className="h-5 w-5" />}
-                                    {searchMode === 'semantic' ? 'Search' : 'Ask Agent'}
-                                </button>
-                                {isRunning && (
-                                    <button
-                                        type="button"
-                                        onClick={handleCancel}
-                                        className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium flex items-center gap-2"
-                                    >
-                                        <StopCircle className="h-5 w-5" /> Cancel
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    </form>
+                        </form>
+                    )}
                 </div>
             )}
 
@@ -929,6 +984,15 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                     <div className="flex items-center gap-3 text-indigo-600">
                         <Loader2 className="h-5 w-5 animate-spin" />
                         <span className="text-sm font-medium">Searching for similar ideas...</span>
+                    </div>
+                </div>
+            )}
+
+            {isResetting && (
+                <div className="bg-white rounded-xl border border-slate-200 p-6">
+                    <div className="flex items-center gap-3 text-indigo-600">
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        <span className="text-sm font-medium">Resetting...</span>
                     </div>
                 </div>
             )}
