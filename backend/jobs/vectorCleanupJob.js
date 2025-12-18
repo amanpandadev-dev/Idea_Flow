@@ -57,13 +57,22 @@ export class VectorCleanupJob {
             console.log(`[VectorCleanup] 🧹 Starting cleanup run #${this.totalRuns}...`);
 
             const client = await getChromaClient();
-            const collections = await client.listCollections();
 
+            // ChromaDB custom implementation - collections stored in Map
+            if (!client.collections || typeof client.collections !== 'object') {
+                console.log('[VectorCleanup] ⏭️  Collections API not available, skipping cleanup');
+                return;
+            }
+
+            const collectionNames = Array.from(client.collections.keys());
             const now = Date.now();
             let deleted = 0;
             let checked = 0;
 
-            for (const collection of collections) {
+            for (const name of collectionNames) {
+                const collection = client.collections.get(name);
+                if (!collection) continue;
+
                 checked++;
                 const metadata = collection.metadata || {};
                 const expiresAt = metadata.expiresAt;
@@ -75,19 +84,19 @@ export class VectorCleanupJob {
 
                 if (now > expiresAt) {
                     const ageHours = Math.round((now - metadata.createdAt) / (1000 * 60 * 60));
-                    console.log(`[VectorCleanup] 🗑️  Deleting expired collection: ${collection.name} (age: ${ageHours}h, expired: ${new Date(expiresAt).toISOString()})`);
+                    console.log(`[VectorCleanup] 🗑️  Deleting expired collection: ${name} (age: ${ageHours}h, expired: ${new Date(expiresAt).toISOString()})`);
 
                     try {
-                        await client.deleteCollection({ name: collection.name });
+                        await client.deleteCollection(name);
                         deleted++;
                         this.deletedCount++;
                     } catch (err) {
-                        console.error(`[VectorCleanup] ❌ Failed to delete ${collection.name}:`, err.message);
+                        console.error(`[VectorCleanup] ❌ Failed to delete ${name}:`, err.message);
                     }
                 } else {
                     // Collection still valid
                     const remainingHours = Math.round((expiresAt - now) / (1000 * 60 * 60));
-                    console.log(`[VectorCleanup] ✅ ${collection.name} still valid (expires in ${remainingHours}h)`);
+                    console.log(`[VectorCleanup] ✅ ${name} still valid (expires in ${remainingHours}h)`);
                 }
             }
 

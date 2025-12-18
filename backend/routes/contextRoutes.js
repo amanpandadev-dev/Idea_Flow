@@ -5,7 +5,6 @@ import { generateEmbeddings } from '../services/embeddingService.js';
 import { addDocuments, deleteCollection, getCollectionStats } from '../services/vectorStoreService.js';
 import auth from '../middleware/auth.js';
 import { EmbeddingCache } from '../services/embeddingCache.js';
-import { EmbeddingCache } from '../services/embeddingCache.js';
 
 const router = express.Router();
 
