@@ -33,7 +33,8 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     const [showHistory, setShowHistory] = useState(false);
     const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
     const [searchMode, setSearchMode] = useState<SearchMode>('agent');
-    const [semanticResults, setSemanticResults] = useState<SemanticSearchResult[]>([]);
+    const [allSemanticResults, setAllSemanticResults] = useState<SemanticSearchResult[]>([]); // SOURCE OF TRUTH - all results
+    const [semanticResults, setSemanticResults] = useState<SemanticSearchResult[]>([]); // Current page results (derived)
     const [isSearching, setIsSearching] = useState(false);
     const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
     const [currentPage, setCurrentPage] = useState(1);
@@ -45,6 +46,9 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     const [selectedHistoryItem, setSelectedHistoryItem] = useState<AgentHistoryItem | null>(null);
     const [localSearchQuery, setLocalSearchQuery] = useState('');
     const [isResetting, setIsResetting] = useState(false);
+
+    // Pagination constants
+    const PAGE_SIZE = 20;
 
     // Helper functions to get user-specific storage keys
     const getSemanticResultsKey = () => currentUserId ? `${SEMANTIC_RESULTS_KEY_PREFIX}${currentUserId}` : null;
@@ -338,18 +342,30 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
         if (searchMode === 'semantic') {
             // Semantic search mode
             setIsSearching(true);
+            setAllSemanticResults([]); // Clear source of truth
             setSemanticResults([]);
             setSession(null);
             setCurrentQuery(query.trim());
             setCurrentPage(1);
+            setLocalSearchQuery(''); // Reset local search
 
             try {
                 console.log(`[AgentChat] Performing semantic search: "${query}"`);
-                const response = await semanticSearchIdeas(query.trim(), embeddingProvider, 1, 20, 0.3);
-                setSemanticResults(response.results);
-                setTotalPages(response.pagination.totalPages);
-                setTotalResults(response.pagination.totalResults);
-                console.log(`[AgentChat] Found ${response.pagination.totalResults} similar ideas (showing page ${response.pagination.currentPage})`);
+                // Fetch ALL results at once for client-side pagination
+                const response = await semanticSearchIdeas(query.trim(), embeddingProvider, 1, 1000, 0.3);
+
+                // Store ALL results as source of truth
+                setAllSemanticResults(response.results);
+
+                // Calculate pagination from full dataset
+                const totalCount = response.results.length;
+                setTotalResults(totalCount);
+                setTotalPages(Math.ceil(totalCount / PAGE_SIZE));
+
+                // Set first page results
+                setSemanticResults(response.results.slice(0, PAGE_SIZE));
+
+                console.log(`[AgentChat] Loaded all ${totalCount} similar ideas, showing page 1`);
             } catch (err: any) {
                 setError(err.message || 'Semantic search failed');
             } finally {
@@ -412,36 +428,32 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
         localStorage.removeItem('agent_last_query');
     };
 
-    const handleNextPage = async () => {
+    const handleNextPage = () => {
         if (currentPage >= totalPages) return;
 
-        setIsSearching(true);
-        try {
-            const response = await semanticSearchIdeas(currentQuery, embeddingProvider, currentPage + 1, 20, 0.3);
-            setSemanticResults(response.results);
-            setCurrentPage(response.pagination.currentPage);
-            console.log(`[AgentChat] Loaded page ${response.pagination.currentPage} of ${totalPages}`);
-        } catch (err: any) {
-            setError(err.message || 'Failed to load next page');
-        } finally {
-            setIsSearching(false);
-        }
+        const nextPage = currentPage + 1;
+        setCurrentPage(nextPage);
+
+        // Client-side pagination from allSemanticResults
+        const start = (nextPage - 1) * PAGE_SIZE;
+        const end = start + PAGE_SIZE;
+        setSemanticResults(allSemanticResults.slice(start, end));
+
+        console.log(`[AgentChat] Navigated to page ${nextPage} of ${totalPages}`);
     };
 
-    const handlePreviousPage = async () => {
+    const handlePreviousPage = () => {
         if (currentPage <= 1) return;
 
-        setIsSearching(true);
-        try {
-            const response = await semanticSearchIdeas(currentQuery, embeddingProvider, currentPage - 1, 20, 0.3);
-            setSemanticResults(response.results);
-            setCurrentPage(response.pagination.currentPage);
-            console.log(`[AgentChat] Loaded page ${response.pagination.currentPage} of ${totalPages}`);
-        } catch (err: any) {
-            setError(err.message || 'Failed to load previous page');
-        } finally {
-            setIsSearching(false);
-        }
+        const prevPage = currentPage - 1;
+        setCurrentPage(prevPage);
+
+        // Client-side pagination from allSemanticResults
+        const start = (prevPage - 1) * PAGE_SIZE;
+        const end = start + PAGE_SIZE;
+        setSemanticResults(allSemanticResults.slice(start, end));
+
+        console.log(`[AgentChat] Navigated to page ${prevPage} of ${totalPages}`);
     };
 
 
@@ -525,7 +537,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     );
 
     const renderSemanticResults = () => {
-        if (semanticResults.length === 0) {
+        if (allSemanticResults.length === 0) {
             return (
                 <div className="bg-slate-50 rounded-xl p-8 text-center">
                     <Search className="h-12 w-12 text-slate-400 mx-auto mb-3" />
@@ -536,7 +548,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
         }
 
         // Filter results based on local search query
-        const filteredResults = semanticResults.filter(idea => {
+        const filteredResults = allSemanticResults.filter(idea => {
             if (!localSearchQuery.trim()) return true;
 
             const searchLower = localSearchQuery.toLowerCase();
@@ -547,11 +559,17 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
             return matchesTitle || matchesDesc || matchesTags;
         });
 
+        // Apply client-side pagination to filtered results
+        const start = (currentPage - 1) * PAGE_SIZE;
+        const end = start + PAGE_SIZE;
+        const paginatedResults = filteredResults.slice(start, end);
+
+
         return (
             <div className="space-y-4">
                 <div className="flex items-center justify-between">
                     <h3 className="text-lg font-semibold text-slate-800">
-                        Similar Ideas ({filteredResults.length}{localSearchQuery ? ` of ${totalResults}` : ` total`})
+                        Similar Ideas ({totalResults} total)
                     </h3>
 
                     {/* Local Search Bar - Top Right */}
@@ -577,21 +595,11 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                         <div className="text-sm text-slate-600">
                             Page {currentPage} of {totalPages}
                         </div>
-                        <button
-                            onClick={handleReset}
-                            disabled={isResetting}
-                            className={`text-xs flex items-center gap-1 ${isResetting
-                                ? 'text-slate-400 cursor-not-allowed'
-                                : 'text-indigo-600 hover:text-indigo-700'
-                                }`}
-                        >
-                            <RefreshCcw className="h-3 w-3" />
-                            New Search
-                        </button>
+
                     </div>
                 </div>
                 <div className="grid gap-4">
-                    {filteredResults.map((idea) => (
+                    {paginatedResults.map((idea) => (
                         <div
                             key={idea.id}
                             className="bg-white border border-slate-200 rounded-lg p-4 hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer"
@@ -885,19 +893,26 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                                 setSearchMode('semantic');
                                 // If switching to semantic mode and we have suggested questions (document uploaded),
                                 // auto-trigger context search (but only if not already searching)
-                                if (suggestedQuestions.length > 0 && !isSearching) {
+                                if (suggestedQuestions.length > 0 && !isSearching && allSemanticResults.length === 0) {
                                     console.log('[AgentChat] Switched to semantic mode, auto-loading context search');
                                     setIsSearching(true);
+                                    setAllSemanticResults([]);
                                     setSemanticResults([]);
                                     setCurrentQuery('document context');
                                     setCurrentPage(1);
 
-                                    semanticSearchIdeas('', embeddingProvider, 1, 20, 0.35, 'context')
+                                    semanticSearchIdeas('', embeddingProvider, 1, 1000, 0.35, 'context')
                                         .then(response => {
-                                            setSemanticResults(response.results);
-                                            setTotalPages(response.pagination.totalPages);
-                                            setTotalResults(response.pagination.totalResults);
-                                            console.log(`[AgentChat] Context search found ${response.pagination.totalResults} relevant ideas`);
+                                            // Store ALL results
+                                            setAllSemanticResults(response.results);
+
+                                            const totalCount = response.results.length;
+                                            setTotalResults(totalCount);
+                                            setTotalPages(Math.ceil(totalCount / PAGE_SIZE));
+
+                                            // Show first page
+                                            setSemanticResults(response.results.slice(0, PAGE_SIZE));
+                                            console.log(`[AgentChat] Context search loaded all ${totalCount} relevant ideas`);
                                         })
                                         .catch(err => {
                                             console.error('[AgentChat] Context search failed:', err);
