@@ -122,15 +122,9 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
                 onQuestionsGenerated?.(response.suggestedQuestions);
             }
 
-            // Try to find matching ideas based on extracted keywords
-            if (response.keywords && response.keywords.length > 0) {
-                try {
-                    const matchingIdeas = await findMatchingIdeas(embeddingProvider);
-                    onMatchingIdeasFound?.(matchingIdeas);
-                } catch (err) {
-                    console.warn('[DocumentUpload] Failed to find matching ideas:', err);
-                }
-            }
+            // ✅ REMOVED: Automatic similar ideas loading
+            // Similar ideas are now loaded ONLY when user clicks "Find Similar Ideas" button
+            // This prevents 404 errors from ChromaDB collection not being ready yet
         } catch (err: any) {
             setError(err.message || 'Upload failed');
         } finally {

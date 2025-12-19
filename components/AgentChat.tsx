@@ -46,6 +46,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     const [selectedHistoryItem, setSelectedHistoryItem] = useState<AgentHistoryItem | null>(null);
     const [localSearchQuery, setLocalSearchQuery] = useState('');
     const [isResetting, setIsResetting] = useState(false);
+    const [contextReady, setContextReady] = useState(false); // Track if ChromaDB context is ready
 
     // Pagination constants
     const PAGE_SIZE = 20;
@@ -479,6 +480,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     const handleQuestionsGenerated = (questions: string[]) => {
         console.log(`[AgentChat] Received ${questions.length} suggested questions`);
         setSuggestedQuestions(questions);
+        setContextReady(true); // ✅ Context is ready - ChromaDB collection initialized
 
         // Auto-trigger context-aware search when document is uploaded
         if (questions.length > 0 && searchMode === 'semantic') {
@@ -890,37 +892,45 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                         </button>
                         <button
                             onClick={() => {
-                                setSearchMode('semantic');
-                                // If switching to semantic mode and we have suggested questions (document uploaded),
-                                // auto-trigger context search (but only if not already searching)
-                                if (suggestedQuestions.length > 0 && !isSearching && allSemanticResults.length === 0) {
-                                    console.log('[AgentChat] Switched to semantic mode, auto-loading context search');
-                                    setIsSearching(true);
-                                    setAllSemanticResults([]);
-                                    setSemanticResults([]);
-                                    setCurrentQuery('document context');
+                                // Guard: Only load if context is ready
+                                if (!contextReady) {
+                                    console.log('[AgentChat] Context not ready, cannot load similar ideas');
+                                    setError('Please upload a document first to establish context');
+                                    return;
+                                }
+
+                                if (searchMode !== 'semantic') {
+                                    setSearchMode('semantic');
                                     setCurrentPage(1);
 
-                                    semanticSearchIdeas('', embeddingProvider, 1, 1000, 0.35, 'context')
-                                        .then(response => {
-                                            // Store ALL results
-                                            setAllSemanticResults(response.results);
+                                    // Fetch context-relevant ideas only if not already loaded
+                                    if (semanticResults.length === 0) {
+                                        setIsSearching(true);
+                                        setError(null);
+                                        console.log('[AgentChat] Fetching context-relevant ideas...');
 
-                                            const totalCount = response.results.length;
-                                            setTotalResults(totalCount);
-                                            setTotalPages(Math.ceil(totalCount / PAGE_SIZE));
+                                        // Use original working function
+                                        semanticSearchIdeas('', embeddingProvider, 1, 1000, 0.35, 'context')
+                                            .then((response) => {
+                                                // Store ALL results
+                                                setAllSemanticResults(response.results);
 
-                                            // Show first page
-                                            setSemanticResults(response.results.slice(0, PAGE_SIZE));
-                                            console.log(`[AgentChat] Context search loaded all ${totalCount} relevant ideas`);
-                                        })
-                                        .catch(err => {
-                                            console.error('[AgentChat] Context search failed:', err);
-                                            setError(err.message || 'Failed to load context-relevant ideas');
-                                        })
-                                        .finally(() => {
-                                            setIsSearching(false);
-                                        });
+                                                const totalCount = response.results.length;
+                                                setTotalResults(totalCount);
+                                                setTotalPages(Math.ceil(totalCount / PAGE_SIZE));
+
+                                                // Show first page
+                                                setSemanticResults(response.results.slice(0, PAGE_SIZE));
+                                                console.log(`[AgentChat] Context search loaded all ${totalCount} relevant ideas`);
+                                            })
+                                            .catch(err => {
+                                                console.error('[AgentChat] Context search failed:', err);
+                                                setError(err.message || 'Failed to load context-relevant ideas');
+                                            })
+                                            .finally(() => {
+                                                setIsSearching(false);
+                                            });
+                                    }
                                 }
                             }}
                             className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-colors ${searchMode === 'semantic'
