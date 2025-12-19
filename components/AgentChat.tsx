@@ -892,45 +892,38 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                         </button>
                         <button
                             onClick={() => {
-                                // Guard: Only load if context is ready
-                                if (!contextReady) {
-                                    console.log('[AgentChat] Context not ready, cannot load similar ideas');
-                                    setError('Please upload a document first to establish context');
-                                    return;
-                                }
-
+                                // Always switch to semantic mode and load if needed
                                 if (searchMode !== 'semantic') {
                                     setSearchMode('semantic');
                                     setCurrentPage(1);
+                                }
 
-                                    // Fetch context-relevant ideas only if not already loaded
-                                    if (semanticResults.length === 0) {
-                                        setIsSearching(true);
-                                        setError(null);
-                                        console.log('[AgentChat] Fetching context-relevant ideas...');
+                                // Always fetch if no results (handles post-navigation state)
+                                if (semanticResults.length === 0 || allSemanticResults.length === 0) {
+                                    setIsSearching(true);
+                                    setError(null);
+                                    console.log('[AgentChat] Fetching context-relevant ideas...');
 
-                                        // Use original working function
-                                        semanticSearchIdeas('', embeddingProvider, 1, 1000, 0.35, 'context')
-                                            .then((response) => {
-                                                // Store ALL results
-                                                setAllSemanticResults(response.results);
+                                    semanticSearchIdeas('', embeddingProvider, 1, 1000, 0.35, 'context')
+                                        .then((response) => {
+                                            // Store ALL results for filtering
+                                            setAllSemanticResults(response.results);
 
-                                                const totalCount = response.results.length;
-                                                setTotalResults(totalCount);
-                                                setTotalPages(Math.ceil(totalCount / PAGE_SIZE));
+                                            const totalCount = response.results.length;
+                                            setTotalResults(totalCount);
+                                            setTotalPages(Math.ceil(totalCount / PAGE_SIZE));
 
-                                                // Show first page
-                                                setSemanticResults(response.results.slice(0, PAGE_SIZE));
-                                                console.log(`[AgentChat] Context search loaded all ${totalCount} relevant ideas`);
-                                            })
-                                            .catch(err => {
-                                                console.error('[AgentChat] Context search failed:', err);
-                                                setError(err.message || 'Failed to load context-relevant ideas');
-                                            })
-                                            .finally(() => {
-                                                setIsSearching(false);
-                                            });
-                                    }
+                                            // Show first page
+                                            setSemanticResults(response.results.slice(0, PAGE_SIZE));
+                                            console.log(`[AgentChat] Context search loaded all ${totalCount} relevant ideas`);
+                                        })
+                                        .catch(err => {
+                                            console.error('[AgentChat] Context search failed:', err);
+                                            setError(err.message || 'Failed to load context-relevant ideas');
+                                        })
+                                        .finally(() => {
+                                            setIsSearching(false);
+                                        });
                                 }
                             }}
                             className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-colors ${searchMode === 'semantic'
