@@ -262,8 +262,8 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
               )}
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-32" onClick={() => handleSort('domain')}>Theme</th>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-32" onClick={() => handleSort('status')}>Status</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-20" onClick={() => handleSort('likes')}><Heart className="h-3 w-3 inline mr-1" /> Likes</th>
-              <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-20" onClick={() => handleSort('score')}><Trophy className="h-3 w-3 inline mr-1" /> Score</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-[105px]" onClick={() => handleSort('score')}>Score <Trophy className="h-3 w-3 inline ml-1 align-middle -mb-0.5" /></th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase tracking-wider cursor-pointer w-[90px]" onClick={() => handleSort('likes')}>Likes <Heart className="h-3 w-3 inline ml-1 align-middle -mb-0.5" /></th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-slate-200">

@@ -49,6 +49,8 @@ import {
     generateSearchResponse,
     generateSmartSuggestions
 } from '../services/hybridSearchHelpers.js';
+import { fetchIdeasByIds } from '../services/ideaHelpers.js';
+
 
 const router = express.Router();
 const { Pool } = pg;
@@ -130,6 +132,29 @@ async function getCachedEmbedding(text) {
 
     return embedding;
 }
+
+/**
+ * Normalize idea IDs for PostgreSQL INTEGER[] storage
+ * Converts "idea_4460" → 4460, "4460" → 4460, 4460 → 4460
+ * CRITICAL: PostgreSQL expects INTEGER[], not STRING[]
+ */
+function normalizeIdeaId(id) {
+    if (typeof id === 'string') {
+        // Remove all non-digit characters and parse
+        const numericId = parseInt(id.replace(/[^\d]/g, ''), 10);
+        if (isNaN(numericId)) {
+            console.warn(`[normalizeIdeaId] Invalid ID: ${id}, returning null`);
+            return null;
+        }
+        return numericId;
+    }
+    if (typeof id === 'number') {
+        return id;
+    }
+    console.warn(`[normalizeIdeaId] Unexpected type for ID: ${typeof id}, value: ${id}`);
+    return null;
+}
+
 
 // FIX #2: Fast Intent Heuristic (Rule-based, 0ms)
 /**
@@ -604,99 +629,127 @@ router.post('/conversational', async (req, res) => {
         } catch (dbError) {
             console.warn(`[DB] Failed to save message:`, dbError.message);
         }
-        // REHYDRATION: Restore search state if conversation exists but no in-memory context
-        const isNewSession = !hasContext(userId, conversationId);
 
-        if (conversationId && isNewSession) {
-            console.log(`[Rehydration] Checking for saved search state...`);
+        // CRITICAL FIX 5: ALWAYS rehydrate context from DB (BEFORE intent classification!)
+        // This ensures context.baseQuery exists for refinement detection
+        console.log(`[Context Rehydration] Loading state from DB...`);
 
-            const searchStateService = new SearchStateService(pool);
-            const savedState = await searchStateService.loadSearchState(conversationId);
+        const searchStateService = new SearchStateService(pool);
+        const savedState = await searchStateService.loadSearchState(conversationId);
 
-            if (savedState && savedState.currentResultIds && savedState.currentResultIds.length > 0) {
-                console.log(`[Rehydration] Found saved state from ${new Date(savedState.updatedAt).toLocaleString()}`);
+        if (savedState && savedState.baseResultIds && savedState.baseResultIds.length > 0) {
+            console.log(`[Context Rehydration] Found saved state: ${savedState.baseResultIds.length} base IDs`);
 
-                // Fetch full idea objects from database using IDs
-                const ideaIds = savedState.currentResultIds;
-
-                const ideasResult = await pool.query(
-                    `SELECT id, title, summary, problem_statement, solution, 
-                    business_group, technologies, created_at
-             FROM ideas WHERE id = ANY($1::int[])`,
-                    [ideaIds]
-                );
-
-                // Map to ChromaDB format with metadata
-                const restoredResults = ideasResult.rows.map(idea => ({
-                    id: idea.id.toString(),
-                    document: `${idea.title} ${idea.summary} ${idea.problem_statement || ''} ${idea.solution || ''}`,
+            // CRITICAL: Rebuild results from saved metadata (includes technologies, etc.)
+            const baseIdeas = savedState.baseResultIds.map((id, index) => {
+                const metadata = savedState.baseResultsMetadata?.[index] || {};
+                return {
+                    id: `idea_${id}`,
+                    ideaId: id,
+                    title: metadata.title || '',
+                    summary: metadata.summary || '',
+                    document: `${metadata.title || ''}. ${metadata.summary || ''}`,
                     metadata: {
-                        idea_id: idea.id,
-                        title: idea.title,
-                        summary: idea.summary,
-                        business_group: idea.business_group,
-                        technologies: idea.technologies,
-                        created_at: idea.created_at
+                        ...metadata,
+                        idea_id: id
                     },
-                    similarity: 1.0 // Restored results don't have similarity scores
-                }));
+                    similarity: 0.85  // Placeholder
+                };
+            });
 
-                // Restore context
-                context.setBaseResults(savedState.baseQuery, restoredResults);
-                context.filters = savedState.appliedFilters || {};
-                context.lastActionType = 'rehydrated';
+            // Restore context from DB - CRITICAL: Set BOTH base AND current results
+            context.baseQuery = savedState.baseQuery;
+            context.baseResults = baseIdeas;
+            context.baseResultIds = savedState.baseResultIds;
+            context.currentResults = [...baseIdeas];  // ✅ CRITICAL: Initialize currentResults
+            context.currentResultIds = [...savedState.baseResultIds];  // ✅ CRITICAL
+            context.filters = savedState.appliedFilters || {};
 
-                console.log(`[Rehydration] ✅ Restored ${restoredResults.length}/${savedState.baseResultIds.length} results`);
+            console.log(`[Context Rehydration] ✅ Restored: baseQuery="${context.baseQuery}", ${baseIdeas.length} results with full metadata, filters=${JSON.stringify(context.filters)}`);
 
-                // Return restored results immediately if query is empty
-                if (!trimmedQuery || trimmedQuery.length === 0) {
-                    const formattedResults = formatResults(restoredResults);
-
-                    return res.json({
-                        intent: 'rehydrated',
-                        conversationId: context.conversationId,
-                        results: formattedResults,
-                        aiResponse: `Restored ${restoredResults.length} previous results`,
-                        suggestions: [],
-                        filtersApplied: context.filters,
-                        resultContext: {
-                            query: savedState.baseQuery,
-                            action: 'rehydrated',
-                            conversationId: context.conversationId,
-                            filters: context.filters
-                        },
+            // If we have current_result_ids (after filters), restore those too
+            if (savedState.currentResultIds && savedState.currentResultIds.length > 0
+                && savedState.currentResultIds.length < savedState.baseResultIds.length) {
+                // Rebuild filtered results from metadata
+                const currentIdeas = savedState.currentResultIds.map(id => {
+                    const index = savedState.baseResultIds.indexOf(id);
+                    const metadata = savedState.baseResultsMetadata?.[index] || {};
+                    return {
+                        id: `idea_${id}`,
+                        ideaId: id,
+                        title: metadata.title || '',
+                        summary: metadata.summary || '',
+                        document: `${metadata.title || ''}. ${metadata.summary || ''}`,
                         metadata: {
-                            intent: 'rehydrated',
-                            totalResults: restoredResults.length,
-                            processingTime: Date.now() - startTime
-                        }
-                    });
-                }
-            } else if (savedState) {
-                console.log(`[Rehydration] Saved state exists but no results to restore`);
+                            ...metadata,
+                            idea_id: id
+                        },
+                        similarity: 0.85
+                    };
+                });
+
+                context.currentResults = currentIdeas;  // ✅ Override with filtered results
+                context.currentResultIds = savedState.currentResultIds;
+                console.log(`[Context Rehydration] ✅ Also restored ${currentIdeas.length} filtered results`);
             }
+        } else {
+            console.log(`[Context Rehydration] No saved state found - starting fresh`);
         }
 
 
         // STEP 2: OPTIMIZED Intent Classification (FIX #2)
         const hasExistingContext = hasContext(userId, conversationId) && context.baseResults.length > 0;
 
-        // Try fast heuristic first (0ms)
-        // Try fast heuristic first (0ms) - ENTERPRISE AWARE
-        const currentDomain = context.filters?.domains?.[0] || null;
-        let intent = fastIntentHeuristic(trimmedQuery, hasExistingContext, currentDomain);
-        if (intent) {
-            console.log(`[Intent] FAST heuristic: ${intent} (0ms)`);
+        // CRITICAL FIX 3: Hard override for refinement queries (BEFORE any classification!)
+        // Check FIRST if this is a filter/refinement query on existing results
+        let intent = null;
+        if (context.baseQuery &&
+            trimmedQuery.match(/\b(using|only|filter|from the results|year|domain|tech|group|business|which|uses)\b/i)) {
+            console.log(`[Intent Override] Base query exists + refinement keywords → APPLY_FILTER`);
+            intent = INTENTS.APPLY_FILTER;
         } else {
-            // Ambiguous - fall back to LLM (2-5s)
-            console.log(`[Intent] Ambiguous - using LLM...`);
-            const llmStart = Date.now();
-            intent = await classifyIntent(trimmedQuery, context.intentHistory);
-            console.log(`[Intent] LLM classified: ${intent} (${Date.now() - llmStart}ms)`);
+            // Try fast heuristic first (0ms) - ENTERPRISE AWARE
+            const currentDomain = context.filters?.domains?.[0] || null;
+            intent = fastIntentHeuristic(trimmedQuery, hasExistingContext, currentDomain);
+            if (intent) {
+                console.log(`[Intent] FAST heuristic: ${intent} (0ms)`);
+            } else {
+                // Ambiguous - fall back to LLM (2-5s)
+                console.log(`[Intent] Ambiguous - using LLM...`);
+                const llmStart = Date.now();
+                intent = await classifyIntent(trimmedQuery, context.intentHistory);
+                console.log(`[Intent] LLM classified: ${intent} (${Date.now() - llmStart}ms)`);
+            }
         }
 
         context.addIntent(intent, trimmedQuery);
 
+        // GUARD: Prevent filter-only queries without base search
+        if ((intent === INTENTS.APPLY_FILTER || intent === INTENTS.REMOVE_FILTER) &&
+            (!context.baseResults || context.baseResults.length === 0)) {
+            console.log(`[Guard] Blocking ${intent} - no base search exists`);
+
+            return res.json({
+                intent,
+                conversationId,
+                results: [],
+                aiResponse: "Please perform a search before applying filters. Try searching for ideas first, then you can filter the results.",
+                suggestions: ['search for AI ideas', 'search for cloud projects', 'search for innovation'],
+                filtersApplied: {},
+                resultContext: {
+                    query: trimmedQuery,
+                    action: 'blocked_no_base_search',
+                    conversationId,
+                    filters: {}
+                },
+                metadata: {
+                    intent,
+                    totalResults: 0,
+                    error: 'NO_BASE_SEARCH',
+                    processingTime: Date.now() - startTime
+                }
+            });
+        }
 
 
 
@@ -1031,18 +1084,35 @@ router.post('/conversational', async (req, res) => {
 
         // Save search state to database (for chat switching)
         if (conversationId && (intent === INTENTS.SEMANTIC_SEARCH || intent === INTENTS.REFINE_SEARCH)) {
+
+            // CRITICAL FIX 1 & 2: Normalize IDs + Fail-fast on save error
             try {
                 const searchStateService = new SearchStateService(pool);
+                const baseResultIds = context.baseResults.map(r => normalizeIdeaId(r.metadata?.idea_id || r.id)).filter(id => id !== null);
+                const currentResultIds = finalResults.map(r => normalizeIdeaId(r.metadata?.idea_id || r.ideaId || r.id)).filter(id => id !== null);
+
+                // CRITICAL: Extract full metadata for persistence
+                const baseResultsMetadata = context.baseResults.map(r => r.metadata || {});
+
+                console.log(`[SearchState] Saving: ${baseResultIds.length} base IDs, ${currentResultIds.length} current IDs, ${baseResultsMetadata.length} metadata objects`);
+
                 await searchStateService.saveSearchState(conversationId, {
                     baseQuery: context.baseQuery,
-                    baseResultIds: context.baseResultIds,
-                    currentResultIds: context.currentResultIds,
+                    baseResultIds,
+                    currentResultIds,
                     appliedFilters: context.filters,
-                    baseDomain: context.filters?.domains?.[0] || null
+                    baseDomain: context.filters?.domains?.[0] || null,
+                    baseResultsMetadata  // NEW: Save full metadata
                 });
-                console.log(`[Persistence] ✅ Saved search state (${context.currentResultIds.length} results)`);
-            } catch (persistError) {
-                console.warn(`[Persistence] Failed to save search state:`, persistError.message);
+
+                console.log('[SearchState] ✅ Persisted successfully to conversation_search_state');
+            } catch (saveError) {
+                console.error('[SearchState] ❌ CRITICAL: Persistence failed', saveError);
+                return res.status(500).json({
+                    error: 'Failed to persist search state',
+                    message: 'Unable to save search results for conversation',
+                    details: saveError.message
+                });
             }
         }
 
@@ -1689,6 +1759,70 @@ router.post('/clear-context', async (req, res) => {
         res.status(500).json({
             error: true,
             message: 'Failed to clear context'
+        });
+    }
+});
+
+/**
+ * Rehydrate search results from conversation_search_state
+ * Used by frontend to restore results when loading conversation
+ * This is the SINGLE SOURCE OF TRUTH for search context
+ */
+router.post('/rehydrate', async (req, res) => {
+    try {
+        const { conversationId } = req.body;
+
+        if (!conversationId) {
+            return res.json({
+                results: [],
+                filters: {},
+                baseQuery: null
+            });
+        }
+
+        console.log(`[Rehydrate] Loading search state for conversation: ${conversationId}`);
+
+        // Load persisted state from conversation_search_state table
+        const searchStateService = new SearchStateService(pool);
+        const state = await searchStateService.loadSearchState(conversationId);
+
+        if (!state || !state.currentResultIds || state.currentResultIds.length === 0) {
+            console.log(`[Rehydrate] No search state found for conversation ${conversationId}`);
+            return res.json({
+                results: [],
+                filters: {},
+                baseQuery: null
+            });
+        }
+
+        console.log(`[Rehydrate] Found state: ${state.currentResultIds.length} result IDs`);
+
+        // Fetch full idea details using current result IDs
+        const ideas = await fetchIdeasByIds(state.currentResultIds);
+
+        // Format for frontend
+        const formatted = formatResults(ideas);
+
+        console.log(`[Rehydrate] ✅ Rehydrated ${formatted.length} results`);
+
+        res.json({
+            results: formatted,
+            filters: state.appliedFilters || {},
+            baseQuery: state.baseQuery,
+            metadata: {
+                totalResults: formatted.length,
+                baseResultsCount: state.baseResultIds?.length || 0,
+                rehydratedAt: new Date().toISOString()
+            }
+        });
+
+    } catch (error) {
+        console.error('[Rehydrate] Error:', error);
+        res.status(500).json({
+            error: 'Failed to rehydrate search state',
+            results: [],
+            filters: {},
+            baseQuery: null
         });
     }
 });

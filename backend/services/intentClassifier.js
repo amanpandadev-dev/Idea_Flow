@@ -1,7 +1,7 @@
 /**
  * Intent Classifier Service
- * Uses Llama to classify user intent into 7 categories
- * Replaces all rule-based NLP classification
+ * Uses rule-based classification with LLM fallback
+ * Rule-based is fast and deterministic, LLM for ambiguous cases only
  */
 
 import { generateText } from '../config/ollama.js';
@@ -18,26 +18,83 @@ export const INTENTS = {
 };
 
 /**
- * Classify user intent using Llama
+ * Classify user intent using rule-based overrides + Llama fallback
+ * Rule-based is fast and deterministic, LLM is for ambiguous cases only
+ * 
+ * @param {string} message - User's message
+ * @param {Object} context - Conversation context with baseQuery and semanticResults
+ * @returns {Promise<string>} Intent category
  */
-export async function classifyIntent(message, conversationHistory = []) {
-    const prompt = buildIntentPrompt(message, conversationHistory);
+export async function classifyIntent(message, context = {}) {
+    const queryLower = message.toLowerCase().trim();
+
+    // RULE 1: No base query = NEW SEARCH (SEMANTIC_SEARCH)
+    if (!context.baseQuery || !context.semanticResults || context.semanticResults.length === 0) {
+        console.log(`[Intent Classifier] No base query → SEMANTIC_SEARCH`);
+        return INTENTS.SEMANTIC_SEARCH;
+    }
+
+    // RULE 2: Reset keywords = RESET_FILTERS
+    const resetKeywords = ['reset', 'clear all', 'start over', 'remove all'];
+    if (resetKeywords.some(kw => queryLower.includes(kw))) {
+        console.log(`[Intent Classifier] Reset keyword detected → RESET_FILTERS`);
+        return INTENTS.RESET_FILTERS;
+    }
+
+    // RULE 3: Filter keywords + existing context = APPLY_FILTER
+    const filterKeywords = ['filter', 'only', 'from', 'year', 'domain', 'group', 'in', 'exclude', 'just', 'by'];
+    if (filterKeywords.some(kw => queryLower.includes(kw))) {
+        console.log(`[Intent Classifier] Filter keyword detected → APPLY_FILTER`);
+        return INTENTS.APPLY_FILTER;
+    }
+
+    // RULE 4: Remove filter keywords = REMOVE_FILTER
+    const removeKeywords = ['remove', 'clear', 'without', 'not'];
+    if (removeKeywords.some(kw => queryLower.includes(kw)) &&
+        (queryLower.includes('filter') || queryLower.includes('domain') || queryLower.includes('year'))) {
+        console.log(`[Intent Classifier] Remove filter detected → REMOVE_FILTER`);
+        return INTENTS.REMOVE_FILTER;
+    }
+
+    // RULE 5: Refinement keywords = REFINE_SEARCH
+    const refineKeywords = ['similar', 'like', 'related', 'narrow', 'focus on', 'more specific', 'also'];
+    if (refineKeywords.some(kw => queryLower.includes(kw))) {
+        console.log(`[Intent Classifier] Refinement keyword detected → REFINE_SEARCH`);
+        return INTENTS.REFINE_SEARCH;
+    }
+
+    // RULE 6: Question keywords = ASK_QUESTION
+    const questionKeywords = ['how many', 'what', 'which', 'show me top', 'best', 'worst', 'count'];
+    if (questionKeywords.some(kw => queryLower.includes(kw)) || queryLower.endsWith('?')) {
+        console.log(`[Intent Classifier] Question detected → ASK_QUESTION`);
+        return INTENTS.ASK_QUESTION;
+    }
+
+    // RULE 7: Greeting/chat keywords = FREE_FORM_CHAT
+    const chatKeywords = ['hello', 'hi', 'thanks', 'thank you', 'bye', 'help', 'what can you'];
+    if (chatKeywords.some(kw => queryLower.includes(kw))) {
+        console.log(`[Intent Classifier] Chat detected → FREE_FORM_CHAT`);
+        return INTENTS.FREE_FORM_CHAT;
+    }
+
+    // FALLBACK: LLM classification for ambiguous cases
+    console.log(`[Intent Classifier] No rule match, using LLM...`);
+    const prompt = buildIntentPrompt(message, []);
 
     try {
         const response = await generateText(prompt, {
             model: 'llama3.1',
-            temperature: 0.1,  // Low temperature for consistent classification
+            temperature: 0.1,
             maxOutputTokens: 20
         });
 
         const intent = parseIntent(response);
-        console.log(`[Intent Classifier] "${message}" → ${intent}`);
+        console.log(`[Intent Classifier] LLM: \"${message}\" → ${intent}`);
 
         return intent;
 
     } catch (error) {
-        console.error('[Intent Classifier] Error:', error.message);
-        // Default to semantic search on error
+        console.error('[Intent Classifier] LLM Error:', error.message);
         return INTENTS.SEMANTIC_SEARCH;
     }
 }

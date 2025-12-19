@@ -392,14 +392,20 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     };
 
     /**
-     * Load conversation state from backend (Progressive Narrowing)
-     * Restores results WITHOUT re-searching
+     * Load conversation state from backend using conversation_search_state table
+     * This is the SINGLE SOURCE OF TRUTH for search results
+     * Messages are for UI history only - results come from DB
      */
     const loadConversation = async (convId: string) => {
         try {
             console.log(`[ProSearch] Loading conversation: ${convId}`);
 
-            const response = await fetch(`/api/search/conversation/${convId}`);
+            // ✅ CORRECT: Load from conversation_search_state table via /rehydrate
+            const response = await fetch('/api/search/rehydrate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ conversationId: convId })
+            });
 
             if (!response.ok) {
                 console.warn('[ProSearch] Conversation not found or expired');
@@ -411,17 +417,19 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
 
             const data = await response.json();
 
-            if (data.success && data.results) {
-                console.log(`[ProSearch] Restored ${data.results.length} results from conversation`);
+            if (data.results && data.results.length > 0) {
+                console.log(`[ProSearch] ✅ Rehydrated ${data.results.length} results from DB`);
 
+                // Restore results from conversation_search_state
                 setResults(data.results);
+                setFiltersApplied(data.filters || {});
                 setMetadata({
-                    intent: 'reload',
+                    intent: 'rehydrated',
                     totalResults: data.results.length,
-                    filters: data.filters,
+                    filters: data.filters || {},
                     processingTime: 0,
                     context: {
-                        query: data.currentQuery,
+                        query: data.baseQuery,
                         filters: data.filters
                     }
                 });
@@ -434,6 +442,8 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                     timestamp: new Date().toISOString()
                 };
                 setMessages(prev => [...prev, reloadMsg]);
+            } else {
+                console.log('[ProSearch] No results to restore');
             }
 
         } catch (error) {
@@ -511,35 +521,30 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
             if (response.ok) {
                 const data = await response.json();
                 if (data.messages.length > 0) {
-                    // Map messages and preserve metadata for assistant messages with results
+                    // Map messages (UI history only)
                     const loadedMessages = data.messages.map((msg: any) => ({
                         id: `msg_${msg.id}`,
                         role: msg.role,
                         content: msg.content,
-                        timestamp: msg.timestamp,
-                        metadata: msg.role === 'assistant' && msg.metadata ? {
-                            results: msg.metadata.results || [],
-                            searchMetadata: msg.metadata.searchMetadata || null,
-                            resultsCount: msg.metadata.resultsCount || 0
-                        } : undefined
+                        timestamp: msg.timestamp
                     }));
 
                     setMessages(loadedMessages);
 
-                    // Find the last assistant message with results metadata and show those results
-                    const lastAssistantMsg = [...data.messages]
+                    // CRITICAL: Find conversationId from last assistant message metadata
+                    const lastMsgWithConvId = [...data.messages]
                         .reverse()
-                        .find((msg: any) => msg.role === 'assistant' && msg.metadata?.results?.length > 0);
+                        .find((msg: any) => msg.role === 'assistant' && msg.metadata?.conversationId);
 
-                    if (lastAssistantMsg?.metadata?.results) {
-                        setResults(lastAssistantMsg.metadata.results);
-                        setMetadata(lastAssistantMsg.metadata.searchMetadata || null);
-                        // Find the message ID for the last assistant message with results
-                        const lastMsgWithResults = loadedMessages.find(
-                            (m: Message) => m.role === 'assistant' && m.metadata?.results?.length > 0
-                        );
-                        setActiveResultMessageId(lastMsgWithResults?.id || null);
+                    if (lastMsgWithConvId?.metadata?.conversationId) {
+                        const convId = lastMsgWithConvId.metadata.conversationId;
+                        console.log(`[ProSearch] Found conversationId: ${convId}, rehydrating results...`);
+
+                        // Rehydrate results from conversation_search_state
+                        setConversationId(convId);
+                        await loadConversation(convId);
                     } else {
+                        console.log('[ProSearch] No conversationId found in message metadata');
                         setResults([]);
                         setMetadata(null);
                         setActiveResultMessageId(null);
@@ -720,8 +725,10 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
 
             // Save AI response with results for later retrieval
             // NOTE: Only save result IDs to avoid database payload limits
+            // CRITICAL: Include conversationId for result rehydration
             if (sessionId) {
                 saveMessage(sessionId, 'assistant', aiMessage.content, {
+                    conversationId: data.conversationId,  // ✅ CRITICAL for rehydration
                     resultsCount: searchResults.length,
                     filters: searchMeta?.filters,
                     resultIds: searchResults.map((r: any) => r.id || r.dbId), // Only save IDs
@@ -862,39 +869,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                         </div>
                         <div className="flex items-center gap-2">
                             {/* Context Management Buttons */}
-                            <button
-                                onClick={saveContext}
-                                disabled={contextLoading}
-                                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors ${contextLoading
-                                    ? 'bg-white/10 cursor-not-allowed'
-                                    : 'bg-white/20 hover:bg-white/30'
-                                    }`}
-                                title="Save current filters and query"
-                            >
-                                <Save className="w-4 h-4 text-white" />
-                                <span className="text-white text-xs font-medium">Save</span>
-                            </button>
 
-                            {savedContext && (
-                                <button
-                                    onClick={clearContext}
-                                    disabled={contextLoading}
-                                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors ${contextLoading
-                                        ? 'bg-white/10 cursor-not-allowed'
-                                        : 'bg-red-500/80 hover:bg-red-500'
-                                        }`}
-                                    title="Clear saved context"
-                                >
-                                    <Trash2 className="w-4 h-4 text-white" />
-                                    <span className="text-white text-xs font-medium">Clear</span>
-                                </button>
-                            )}
-
-                            {contextMessage && (
-                                <span className="text-white text-xs font-medium px-2 py-1 bg-white/20 rounded">
-                                    {contextMessage}
-                                </span>
-                            )}
 
                             <button
                                 onClick={() => setIsExploreOpen(true)}

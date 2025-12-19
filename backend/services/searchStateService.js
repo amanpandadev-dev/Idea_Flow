@@ -19,14 +19,15 @@ export class SearchStateService {
             baseResultIds,
             currentResultIds,
             appliedFilters,
-            baseDomain
+            baseDomain,
+            baseResultsMetadata  // NEW: Full metadata array
         } = state;
 
         try {
             await this.pool.query(`
                 INSERT INTO conversation_search_state 
-                (conversation_id, base_query, base_result_ids, current_result_ids, applied_filters, base_domain)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                (conversation_id, base_query, base_result_ids, current_result_ids, applied_filters, base_domain, base_results_metadata)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 ON CONFLICT (conversation_id) 
                 DO UPDATE SET
                     base_query = $2,
@@ -34,6 +35,7 @@ export class SearchStateService {
                     current_result_ids = $4,
                     applied_filters = $5,
                     base_domain = $6,
+                    base_results_metadata = $7,
                     updated_at = NOW()
             `, [
                 conversationId,
@@ -41,7 +43,8 @@ export class SearchStateService {
                 baseResultIds,
                 currentResultIds,
                 JSON.stringify(appliedFilters),
-                baseDomain
+                baseDomain,
+                JSON.stringify(baseResultsMetadata || [])
             ]);
 
             return true;
@@ -76,6 +79,7 @@ export class SearchStateService {
                 currentResultIds: state.current_result_ids,
                 appliedFilters: state.applied_filters || {},
                 baseDomain: state.base_domain,
+                baseResultsMetadata: state.base_results_metadata || [],  // NEW: Restore metadata
                 createdAt: state.created_at,
                 updatedAt: state.updated_at
             };
