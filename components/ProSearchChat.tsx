@@ -425,6 +425,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                 setFiltersApplied(data.filters || {});
                 setMetadata({
                     intent: 'rehydrated',
+```
                     totalResults: data.results.length,
                     filters: data.filters || {},
                     processingTime: 0,
@@ -435,13 +436,13 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                 });
 
                 // Show reload message
-                const reloadMsg: Message = {
-                    id: `reload_${Date.now()}`,
-                    role: 'assistant',
-                    content: `Conversation restored! Showing ${data.results.length} results.`,
-                    timestamp: new Date().toISOString()
-                };
-                setMessages(prev => [...prev, reloadMsg]);
+                // const reloadMsg: Message = {
+                //     id: `reload_${ Date.now() }`,
+                //     role: 'assistant',
+                //     content: `Conversation restored! Showing ${ data.results.length } results.`,
+                //     timestamp: new Date().toISOString()
+                // };
+                // setMessages(prev => [...prev, reloadMsg]);
             } else {
                 console.log('[ProSearch] No results to restore');
             }
@@ -482,7 +483,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     // Save message to session
     const saveMessage = async (sessionId: number, role: string, content: string, metadata?: any) => {
         try {
-            const response = await fetch(`/api/chat/sessions/${sessionId}/messages`, {
+            const response = await fetch(`/ api / chat / sessions / ${ sessionId } / messages`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -504,7 +505,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     // Load session messages and restore search results with metadata
     const loadSession = async (sessionId: number) => {
         try {
-            const response = await fetch(`/api/chat/sessions/${sessionId}/messages`, {
+            const response = await fetch(`/ api / chat / sessions / ${ sessionId } / messages`, {
                 headers: {
                     'Content-Type': 'application/json',
                     'x-user-id': userId || ''
@@ -523,7 +524,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                 if (data.messages.length > 0) {
                     // Map messages (UI history only)
                     const loadedMessages = data.messages.map((msg: any) => ({
-                        id: `msg_${msg.id}`,
+                        id: `msg_${ msg.id }`,
                         role: msg.role,
                         content: msg.content,
                         timestamp: msg.timestamp
@@ -538,7 +539,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
 
                     if (lastMsgWithConvId?.metadata?.conversationId) {
                         const convId = lastMsgWithConvId.metadata.conversationId;
-                        console.log(`[ProSearch] Found conversationId: ${convId}, rehydrating results...`);
+                        console.log(`[ProSearch] Found conversationId: ${ convId }, rehydrating results...`);
 
                         // Rehydrate results from conversation_search_state
                         setConversationId(convId);
@@ -589,7 +590,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
         }
 
         const userMessage: Message = {
-            id: `user_${Date.now()}`,
+            id: `user_${ Date.now() }`,
             role: 'user',
             content: searchQuery,
             timestamp: new Date().toISOString()
@@ -641,20 +642,20 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
             // PROGRESSIVE NARROWING: Save conversationId
             if (data.conversationId) {
                 setConversationId(data.conversationId);
-                sessionStorage.setItem(`prosearch_conversationId_${userId}`, data.conversationId);
-                console.log(`[ProSearch] Saved conversationId: ${data.conversationId}`);
+                sessionStorage.setItem(`prosearch_conversationId_${ userId }`, data.conversationId);
+                console.log(`[ProSearch] Saved conversationId: ${ data.conversationId }`);
 
                 // Log progressive narrowing stats
                 if (data.metadata?.progressive) {
                     const prog = data.metadata.progressive;
-                    console.log(`[Progressive] Base: ${prog.baseResultCount}, Current: ${prog.currentResultCount}, Ratio: ${prog.narrowingRatio}`);
+                    console.log(`[Progressive] Base: ${ prog.baseResultCount }, Current: ${ prog.currentResultCount }, Ratio: ${ prog.narrowingRatio }`);
                 }
             }
 
             // NEW: Save result context for UI display
             if (data.resultContext) {
                 setResultContext(data.resultContext);
-                console.log(`[ResultContext] Action: ${data.resultContext.action}, Query: "${data.resultContext.query}"`);
+                console.log(`[ResultContext] Action: ${ data.resultContext.action }, Query: "${data.resultContext.query}"`);
             }
 
             // Save filters from backend
@@ -675,12 +676,12 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                 setExploreFilters({ themes: [], businessGroups: [], technologies: [] });
 
                 // Clear sessionStorage
-                sessionStorage.removeItem(`prosearch_results_${userId}`);
-                sessionStorage.removeItem(`prosearch_metadata_${userId}`);
+                sessionStorage.removeItem(`prosearch_results_${ userId }`);
+                sessionStorage.removeItem(`prosearch_metadata_${ userId }`);
 
                 // Add reset message
                 const resetMessage: Message = {
-                    id: `reset_${Date.now()}`,
+                    id: `reset_${ Date.now() }`,
                     role: 'assistant',
                     content: data.aiResponse || 'Chat cleared! Start a fresh search.',
                     timestamp: new Date().toISOString()
@@ -692,9 +693,9 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
             }
 
             const aiMessage: Message = {
-                id: `ai_${Date.now()}`,
+                id: `ai_${ Date.now() }`,
                 role: 'assistant',
-                content: data.aiResponse || `Found ${searchResults.length} results`,
+                content: data.aiResponse || `Found ${ searchResults.length } results`,
                 timestamp: new Date().toISOString(),
                 metadata: {
                     results: searchResults,
@@ -717,8 +718,8 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
 
             // Persist results in sessionStorage for navigation persistence
             try {
-                sessionStorage.setItem(`prosearch_results_${userId}`, JSON.stringify(searchResults));
-                sessionStorage.setItem(`prosearch_metadata_${userId}`, JSON.stringify(searchMeta));
+                sessionStorage.setItem(`prosearch_results_${ userId }`, JSON.stringify(searchResults));
+                sessionStorage.setItem(`prosearch_metadata_${ userId }`, JSON.stringify(searchMeta));
             } catch (error) {
                 console.warn('[ProSearch] Failed to save to sessionStorage:', error);
             }
@@ -739,7 +740,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
         } catch (err: any) {
             setError(err.message || 'Search failed');
             const errorMessage: Message = {
-                id: `error_${Date.now()}`,
+                id: `error_${ Date.now() }`,
                 role: 'assistant',
                 content: 'Sorry, I encountered an error. Please try again.',
                 timestamp: new Date().toISOString()
@@ -758,7 +759,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
             parts.push(filters.technologies.join(', '));
         }
         if (filters.years?.length > 0) {
-            parts.push(`year ${filters.years.join(', ')}`);
+            parts.push(`year ${ filters.years.join(', ') }`);
         }
         if (filters.domains?.length > 0) {
             parts.push(filters.domains.join(', '));
@@ -807,9 +808,9 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
             handleSearch(query);
         } else {
             setMessages(prev => [...prev, {
-                id: `sys_${Date.now()}`,
+                id: `sys_${ Date.now() }`,
                 role: 'assistant',
-                content: `Filters applied: ${filters.themes.length + filters.businessGroups.length + filters.technologies.length} active. Type a query to search with these filters.`,
+                content: `Filters applied: ${ filters.themes.length + filters.businessGroups.length + filters.technologies.length } active.Type a query to search with these filters.`,
                 timestamp: new Date().toISOString()
             }]);
         }
@@ -843,7 +844,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
             {/* LEFT SIDE - CHAT */}
             <div
                 className="flex flex-col border-r border-slate-200 bg-white shadow-lg transition-all min-w-[300px] flex-shrink-0"
-                style={{ width: `${chatWidth}px` }}
+                style={{ width: `${ chatWidth } px` }}
             >
                 {/* Chat Header */}
                 <div className="px-4 py-3 border-b border-slate-200 bg-gradient-to-r from-blue-600 to-purple-600">
@@ -885,13 +886,6 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                 )}
                             </button>
 
-                            <button
-                                onClick={handleClearChat}
-                                className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
-                                title="Clear chat"
-                            >
-                                <X className="w-4 h-4 text-white" />
-                            </button>
                         </div>
                     </div>
                 </div>
@@ -928,19 +922,20 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                         return (
                             <div
                                 key={message.id}
-                                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                                className={`flex ${ message.role === 'user' ? 'justify-end' : 'justify-start' } `}
                             >
                                 <div
                                     onClick={() => hasResults && handleMessageClick(message)}
-                                    className={`max-w-[85%] rounded-2xl px-4 py-3 ${message.role === 'user'
-                                        ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
-                                        : hasResults
-                                            ? `bg-slate-100 text-slate-800 cursor-pointer hover:bg-slate-200 transition-colors ${isActiveResult ? 'ring-2 ring-blue-500' : ''}`
-                                            : 'bg-slate-100 text-slate-800'
-                                        }`}
+                                    className={`max - w - [85 %] rounded - 2xl px - 4 py - 3 ${
+                    message.role === 'user'
+                        ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
+                        : hasResults
+                            ? `bg-slate-100 text-slate-800 cursor-pointer hover:bg-slate-200 transition-colors ${isActiveResult ? 'ring-2 ring-blue-500' : ''}`
+                            : 'bg-slate-100 text-slate-800'
+                } `}
                                 >
                                     <p className="text-sm leading-relaxed">{message.content}</p>
-                                    <div className={`flex items-center justify-between mt-1 ${message.role === 'user' ? 'text-blue-100' : 'text-slate-500'}`}>
+                                    <div className={`flex items - center justify - between mt - 1 ${ message.role === 'user' ? 'text-blue-100' : 'text-slate-500' } `}>
                                         <p className="text-xs">
                                             {new Date(message.timestamp).toLocaleTimeString()}
                                         </p>
@@ -971,7 +966,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                                 <div
                                                     key={i}
                                                     className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce"
-                                                    style={{ animationDelay: `${i * 0.15}s` }}
+                                                    style={{ animationDelay: `${ i * 0.15 } s` }}
                                                 />
                                             ))}
                                         </div>
@@ -1043,7 +1038,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                     <div className="flex items-center justify-between">
                         <div className="flex-1">
                             <h3 className="text-lg font-bold text-slate-800">
-                                Search Results {results.length > 0 && `(${results.length})`}
+                                Search Results {results.length > 0 && `(${ results.length })`}
                             </h3>
 
                             {/* NEW: Result Context Header */}
@@ -1144,7 +1139,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
 
                                 return (
                                     <div
-                                        key={idea.id || `result-${index}`}
+                                        key={idea.id || `result - ${ index } `}
                                         className="bg-white rounded-xl p-5 border border-slate-200 hover:border-blue-400 hover:shadow-lg transition-all cursor-pointer group"
                                         onClick={() => onNavigateToIdea?.(idea)}
                                     >
@@ -1163,7 +1158,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                                     <div
                                                         className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-full text-xs font-bold shadow-lg flex items-center gap-2"
                                                         title={idea.scoreBreakdown ?
-                                                            `Vector: ${(idea.scoreBreakdown.vector * 100).toFixed(0)}% | Metadata: ${(idea.scoreBreakdown.metadata * 100).toFixed(0)}% | Keyword: ${(idea.scoreBreakdown.keyword * 100).toFixed(0)}%`
+                                                            `Vector: ${ (idea.scoreBreakdown.vector * 100).toFixed(0) }% | Metadata: ${ (idea.scoreBreakdown.metadata * 100).toFixed(0) }% | Keyword: ${ (idea.scoreBreakdown.keyword * 100).toFixed(0) }% `
                                                             : 'Match score'}
                                                     >
                                                         {idea.hybridScore !== undefined ? (
