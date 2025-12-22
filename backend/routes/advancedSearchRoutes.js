@@ -97,9 +97,165 @@ function mapDBToFrontend(row, matchScore = 0) {
 
 /**
  * GET /api/ideas/search
- * Advanced search with NLP, spell correction, and hybrid ranking
+ * Simple fast text-based search across all ideas (default)
+ * Uses PostgreSQL ILIKE for instant text matching
  */
 router.get('/search', async (req, res) => {
+  try {
+    const { q, themes, businessGroups, technologies } = req.query;
+
+    if (!q || typeof q !== 'string' || q.trim().length === 0) {
+      return res.status(400).json({
+        error: true,
+        message: 'Search query (q) is required'
+      });
+    }
+
+    const pool = req.app.get('db');
+    if (!pool) {
+      return res.status(503).json({
+        error: true,
+        message: 'Database not available'
+      });
+    }
+
+    console.log(`\n[SearchRoute] 🔍 Fast text search: "${q}"`);
+
+    // Get user ID for likes
+    const userId = req.user ? req.user.user.emp_id : '';
+
+    const searchPattern = `%${q.trim()}%`;
+
+    // Simple SQL text search across ALL ideas using ILIKE
+    let sqlQuery = `
+      SELECT 
+        i.idea_id,
+        i.title,
+        i.summary,
+        i.challenge_opportunity,
+        i.code_preference,
+        i.build_preference,
+        i.build_phase,
+        i.business_group as idea_bg,
+        i.score as idea_score,
+        i.created_at,
+        MAX(a.associate_id) as associate_id,
+        MAX(a.account) as account,
+        MAX(a.parent_ou) as parent_ou,
+        MAX(it.business_group) as assoc_bg,
+        (SELECT COUNT(*) FROM likes WHERE idea_id = i.idea_id) as likes_count,
+        (EXISTS (SELECT 1 FROM likes WHERE idea_id = i.idea_id AND user_id = $1)) as is_liked
+      FROM ideas i
+      LEFT JOIN idea_team it ON i.idea_id = it.idea_id
+      LEFT JOIN associates a ON it.associate_id = a.associate_id
+      WHERE (
+        i.title ILIKE $2 OR
+        i.summary ILIKE $2 OR
+        i.challenge_opportunity ILIKE $2 OR
+        i.code_preference ILIKE $2 OR
+        i.build_preference ILIKE $2
+      )
+      GROUP BY i.idea_id, i.title, i.summary, i.challenge_opportunity, i.code_preference, i.build_preference, i.build_phase, i.business_group, i.score, i.created_at
+    `;
+
+    const params = [userId, searchPattern];
+    let paramIndex = 3;
+
+    // Apply filters if provided
+    if (themes && themes !== '') {
+      const themeList = JSON.parse(themes);
+      if (themeList.length > 0) {
+        sqlQuery += ` AND i.challenge_opportunity = ANY($${paramIndex})`;
+        params.push(themeList);
+        paramIndex++;
+      }
+    }
+
+    if (businessGroups && businessGroups !== '') {
+      const bgList = JSON.parse(businessGroups);
+      if (bgList.length > 0) {
+        sqlQuery += ` AND i.business_group = ANY($${paramIndex})`;
+        params.push(bgList);
+        paramIndex++;
+      }
+    }
+
+    if (technologies && technologies !== '') {
+      const techList = JSON.parse(technologies);
+      if (techList.length > 0) {
+        sqlQuery += ` AND i.code_preference ILIKE ANY($${paramIndex})`;
+        params.push(techList.map(t => `%${t}%`));
+        paramIndex++;
+      }
+    }
+
+    sqlQuery += ` ORDER BY i.score DESC NULLS LAST, i.idea_id DESC LIMIT 500`;
+
+    const result = await pool.query(sqlQuery, params);
+    const documents = result.rows;
+
+    console.log(`[SearchRoute] 📊 Found ${documents.length} matching ideas`);
+
+    // Map results to frontend format
+    const mappedResults = documents.map(row => {
+      const safeInt = (val) => (val !== null && val !== undefined) ? parseInt(val, 10) : 0;
+
+      return {
+        id: `IDEA-${row.idea_id}`,
+        dbId: row.idea_id,
+        title: row.title,
+        description: row.summary || '',
+        domain: row.challenge_opportunity || 'Other',
+        status: row.build_phase || 'Submitted',
+        businessGroup: row.idea_bg || 'Corporate Functions',
+        buildType: row.build_preference || 'New Solution / IP',
+        technologies: row.code_preference ?
+          (row.code_preference.includes(',') ?
+            row.code_preference.split(',').map(s => s.trim()) :
+            [row.code_preference]) : [],
+        submissionDate: row.created_at,
+        associateId: row.associate_id,
+        associateAccount: row.account || 'Unknown',
+        associateBusinessGroup: row.assoc_bg || 'Unknown',
+        score: row.idea_score !== undefined && row.idea_score !== null ? safeInt(row.idea_score) : 0,
+        likesCount: safeInt(row.likes_count),
+        isLiked: !!row.is_liked,
+        matchScore: 100,  // For simple text search, all matches are 100%
+        futureScope: "Integration with wider enterprise ecosystems.",
+        impactScore: 8,
+        confidenceScore: 8,
+        feasibilityScore: 8
+      };
+    });
+
+    console.log(`[SearchRoute] ✅ Returning ${mappedResults.length} results`);
+
+    res.json({
+      success: true,
+      results: mappedResults,
+      facets: {
+        domains: [...new Set(mappedResults.map(r => r.domain))],
+        businessGroups: [...new Set(mappedResults.map(r => r.businessGroup))],
+        technologies: [...new Set(mappedResults.flatMap(r => r.technologies))]
+      }
+    });
+
+  } catch (error) {
+    console.error('[SearchRoute] Error:', error);
+    res.status(500).json({
+      error: true,
+      message: 'Search failed',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/ideas/search/advanced
+ * Advanced search with NLP, spell correction, and hybrid ranking
+ * (Use ?advanced=true to access this endpoint)
+ */
+router.get('/search/advanced', async (req, res) => {
   try {
     const { q, profile = 'balanced', topK = 50, minScore = 10, useAI = 'true' } = req.query;
 

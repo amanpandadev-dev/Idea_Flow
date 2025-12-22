@@ -90,6 +90,14 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
   // 2. Sort Logic
   const sortedData = useMemo(() => {
     let result = [...filteredData];
+
+    // If showing search results with match scores, preserve backend sort order
+    // Backend already sorted by score DESC
+    if (hasExternalSearch && sortField === 'date') {
+      // Don't re-sort, keep backend order (sorted by score)
+      return result;
+    }
+
     result.sort((a, b) => {
       let comparison = 0;
       switch (sortField) {
@@ -103,7 +111,7 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
       return sortOrder === 'asc' ? comparison : -comparison;
     });
     return result;
-  }, [filteredData, sortField, sortOrder]);
+  }, [filteredData, sortField, sortOrder, hasExternalSearch]);
 
   // 3. Display Logic
   const displayData = useMemo(() => {
