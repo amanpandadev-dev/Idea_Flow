@@ -103,8 +103,16 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     const [contextMessage, setContextMessage] = useState<string>('');
 
     // Resizable Panels State
-    const [sidebarWidth, setSidebarWidth] = useState(260);
-    const [chatWidth, setChatWidth] = useState(450); // px
+    const [sidebarWidth, setSidebarWidth] = useState(() => {
+        // Load from localStorage or default to 221px
+        const saved = localStorage.getItem('prosearchSidebarWidth');
+        return saved ? parseFloat(saved) : 221;
+    });
+    const [chatWidthPercent, setChatWidthPercent] = useState(() => {
+        // Load from localStorage or default to 35%
+        const saved = localStorage.getItem('prosearchChatWidth');
+        return saved ? parseFloat(saved) : 35;
+    });
     const [isResizing, setIsResizing] = useState<'sidebar' | 'chat' | null>(null);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -274,13 +282,21 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
             const newWidth = e.clientX - containerRect.left;
             if (newWidth >= 150 && newWidth <= 500) {
                 setSidebarWidth(newWidth);
+                // Persist to localStorage
+                localStorage.setItem('prosearchSidebarWidth', newWidth.toString());
             }
         } else if (isResizing === 'chat') {
-            // Chat width = Mouse X - Sidebar Width (if visible)
+            // Calculate chat width as percentage of container width
             const sidebarOffset = showSidebar ? sidebarWidth : 0;
-            const newWidth = e.clientX - containerRect.left - sidebarOffset;
-            if (newWidth >= 300 && newWidth <= 800) {
-                setChatWidth(newWidth);
+            const availableWidth = containerRect.width - sidebarOffset;
+            const chatPixelWidth = e.clientX - containerRect.left - sidebarOffset;
+            const newWidthPercent = (chatPixelWidth / availableWidth) * 100;
+
+            // Constrain between 25% and 55%
+            if (newWidthPercent >= 25 && newWidthPercent <= 55) {
+                setChatWidthPercent(newWidthPercent);
+                // Persist to localStorage
+                localStorage.setItem('prosearchChatWidth', newWidthPercent.toString());
             }
         }
     };
@@ -454,7 +470,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     // Create a new session when first message is sent
     const createSession = async (): Promise<number | null> => {
         try {
-            const response = await fetch('/api/chat/sessions', {
+            const response = await fetch('http://localhost:3001/api/chat/sessions', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -482,7 +498,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     // Save message to session
     const saveMessage = async (sessionId: number, role: string, content: string, metadata?: any) => {
         try {
-            const response = await fetch(`/ api / chat / sessions / ${sessionId} / messages`, {
+            const response = await fetch(`http://localhost:3001/api/chat/sessions/${sessionId}/messages`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -504,7 +520,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     // Load session messages and restore search results with metadata
     const loadSession = async (sessionId: number) => {
         try {
-            const response = await fetch(`/ api / chat / sessions / ${sessionId} / messages`, {
+            const response = await fetch(`http://localhost:3001/api/chat/sessions/${sessionId}/messages`, {
                 headers: {
                     'Content-Type': 'application/json',
                     'x-user-id': userId || ''
@@ -842,8 +858,12 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
 
             {/* LEFT SIDE - CHAT */}
             <div
-                className="flex flex-col border-r border-slate-200 bg-white shadow-lg transition-all min-w-[300px] flex-shrink-0"
-                style={{ width: `${chatWidth} px` }}
+                className="flex flex-col border-r border-slate-200 bg-white shadow-lg transition-all flex-shrink-0"
+                style={{
+                    width: `${chatWidthPercent}%`,
+                    minWidth: '280px',
+                    maxWidth: '50%'
+                }}
             >
                 {/* Chat Header */}
                 <div className="px-4 py-3 border-b border-slate-200 bg-gradient-to-r from-blue-600 to-purple-600">
@@ -924,15 +944,13 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                 className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} `}
                             >
                                 <div
-                                    onClick={() => hasResults && handleMessageClick(message)}
-                                    className={`max - w - [85 %] rounded - 2xl px - 4 py - 3 ${message.role === 'user'
-                                            ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
-                                            : hasResults
-                                                ? `bg-slate-100 text-slate-800 cursor-pointer hover:bg-slate-200 transition-colors ${isActiveResult ? 'ring-2 ring-blue-500' : ''}`
-                                                : 'bg-slate-100 text-slate-800'
-                                        } `}
+                                    onClick={() => handleMessageClick(message)}
+                                    className={`max-w-[85%] rounded-2xl px-5 py-4 ${message.role === 'user'
+                                        ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white cursor-pointer hover:from-blue-700 hover:to-purple-700 shadow-md hover:shadow-lg transition-all'
+                                        : 'bg-slate-100 text-slate-800 cursor-pointer hover:bg-slate-200 shadow-sm hover:shadow-md transition-all'
+                                        }`}
                                 >
-                                    <p className="text-sm leading-relaxed">{message.content}</p>
+                                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
                                     <div className={`flex items - center justify - between mt - 1 ${message.role === 'user' ? 'text-blue-100' : 'text-slate-500'} `}>
                                         <p className="text-xs">
                                             {new Date(message.timestamp).toLocaleTimeString()}
