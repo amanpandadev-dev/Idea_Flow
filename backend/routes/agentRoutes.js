@@ -310,4 +310,58 @@ router.post('/query', async (req, res) => {
     }
 });
 
+
+// Market Validation endpoint
+router.post('/ideas/:ideaId/market-validation', async (req, res) => {
+    try {
+        const { ideaId } = req.params;
+        const userId = req.user?.id || 'anonymous';
+
+        console.log(`[MarketValidation] Starting validation for idea ${ideaId}`);
+
+        // Dynamically import services
+        const { fetchIdeaDetails, analyzeInternalPosition, saveValidationReport } =
+            await import('../services/marketValidationService.js');
+        const { aggregateExternalIntelligence } =
+            await import('../services/tavilySearchService.js');
+        const { synthesizeValidationReport } =
+            await import('../services/marketValidationSynthesis.js');
+
+        // Step 1: Fetch idea details
+        const idea = await fetchIdeaDetails(ideaId, pool);
+
+        // Step 2: Analyze internal position (ChromaDB)
+        const internalAnalysis = await analyzeInternalPosition(idea);
+
+        // Step 3: Gather external intelligence (Tavily)
+        const externalIntelligence = await aggregateExternalIntelligence(idea);
+
+        // Step 4: Synthesize report (LLM)
+        const report = await synthesizeValidationReport(idea, internalAnalysis, externalIntelligence);
+
+        // Step 5: Save to database (non-blocking)
+        saveValidationReport(pool, ideaId, userId, report).catch(err => {
+            console.error(`[MarketValidation] Save failed:`, err.message);
+        });
+
+        // Return report
+        res.json({
+            success: true,
+            ideaId: idea.idea_id,
+            idea: {
+                id: idea.idea_id,
+                title: idea.title
+            },
+            ...report
+        });
+
+    } catch (error) {
+        console.error('[MarketValidation] Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Market validation failed'
+        });
+    }
+});
+
 export default router;

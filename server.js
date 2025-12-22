@@ -128,10 +128,66 @@ app.get('/api/admin/vector-cleanup-stats', (req, res) => {
 });
 
 
+
 // --- API Routes ---
 // New Agent and Context routes
+
+// Market Validation endpoint (must be BEFORE /api/ideas router to match first)
+app.post('/api/ideas/:ideaId/market-validation', async (req, res) => {
+  try {
+    const { ideaId } = req.params;
+    const userId = req.user?.id || 'anonymous';
+
+    console.log(`[MarketValidation] Starting validation for idea ${ideaId}`);
+
+    // Dynamically import services
+    const { fetchIdeaDetails, analyzeInternalPosition, saveValidationReport } =
+      await import('./backend/services/marketValidationService.js');
+    const { aggregateExternalIntelligence } =
+      await import('./backend/services/tavilySearchService.js');
+    const { synthesizeValidationReport } =
+      await import('./backend/services/marketValidationSynthesis.js');
+
+    // Step 1: Fetch idea details
+    const idea = await fetchIdeaDetails(ideaId, pool);
+
+    // Step 2: Analyze internal position (ChromaDB)
+    const internalAnalysis = await analyzeInternalPosition(idea);
+
+    // Step 3: Gather external intelligence (Tavily)
+    const externalIntelligence = await aggregateExternalIntelligence(idea);
+
+    // Step 4: Synthesize report (LLM)
+    const report = await synthesizeValidationReport(idea, internalAnalysis, externalIntelligence);
+
+    // Step 5: Save to database (non-blocking)
+    saveValidationReport(pool, ideaId, userId, report).catch(err => {
+      console.error(`[MarketValidation] Save failed:`, err.message);
+    });
+
+    // Return report
+    res.json({
+      success: true,
+      ideaId: idea.idea_id,
+      idea: {
+        id: idea.idea_id,
+        title: idea.title
+      },
+      ...report
+    });
+
+  } catch (error) {
+    console.error('[MarketValidation] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Market validation failed'
+    });
+  }
+});
+
 app.use('/api/context', contextRoutes);
 app.use('/api/agent', agentRoutes); // Auth will be added after middleware definition
+
 app.use('/api/search', proSearchRoutes); // Pro Search with ChromaDB
 app.use('/api/chat', chatHistoryRoutes); // Chat history for Pro Search
 app.use('/api/ideas', advancedSearchRoutes); // Advanced search with NLP

@@ -299,12 +299,12 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
                   )}
                   <td className="px-4 py-3"><span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-white text-slate-800 truncate max-w-[120px]" style={{ borderColor: DOMAIN_COLORS[idea.domain] || '#ccc' }}>{idea.domain}</span></td>
                   <td className="px-4 py-3"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border truncate max-w-[120px] ${getStatusColor(idea.status)}`}>{idea.status}</span></td>
+                  <td className="px-4 py-3 text-center"><span className={`text-base ${getScoreColor(idea.score || 0)}`}>{idea.score || 0}</span></td>
                   <td className="px-4 py-3 text-center">
                     <button onClick={(e) => handleLike(e, idea)} disabled={likingId === idea.id} className={`flex items-center justify-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium mx-auto ${idea.isLiked ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-500'}`}>
                       <Heart className={`h-3 w-3 ${idea.isLiked ? 'fill-red-600' : ''}`} /> {idea.likesCount}
                     </button>
                   </td>
-                  <td className="px-4 py-3 text-center"><span className={`text-base ${getScoreColor(idea.score || 0)}`}>{idea.score || 0}</span></td>
                 </tr>
               ))
             )}
