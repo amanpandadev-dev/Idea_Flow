@@ -19,6 +19,7 @@ import { Idea, Associate } from './types';
 import { Loader2, Filter, X } from 'lucide-react';
 import AgentChat from './components/AgentChat';
 import MarketValidation from './components/MarketValidation';
+import MarketValidatorChat from './components/MarketValidatorChat';
 
 type TabType = 'dashboard' | 'filtered-analytics' | 'projects' | 'wishlist' | 'pro-search' | 'agent' | string;
 type AuthView = 'login' | 'register' | 'forgot-password';
@@ -361,17 +362,21 @@ const App: React.FC = () => {
                   onNavigateToIdea={handleViewDetails}
                   onRefreshData={handleRefreshData}
                   onNavigateToMarketValidation={(ideaId: string) => handleTabChange(`market-validation:${ideaId}`)}
+                  onNavigateToMarketChat={(ideaId: string) => handleTabChange(`market-chat:${ideaId}`)}
                 />
               ) : <div>Idea not found</div>;
             })()
           )}
 
-          {activeTab.startsWith('market-validation:') && (
-            (() => {
-              const ideaId = activeTab.split(':')[1];
-              return <MarketValidation ideas={ideas} ideaId={ideaId} />;
-            })()
-          )}
+          {activeTab.startsWith('market-validation:') && (() => {
+            const ideaId = activeTab.split(':')[1];
+            return <MarketValidation ideas={ideas} ideaId={ideaId} />;
+          })()}
+
+          {activeTab.startsWith('market-chat:') && (() => {
+            const ideaId = activeTab.split(':')[1];
+            return <MarketValidatorChat ideas={ideas} ideaId={ideaId} />;
+          })()}
         </div>
       </main>
 

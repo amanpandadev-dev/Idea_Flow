@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Idea, Status } from '../types';
 import { DOMAIN_COLORS } from '../constants';
 import { fetchSimilarIdeas, toggleLikeIdea } from '../services';
-import { Calendar, User, ArrowLeft, CheckCircle, Clock, AlertCircle, Activity, Cpu, Layers, GitBranch, Building2, Hammer, Code2, Sparkles, Zap, TrendingUp, Target, ShieldCheck, Info, ArrowRight, Heart } from 'lucide-react';
+import { Calendar, User, ArrowLeft, CheckCircle, Clock, AlertCircle, Activity, Cpu, Layers, GitBranch, Building2, Hammer, Code2, Sparkles, Zap, TrendingUp, Target, ShieldCheck, Info, ArrowRight, Heart, MessageCircle } from 'lucide-react';
 interface IdeaDetailsProps {
   idea: Idea;
   onBack?: () => void;
@@ -11,9 +11,10 @@ interface IdeaDetailsProps {
   onNavigateToIdea?: (idea: Idea) => void;
   onRefreshData?: () => void;
   onNavigateToMarketValidation?: (ideaId: string) => void;
+  onNavigateToMarketChat?: (ideaId: string) => void;
 }
 
-const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate, onNavigateToIdea, onRefreshData, onNavigateToMarketValidation }) => {
+const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate, onNavigateToIdea, onRefreshData, onNavigateToMarketValidation, onNavigateToMarketChat }) => {
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [similarIdeas, setSimilarIdeas] = useState<Idea[]>([]);
@@ -113,13 +114,22 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
           </button>
           {/* Action Buttons */}
           <div className="flex items-center gap-3">
-            {/* Market Validation Button */}
+            {/* Market Validation Report Button */}
             <button
               onClick={() => onNavigateToMarketValidation?.(idea.id)}
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
             >
               <TrendingUp className="h-4 w-4" />
-              Market Validation
+              Generate Report
+            </button>
+
+            {/* Market Chat Button */}
+            <button
+              onClick={() => onNavigateToMarketChat?.(idea.id)}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition-all shadow-md hover:shadow-lg"
+            >
+              <MessageCircle className="h-4 w-4" />
+              Market Chat
             </button>
           </div>
         </div>

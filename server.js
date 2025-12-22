@@ -396,6 +396,80 @@ const auth = (req, res, next) => {
 // Conversation History Routes (requires auth middleware)
 app.use('/api/conversations', auth, conversationRoutes);
 
+// Market Chat endpoints (placed after auth middleware definition)
+// Initialize chat session
+app.post('/api/ideas/:ideaId/market-chat/initialize', auth, async (req, res) => {
+  try {
+    const { ideaId } = req.params;
+
+    const numericIdea = ideaId.replace('IDEA-', '');
+    const ideaQuery = `
+      SELECT idea_id, title, summary as description, challenge_opportunity as domain, code_preference as technologies
+      FROM ideas
+      WHERE idea_id = $1
+    `;
+    const ideaResult = await pool.query(ideaQuery, [numericIdea]);
+
+    if (ideaResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Idea not found' });
+    }
+
+    const idea = ideaResult.rows[0];
+
+    // Dynamically import the service
+    const { generateInitialMessage } = await import('./backend/services/marketValidatorChatService.js');
+    const initialMessage = await generateInitialMessage(idea);
+
+    res.json({
+      success: true,
+      ideaId,
+      initialMessage
+    });
+  } catch (error) {
+    console.error('[MarketChat] Error initializing chat:', error);
+    res.status(500).json({ error: 'Failed to initialize market chat' });
+  }
+});
+
+// Handle chat messages
+app.post('/api/ideas/:ideaId/market-chat', auth, async (req, res) => {
+  try {
+    const { ideaId } = req.params;
+    const { message, conversationHistory } = req.body;
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    const numericId = ideaId.replace('IDEA-', '');
+    const ideaQuery = `
+      SELECT idea_id, title, summary as description, challenge_opportunity as domain, code_preference as technologies
+      FROM ideas
+      WHERE idea_id = $1
+    `;
+    const ideaResult = await pool.query(ideaQuery, [numericId]);
+
+    if (ideaResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Idea not found' });
+    }
+
+    const idea = ideaResult.rows[0];
+
+    // Dynamically import the service
+    const { generateChatResponse } = await import('./backend/services/marketValidatorChatService.js');
+    const response = await generateChatResponse(idea, message, conversationHistory || []);
+
+    res.json({
+      success: true,
+      response,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('[MarketChat] Error processing message:', error);
+    res.status(500).json({ error: 'Failed to process chat message' });
+  }
+});
+
 // 1. Auth: Login (Issues Access + Refresh Token)
 app.post('/api/auth/login', async (req, res) => {
   console.log("[Login] Attempt started");

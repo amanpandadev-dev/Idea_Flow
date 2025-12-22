@@ -152,6 +152,7 @@ npm run server
 
 ```bash
 # Run ProSearch indexing script
+node backend/scripts/verifyAndReindexIdeas.js
 node backend/scripts/reindex-chromadb-llama.js
 ```
 
