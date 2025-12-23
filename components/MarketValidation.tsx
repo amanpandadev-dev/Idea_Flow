@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, TrendingUp, Shield, Lightbulb, AlertTriangle, ChevronDown, ChevronUp, ExternalLink, Loader2, Download } from 'lucide-react';
 import { Idea } from '../types';
+import { 
+    normalizeMarketValidationReport, 
+    NormalizedMarketValidationReport,
+    RawMarketValidationResponse 
+} from './marketValidationAdapter';
+import ErrorBoundary from './ErrorBoundary';
 
 interface MarketValidationProps {
     ideas: Idea[];
@@ -8,48 +14,19 @@ interface MarketValidationProps {
     onBack?: () => void;
 }
 
-interface ValidationReport {
-    success: boolean;
-    ideaId: number;
-    idea: {
-        id: number;
-        title: string;
-    };
-    fullReport: string;
-    internalAnalysis: {
-        similarIdeas: Array<{
-            id: string;
-            title: string;
-            similarity: number;
-            businessGroup: string;
-        }>;
-        noveltyScore: number;
-    };
-    externalEvidence: {
-        marketTrends: Array<any>;
-        competitors: Array<any>;
-        totalSources: number;
-    };
-    patentSignals: {
-        riskLevel: 'Low' | 'Medium' | 'High';
-        patents: Array<any>;
-    };
-    verdict: string;
-    sources: Array<{
-        title: string;
-        url: string;
-        category: string;
-    }>;
-    generatedAt: string;
-}
-
 const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId, onBack }) => {
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [report, setReport] = useState<ValidationReport | null>(null);
+    const [report, setReport] = useState<NormalizedMarketValidationReport | null>(null);
     const [expandedSources, setExpandedSources] = useState(false);
     const [downloading, setDownloading] = useState(false);
+    const [expandedInternalPosition, setExpandedInternalPosition] = useState(false);
+    const [expandedTrends, setExpandedTrends] = useState(false);
+    const [expandedCompetitors, setExpandedCompetitors] = useState(false);
+    const [expandedPatents, setExpandedPatents] = useState(false);
+    const [expandedRisks, setExpandedRisks] = useState(false);
+    const [expandedOpportunities, setExpandedOpportunities] = useState(false);
 
     const idea = ideas.find(i => i.id === ideaId);
 
@@ -77,13 +54,28 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId, onBa
             });
 
             if (!response.ok) {
-                throw new Error('Failed to fetch validation report');
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || `Server error: ${response.status}`);
             }
 
-            const data = await response.json();
-            setReport(data);
+            const rawData: RawMarketValidationResponse = await response.json();
+            
+            // Validate response has required structure
+            if (!rawData || typeof rawData !== 'object') {
+                throw new Error('Invalid response format from server');
+            }
+            
+            // Normalize the API response before setting state
+            try {
+                const normalizedReport = normalizeMarketValidationReport(rawData);
+                setReport(normalizedReport);
+            } catch (normalizationError: any) {
+                console.error('Error normalizing report:', normalizationError);
+                throw new Error('Failed to process report data. Please try again.');
+            }
         } catch (err: any) {
-            setError(err.message || 'An error occurred');
+            console.error('Validation report error:', err);
+            setError(err.message || 'An unexpected error occurred. Please try again.');
         } finally {
             setLoading(false);
         }
@@ -129,12 +121,6 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId, onBa
         }
     };
 
-    const parseSection = (fullReport: string, sectionNumber: number, sectionTitle: string) => {
-        const regex = new RegExp(`### ${sectionNumber}\\. ${sectionTitle}\\s+([\\s\\S]+?)(?=###|$)`, 'i');
-        const match = fullReport.match(regex);
-        return match ? match[1].trim() : 'No data available';
-    };
-
     if (loading) {
         return (
             <div className="min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50 flex items-center justify-center">
@@ -154,13 +140,23 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId, onBa
                     <div className="bg-red-50 border-2 border-red-200 rounded-xl p-6">
                         <AlertTriangle className="h-12 w-12 text-red-600 mb-4" />
                         <h2 className="text-xl font-bold text-red-900 mb-2">Validation Failed</h2>
-                        <p className="text-red-700">{error}</p>
-                        <button
-                            onClick={onBack}
-                            className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                        >
-                            Go Back
-                        </button>
+                        <p className="text-red-700 mb-4">{error}</p>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={fetchValidationReport}
+                                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                            >
+                                Retry
+                            </button>
+                            {onBack && (
+                                <button
+                                    onClick={onBack}
+                                    className="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition-colors"
+                                >
+                                    Go Back
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -172,8 +168,9 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId, onBa
     }
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50">
-            <div className="max-w-7xl mx-auto p-6 space-y-6">
+        <ErrorBoundary>
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50">
+                <div className="max-w-7xl mx-auto p-6 space-y-6">
 
                 {/* Header */}
                 <div className="flex items-center justify-between">
@@ -185,13 +182,20 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId, onBa
                             <ArrowLeft className="h-5 w-5 text-slate-600" />
                         </button>
                         <div>
-                            <h1 className="text-3xl font-bold text-slate-900">{report.idea.title}</h1>
-                            <p className="text-slate-500 text-sm mt-1">Market Validation Report</p>
+                            <h1 className="text-3xl font-bold text-slate-900">{report.metadata.ideaTitle}</h1>
+                            <p className="text-slate-500 text-sm mt-1">
+                                Market Validation Report
+                                {report.metadata.generatedAt && (
+                                    <span className="ml-2">
+                                        • Generated {new Date(report.metadata.generatedAt).toLocaleString()}
+                                    </span>
+                                )}
+                            </p>
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
-                        <span className={`px-4 py-2 rounded-full text-sm font-medium border-2 ${getRiskColor(report.patentSignals.riskLevel)}`}>
-                            {report.patentSignals.riskLevel} IP Risk
+                        <span className={`px-4 py-2 rounded-full text-sm font-medium border-2 ${getRiskColor(report.patentRisk.level)}`}>
+                            {report.patentRisk.level} IP Risk
                         </span>
                         <button
                             onClick={handleDownloadPDF}
@@ -214,31 +218,28 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId, onBa
                     </div>
                 </div>
 
-                {/* Hero Insights */}
-                <div className="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-2xl p-8 text-white relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-10 rounded-full -mr-32 -mt-32"></div>
-                    <div className="absolute bottom-0 left-0 w-48 h-48 bg-white opacity-10 rounded-full -ml-24 -mb-24"></div>
+                {/* Hero Insights - Compact KPI Strip */}
+                <div className="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl p-4 text-white relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-white opacity-10 rounded-full -mr-16 -mt-16"></div>
+                    <div className="absolute bottom-0 left-0 w-24 h-24 bg-white opacity-10 rounded-full -ml-12 -mb-12"></div>
 
-                    <div className="relative z-10 grid grid-cols-3 gap-6">
+                    <div className="relative z-10 grid grid-cols-3 gap-4">
                         <div>
-                            <div className="text-indigo-100 text-sm font-medium mb-2">Novelty Score</div>
-                            <div className="text-5xl font-bold">{(report.internalAnalysis.noveltyScore * 100).toFixed(0)}%</div>
-                            <div className="text-indigo-100 text-sm mt-2">
-                                {report.internalAnalysis.noveltyScore > 0.7 ? 'Highly Novel' :
-                                    report.internalAnalysis.noveltyScore > 0.4 ? 'Moderately Novel' : 'Low Novelty'}
-                            </div>
+                            <div className="text-indigo-100 text-xs font-medium mb-1">Novelty Score</div>
+                            <div className="text-2xl font-bold">{report.metrics.noveltyScore.toFixed(0)}%</div>
+                            <div className="text-indigo-100 text-xs mt-1">{report.metrics.noveltyLabel}</div>
                         </div>
 
                         <div>
-                            <div className="text-indigo-100 text-sm font-medium mb-2">External Sources</div>
-                            <div className="text-5xl font-bold">{report.sources.length}</div>
-                            <div className="text-indigo-100 text-sm mt-2">Market signals analyzed</div>
+                            <div className="text-indigo-100 text-xs font-medium mb-1">External Sources</div>
+                            <div className="text-2xl font-bold">{report.metrics.totalSources}</div>
+                            <div className="text-indigo-100 text-xs mt-1">Market signals analyzed</div>
                         </div>
 
                         <div>
-                            <div className="text-indigo-100 text-sm font-medium mb-2">Similar Ideas</div>
-                            <div className="text-5xl font-bold">{report.internalAnalysis.similarIdeas.length}</div>
-                            <div className="text-indigo-100 text-sm mt-2">Internal matches found</div>
+                            <div className="text-indigo-100 text-xs font-medium mb-1">Similar Ideas</div>
+                            <div className="text-2xl font-bold">{report.metrics.similarIdeasCount}</div>
+                            <div className="text-indigo-100 text-xs mt-1">Internal matches found</div>
                         </div>
                     </div>
                 </div>
@@ -250,67 +251,213 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId, onBa
                     <div className="col-span-8 space-y-6">
 
                         {/* Internal Summary */}
-                        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200">
-                            <div className="flex items-center gap-3 mb-4">
-                                <div className="p-2 bg-blue-100 rounded-lg">
-                                    <Shield className="h-5 w-5 text-blue-600" />
+                        <div className="bg-white rounded-xl shadow-sm border border-slate-200">
+                            <button
+                                onClick={() => setExpandedInternalPosition(!expandedInternalPosition)}
+                                className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-blue-100 rounded-lg">
+                                        <Shield className="h-5 w-5 text-blue-600" />
+                                    </div>
+                                    <div className="text-left">
+                                        <h2 className="text-lg font-bold text-slate-900">Internal Idea Position</h2>
+                                        <p className="text-xs text-slate-500 mt-0.5">
+                                            {report.metrics.noveltyScore.toFixed(0)}% novelty • {report.similarIdeas.length} similar ideas
+                                        </p>
+                                    </div>
                                 </div>
-                                <h2 className="text-xl font-bold text-slate-900">Internal Idea Position</h2>
-                            </div>
-                            <div className="prose prose-sm max-w-none text-slate-700">
-                                <div className="mb-4">
-                                    <strong>Novelty Assessment:</strong> {(report.internalAnalysis.noveltyScore * 100).toFixed(0)}% novel within organization
-                                </div>
+                                {expandedInternalPosition ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
+                            </button>
+                            
+                            {expandedInternalPosition && report.sections.internalPosition.hasData && (
+                                <div className="px-6 pb-6 prose prose-sm max-w-none text-slate-700">
+                                    {report.sections.internalPosition.summary && (
+                                        <p className="whitespace-pre-wrap mb-4 text-sm">{report.sections.internalPosition.summary}</p>
+                                    )}
 
-                                {report.internalAnalysis.similarIdeas.length > 0 && (
-                                    <div>
-                                        <strong>Similar Internal Ideas:</strong>
-                                        <ul className="mt-2 space-y-2">
-                                            {report.internalAnalysis.similarIdeas.map((idea, idx) => (
-                                                <li key={idx} className="flex items-center justify-between bg-slate-50 p-3 rounded-lg">
-                                                    <span>{idea.title}</span>
-                                                    <div className="text-right">
-                                                        <div className="text-sm font-semibold text-slate-700">{idea.similarityPct || Math.round((idea.similarity || 0) * 100)}% similar</div>
-                                                        <div className="text-xs text-slate-500">{idea.band || 'N/A'}</div>
+                                    {report.similarIdeas.length > 0 && (
+                                        <div className="mt-4">
+                                            <h4 className="font-semibold text-slate-900 mb-3 text-sm">Similar Internal Ideas:</h4>
+                                            <div className="space-y-2">
+                                                {report.similarIdeas.map((idea) => (
+                                                    <div key={idea.id} className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                                                        <div className="flex items-start justify-between gap-3">
+                                                            <div className="flex-1 min-w-0">
+                                                                <h5 className="font-medium text-slate-900 text-sm truncate">{idea.title}</h5>
+                                                                <p className="text-xs text-slate-500 mt-1">{idea.businessGroup}</p>
+                                                            </div>
+                                                            <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="w-16 bg-slate-200 rounded-full h-1.5">
+                                                                        <div 
+                                                                            className="bg-indigo-600 h-1.5 rounded-full" 
+                                                                            style={{ width: `${idea.similarityPct}%` }}
+                                                                        ></div>
+                                                                    </div>
+                                                                    <span className="text-xs font-semibold text-slate-700 w-10 text-right">
+                                                                        {idea.similarityPct.toFixed(0)}%
+                                                                    </span>
+                                                                </div>
+                                                                <span className="text-xs px-2 py-0.5 bg-slate-200 text-slate-600 rounded">
+                                                                    {idea.band}
+                                                                </span>
+                                                            </div>
+                                                        </div>
                                                     </div>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                )}
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
 
-                                {report.internalAnalysis.similarIdeas.length === 0 && (
-                                    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                                        <p className="text-green-800">✓ No similar internal ideas found. This appears to be a novel concept within the organization.</p>
-                                    </div>
-                                )}
-                            </div>
+                                    {report.similarIdeas.length === 0 && (
+                                        <div className="bg-green-50 border border-green-200 rounded-lg p-3 mt-4">
+                                            <p className="text-green-800 text-sm">✓ No similar internal ideas found. This appears to be a novel concept within the organization.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            
+                            {expandedInternalPosition && !report.sections.internalPosition.hasData && (
+                                <div className="px-6 pb-6">
+                                    <p className="text-slate-500 text-sm">No data available</p>
+                                </div>
+                            )}
                         </div>
 
                         {/* External Market Evidence */}
-                        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200">
-                            <div className="flex items-center gap-3 mb-4">
-                                <div className="p-2 bg-purple-100 rounded-lg">
-                                    <TrendingUp className="h-5 w-5 text-purple-600" />
+                        <div className="bg-white rounded-xl shadow-sm border border-slate-200">
+                            <button
+                                onClick={() => setExpandedTrends(!expandedTrends)}
+                                className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-purple-100 rounded-lg">
+                                        <TrendingUp className="h-5 w-5 text-purple-600" />
+                                    </div>
+                                    <div className="text-left">
+                                        <h2 className="text-lg font-bold text-slate-900">Market Trends</h2>
+                                        <p className="text-xs text-slate-500 mt-0.5">
+                                            {report.sections.marketTrends.evidence.length} trends identified
+                                            {report.sections.marketTrends.evidence.length > 0 && (
+                                                <span className="ml-2 text-green-600">✓ Evidence-backed</span>
+                                            )}
+                                        </p>
+                                    </div>
                                 </div>
-                                <h2 className="text-xl font-bold text-slate-900">External Market Evidence</h2>
-                            </div>
-                            <div className="prose prose-sm max-w-none text-slate-700 whitespace-pre-wrap">
-                                {parseSection(report.fullReport, 3, 'External Market Evidence')}
-                            </div>
+                                {expandedTrends ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
+                            </button>
+                            
+                            {expandedTrends && report.sections.marketTrends.hasData && (
+                                <div className="px-6 pb-6">
+                                    {report.sections.marketTrends.summary && (
+                                        <p className="text-sm text-slate-700 whitespace-pre-wrap mb-4">{report.sections.marketTrends.summary}</p>
+                                    )}
+                                    
+                                    {report.sections.marketTrends.evidence.length > 0 && (
+                                        <div className="space-y-2">
+                                            {report.sections.marketTrends.evidence.map((trend, idx) => (
+                                                <div key={idx} className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                                                    <div className="flex items-start justify-between gap-2">
+                                                        <div className="flex-1">
+                                                            <h5 className="font-medium text-slate-900 text-sm">{trend.title}</h5>
+                                                            <p className="text-xs text-slate-600 mt-1">{trend.description}</p>
+                                                            {trend.source && (
+                                                                <a 
+                                                                    href={trend.source} 
+                                                                    target="_blank" 
+                                                                    rel="noopener noreferrer"
+                                                                    className="text-xs text-indigo-600 hover:text-indigo-800 mt-1.5 inline-flex items-center gap-1"
+                                                                >
+                                                                    <ExternalLink className="h-3 w-3" />
+                                                                    View Source
+                                                                </a>
+                                                            )}
+                                                        </div>
+                                                        {trend.category && (
+                                                            <span className="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded whitespace-nowrap">
+                                                                {trend.category}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            
+                            {expandedTrends && !report.sections.marketTrends.hasData && (
+                                <div className="px-6 pb-6">
+                                    <p className="text-slate-500 text-sm">No market trend data available</p>
+                                </div>
+                            )}
                         </div>
 
                         {/* Competitor Landscape */}
-                        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200">
-                            <div className="flex items-center gap-3 mb-4">
-                                <div className="p-2 bg-orange-100 rounded-lg">
-                                    <AlertTriangle className="h-5 w-5 text-orange-600" />
+                        <div className="bg-white rounded-xl shadow-sm border border-slate-200">
+                            <button
+                                onClick={() => setExpandedCompetitors(!expandedCompetitors)}
+                                className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-orange-100 rounded-lg">
+                                        <AlertTriangle className="h-5 w-5 text-orange-600" />
+                                    </div>
+                                    <div className="text-left">
+                                        <h2 className="text-lg font-bold text-slate-900">Competitor Landscape</h2>
+                                        <p className="text-xs text-slate-500 mt-0.5">
+                                            {report.sections.competitors.evidence.length} competitors identified
+                                            {report.sections.competitors.evidence.length > 0 && (
+                                                <span className="ml-2 text-green-600">✓ Evidence-backed</span>
+                                            )}
+                                        </p>
+                                    </div>
                                 </div>
-                                <h2 className="text-xl font-bold text-slate-900">Competitor Landscape</h2>
-                            </div>
-                            <div className="prose prose-sm max-w-none text-slate-700 whitespace-pre-wrap">
-                                {parseSection(report.fullReport, 4, 'Competitor Landscape')}
-                            </div>
+                                {expandedCompetitors ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
+                            </button>
+                            
+                            {expandedCompetitors && report.sections.competitors.hasData && (
+                                <div className="px-6 pb-6">
+                                    {report.sections.competitors.metadata?.competitiveIntensity && (
+                                        <div className="mb-3 inline-block px-2 py-1 bg-orange-50 border border-orange-200 rounded text-xs font-medium text-orange-900">
+                                            Competitive Intensity: {report.sections.competitors.metadata.competitiveIntensity}
+                                        </div>
+                                    )}
+                                    
+                                    {report.sections.competitors.summary && (
+                                        <p className="text-sm text-slate-700 whitespace-pre-wrap mb-4">{report.sections.competitors.summary}</p>
+                                    )}
+                                    
+                                    {report.sections.competitors.evidence.length > 0 && (
+                                        <div className="space-y-2">
+                                            {report.sections.competitors.evidence.map((competitor, idx) => (
+                                                <div key={idx} className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                                                    <h5 className="font-medium text-slate-900 text-sm">{competitor.title}</h5>
+                                                    <p className="text-xs text-slate-600 mt-1">{competitor.description}</p>
+                                                    {competitor.source && (
+                                                        <a 
+                                                            href={competitor.source} 
+                                                            target="_blank" 
+                                                            rel="noopener noreferrer"
+                                                            className="text-xs text-indigo-600 hover:text-indigo-800 mt-1.5 inline-flex items-center gap-1"
+                                                        >
+                                                            <ExternalLink className="h-3 w-3" />
+                                                            View Source
+                                                        </a>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            
+                            {expandedCompetitors && !report.sections.competitors.hasData && (
+                                <div className="px-6 pb-6">
+                                    <p className="text-slate-500 text-sm">No competitor data available</p>
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -327,15 +474,26 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId, onBa
                         </div>
 
                         {/* Patent Risk */}
-                        <div className={`rounded-xl p-6 border-2 shadow-sm ${getRiskColor(report.patentSignals.riskLevel)}`}>
+                        <div className={`rounded-xl p-6 border-2 shadow-sm ${getRiskColor(report.patentRisk.level)}`}>
                             <h3 className="font-bold mb-2">Patent & IP Risk</h3>
-                            <div className="text-3xl font-bold mb-2">{report.patentSignals.riskLevel}</div>
-                            <div className="text-sm opacity-80">
-                                {report.patentSignals.patents.length} patent signals found
+                            <div className="text-3xl font-bold mb-2">{report.patentRisk.level}</div>
+                            <div className="text-sm opacity-80 mb-3">
+                                Score: {report.patentRisk.score}/100
                             </div>
-                            {report.patentSignals.patents.length > 0 && (
-                                <div className="mt-3 text-xs opacity-75">
-                                    ⚠️ This is not legal advice. Consult IP counsel for definitive assessment.
+                            <div className="text-sm opacity-80 mb-3">
+                                {report.patentRisk.patentCount} patent{report.patentRisk.patentCount !== 1 ? 's' : ''} found
+                            </div>
+                            
+                            {report.patentRisk.factors && (
+                                <div className="mt-3 text-xs opacity-75 space-y-1">
+                                    <div>Patent contribution: {report.patentRisk.factors.patentContribution.toFixed(1)}</div>
+                                    <div>Similarity contribution: {report.patentRisk.factors.similarityContribution.toFixed(1)}</div>
+                                </div>
+                            )}
+                            
+                            {report.patentRisk.disclaimer && (
+                                <div className="mt-3 text-xs opacity-75 border-t pt-3">
+                                    ⚠️ {report.patentRisk.disclaimer}
                                 </div>
                             )}
                         </div>
@@ -365,36 +523,106 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId, onBa
                 <div className="grid grid-cols-3 gap-6">
 
                     {/* Market Risks */}
-                    <div className="bg-white rounded-xl p-6 shadow-sm border-l-4 border-red-400">
-                        <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
-                            <AlertTriangle className="h-5 w-5 text-red-600" />
-                            Risks & Conflicts
-                        </h3>
-                        <div className="prose prose-sm max-w-none text-slate-700 whitespace-pre-wrap text-sm">
-                            {parseSection(report.fullReport, 6, 'Risks & Conflicts')}
-                        </div>
+                    <div className="bg-white rounded-xl shadow-sm border-l-4 border-red-400">
+                        <button
+                            onClick={() => setExpandedRisks(!expandedRisks)}
+                            className="w-full px-4 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                        >
+                            <div className="flex items-center gap-2">
+                                <AlertTriangle className="h-4 w-4 text-red-600" />
+                                <h3 className="font-bold text-slate-900 text-sm">Risks & Conflicts</h3>
+                            </div>
+                            {expandedRisks ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+                        </button>
+                        
+                        {expandedRisks && (
+                            <div className="px-4 pb-4">
+                                {report.sections.risks.hasData ? (
+                                    <p className="text-xs text-slate-700 whitespace-pre-wrap">{report.sections.risks.summary}</p>
+                                ) : (
+                                    <p className="text-slate-500 text-xs">No risk data available</p>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {/* Patent Details */}
-                    <div className="bg-white rounded-xl p-6 shadow-sm border-l-4 border-yellow-400">
-                        <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
-                            <Shield className="h-5 w-5 text-yellow-600" />
-                            Patent & IP Signals
-                        </h3>
-                        <div className="prose prose-sm max-w-none text-slate-700 whitespace-pre-wrap text-sm">
-                            {parseSection(report.fullReport, 5, 'Patent & IP Risk Signals')}
-                        </div>
+                    <div className="bg-white rounded-xl shadow-sm border-l-4 border-yellow-400">
+                        <button
+                            onClick={() => setExpandedPatents(!expandedPatents)}
+                            className="w-full px-4 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                        >
+                            <div className="flex items-center gap-2">
+                                <Shield className="h-4 w-4 text-yellow-600" />
+                                <h3 className="font-bold text-slate-900 text-sm">Patent & IP Signals</h3>
+                            </div>
+                            {expandedPatents ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+                        </button>
+                        
+                        {expandedPatents && report.sections.patentRisk.hasData && (
+                            <div className="px-4 pb-4">
+                                {report.sections.patentRisk.summary && (
+                                    <p className="text-xs text-slate-700 whitespace-pre-wrap mb-3">{report.sections.patentRisk.summary}</p>
+                                )}
+                                
+                                {report.sections.patentRisk.evidence.length > 0 && (
+                                    <div className="space-y-2">
+                                        {report.sections.patentRisk.evidence.slice(0, 3).map((patent, idx) => (
+                                            <div key={idx} className="bg-yellow-50 p-2 rounded border border-yellow-200">
+                                                <h5 className="font-medium text-slate-900 text-xs">{patent.title}</h5>
+                                                <p className="text-xs text-slate-600 mt-0.5 line-clamp-2">{patent.description}</p>
+                                                {patent.source && (
+                                                    <a 
+                                                        href={patent.source} 
+                                                        target="_blank" 
+                                                        rel="noopener noreferrer"
+                                                        className="text-xs text-indigo-600 hover:text-indigo-800 mt-1 inline-flex items-center gap-1"
+                                                    >
+                                                        <ExternalLink className="h-2.5 w-2.5" />
+                                                        View
+                                                    </a>
+                                                )}
+                                            </div>
+                                        ))}
+                                        {report.sections.patentRisk.evidence.length > 3 && (
+                                            <p className="text-xs text-slate-500 mt-2">
+                                                +{report.sections.patentRisk.evidence.length - 3} more patents
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                        
+                        {expandedPatents && !report.sections.patentRisk.hasData && (
+                            <div className="px-4 pb-4">
+                                <p className="text-slate-500 text-xs">No patent data available</p>
+                            </div>
+                        )}
                     </div>
 
                     {/* Opportunities */}
-                    <div className="bg-white rounded-xl p-6 shadow-sm border-l-4 border-green-400">
-                        <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2">
-                            <Lightbulb className="h-5 w-5 text-green-600" />
-                            Opportunities & Gaps
-                        </h3>
-                        <div className="prose prose-sm max-w-none text-slate-700 whitespace-pre-wrap text-sm">
-                            {parseSection(report.fullReport, 7, 'Opportunities & Gaps')}
-                        </div>
+                    <div className="bg-white rounded-xl shadow-sm border-l-4 border-green-400">
+                        <button
+                            onClick={() => setExpandedOpportunities(!expandedOpportunities)}
+                            className="w-full px-4 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                        >
+                            <div className="flex items-center gap-2">
+                                <Lightbulb className="h-4 w-4 text-green-600" />
+                                <h3 className="font-bold text-slate-900 text-sm">Opportunities & Gaps</h3>
+                            </div>
+                            {expandedOpportunities ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+                        </button>
+                        
+                        {expandedOpportunities && (
+                            <div className="px-4 pb-4">
+                                {report.sections.opportunities.hasData ? (
+                                    <p className="text-xs text-slate-700 whitespace-pre-wrap">{report.sections.opportunities.summary}</p>
+                                ) : (
+                                    <p className="text-slate-500 text-xs">No opportunity data available</p>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -446,6 +674,7 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId, onBa
                 </div>
             </div>
         </div>
+        </ErrorBoundary>
     );
 };
 
