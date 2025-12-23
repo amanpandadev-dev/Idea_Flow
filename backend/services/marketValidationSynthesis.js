@@ -1,45 +1,51 @@
 /**
  * Market Validation Synthesis Service
  * 
- * Uses LLaMA to synthesize internal and external intelligence
- * into a structured market validation report
+ * REFACTORED: Now uses section-wise synthesis with evidence-grounded prompts
+ * 
+ * Pipeline:
+ * 1. Structure external evidence (normalize Tavily results)
+ * 2. Calculate IP risk (deterministic)
+ * 3. Synthesize each section individually
+ * 4. Assemble final report
  */
 
-import { generateChatCompletion, getModelNames } from '../config/ollama.js';
+import { structureExternalEvidence } from './evidenceNormalizer.js';
+import { calculateIPRiskScore } from './ipRiskCalculator.js';
+import { synthesizeAllSections } from './sectionSynthesizer.js';
 
 /**
- * Generate structured market validation report using LLM
+ * Generate structured market validation report using new pipeline
  */
 export async function synthesizeValidationReport(idea, internalAnalysis, externalIntelligence) {
     console.log(`[Synthesis] Generating validation report for idea ${idea.idea_id}`);
 
-    // Use TinyLlama for faster generation (avoids timeout)
-    const modelName = 'tinyllama:latest';
-
-    // Build comprehensive prompt
-    const prompt = buildSynthesisPrompt(idea, internalAnalysis, externalIntelligence);
-
     try {
-        const response = await generateChatCompletion([
-            {
-                role: 'system',
-                content: 'You are a market validation analyst for an enterprise innovation program. Provide structured, evidence-based assessments. Be concise.'
-            },
-            {
-                role: 'user',
-                content: prompt
-            }
-        ], modelName, {
-            temperature: 0.5, // Lower for more focused responses
-            max_tokens: 1200  // Reduced from 2000 for faster generation
-        });
+        // Step 1: Structure external evidence
+        const structuredEvidence = structureExternalEvidence(externalIntelligence);
+        console.log(`[Synthesis] Structured evidence: ${structuredEvidence.summary.totalSources} sources`);
 
-        const reportText = response.message.content;
+        // Step 2: Calculate IP risk (deterministic - LLM explains, not decides)
+        const ipRisk = calculateIPRiskScore(
+            structuredEvidence.patents,
+            internalAnalysis?.similarIdeas || []
+        );
+        console.log(`[Synthesis] IP Risk calculated: ${ipRisk.level} (${ipRisk.score}/100)`);
 
-        console.log(`[Synthesis] Report generated (${reportText.length} chars)`);
+        // Step 3: Synthesize each section with evidence-grounded prompts
+        const sections = await synthesizeAllSections(
+            idea,
+            internalAnalysis,
+            structuredEvidence,
+            ipRisk
+        );
+        console.log(`[Synthesis] All sections synthesized`);
 
-        // Parse report into structured sections
-        return parseReportSections(reportText, internalAnalysis, externalIntelligence);
+        // Step 4: Assemble final report
+        const report = assembleReport(idea, sections, internalAnalysis, structuredEvidence, ipRisk);
+
+        console.log(`[Synthesis] Report generation complete`);
+        return report;
 
     } catch (error) {
         console.error(`[Synthesis] Failed to generate report:`, error.message);
@@ -48,198 +54,195 @@ export async function synthesizeValidationReport(idea, internalAnalysis, externa
 }
 
 /**
- * Build comprehensive synthesis prompt
+ * Assemble final report from individual sections
  */
-function buildSynthesisPrompt(idea, internalAnalysis, externalIntelligence) {
-    const prompt = `Analyze this innovation idea and provide a structured market validation assessment.
+function assembleReport(idea, sections, internalAnalysis, structuredEvidence, ipRisk) {
+    // Generate full report text by combining sections
+    const fullReport = buildFullReportText(idea, sections);
 
-## IDEA DETAILS
+    // Generate executive summary/verdict
+    const verdict = generateVerdict(sections, ipRisk, structuredEvidence);
 
-**Title:** ${idea.title}
-
-**Problem/Opportunity:** ${idea.challenge_opportunity || idea.summary}
-
-**Proposed Solution:** ${idea.summary}
-
-**Business Group:** ${idea.business_group || 'Not specified'}
-
-**Benefits:** ${idea.benefits || 'Not specified'}
-
-**Risks:** ${idea.risks || 'Not specified'}
-
-## INTERNAL INTELLIGENCE
-
-${formatInternalData(internalAnalysis)}
-
-## EXTERNAL INTELLIGENCE
-
-${formatExternalData(externalIntelligence)}
-
-## REQUIRED OUTPUT FORMAT
-
-Generate a structured report with EXACTLY these sections:
-
-### 1. Idea Understanding
-2-3 sentence summary of what this idea proposes.
-
-### 2. Internal Idea Position
-- Similar internal ideas (if any)
-- Novelty assessment
-- Internal duplication risk
-
-### 3. External Market Evidence
-- Market trends observed
-- Adoption signals
-- Real-world examples (if found)
-
-### 4. Competitor Landscape
-- Known companies/products
-- Competitive intensity: Low/Medium/High
-- Differentiation opportunities
-
-### 5. Patent & IP Risk Signals
-- Patent indicators found (if any)
-- Risk level: Low/Medium/High
-- **CRITICAL:** State "This is not legal advice" if patents found
-
-### 6. Risks & Conflicts
-- Market risks
-- Technical risks
-- Regulatory considerations
-
-### 7. Opportunities & Gaps
-- Market white spaces
-- Strategic advantages
-- Growth potential
-
-### 8. Overall Market Validation Verdict
-One paragraph executive summary with final assessment.
-
-## RULES
-
-- Use bullet points for lists
-- NO inline citations like [1], [2]
-- If evidence is weak, say "No strong evidence found"
-- Be honest about data limitations
-- Base conclusions on provided data only
-- Keep language professional and concise`;
-
-    return prompt;
-}
-
-/**
- * Format internal intelligence for prompt
- */
-function formatInternalData(internalAnalysis) {
-    if (!internalAnalysis || internalAnalysis.similarIdeas.length === 0) {
-        return 'No similar internal ideas found. This appears novel within the organization.';
-    }
-
-    let formatted = `**Novelty Score:** ${(internalAnalysis.noveltyScore * 100).toFixed(0)}% novel\n\n`;
-    formatted += `**Similar Internal Ideas:**\n`;
-
-    for (const idea of internalAnalysis.similarIdeas) {
-        formatted += `- "${idea.title}" (${(idea.similarity * 100).toFixed(0)}% similar)\n`;
-    }
-
-    return formatted;
-}
-
-/**
- * Format external intelligence for prompt
- */
-function formatExternalData(externalIntelligence) {
-    if (!externalIntelligence || externalIntelligence.summary.totalSources === 0) {
-        return 'No external market data available. Analysis based on internal data only.';
-    }
-
-    const formatted = [];
-
-    // Market trends
-    if (externalIntelligence.marketTrends && externalIntelligence.marketTrends.length > 0) {
-        formatted.push('**Market Trends:**');
-        for (const result of externalIntelligence.marketTrends.slice(0, 3)) {
-            formatted.push(`- ${result.title}: ${result.content.substring(0, 150)}...`);
-        }
-    }
-
-    // Competitors
-    if (externalIntelligence.competitors && externalIntelligence.competitors.length > 0) {
-        formatted.push('\n**Known Competitors:**');
-        for (const result of externalIntelligence.competitors.slice(0, 3)) {
-            formatted.push(`- ${result.title}: ${result.content.substring(0, 150)}...`);
-        }
-    }
-
-    // Patents
-    if (externalIntelligence.patents && externalIntelligence.patents.length > 0) {
-        formatted.push('\n**Patent Indicators:**');
-        for (const result of externalIntelligence.patents.slice(0, 3)) {
-            formatted.push(`- ${result.title}`);
-        }
-    }
-
-    if (formatted.length === 0) {
-        return 'External search performed but no relevant results found.';
-    }
-
-    return formatted.join('\n');
-}
-
-/**
- * Parse LLM response into structured sections
- */
-function parseReportSections(reportText, internalAnalysis, externalIntelligence) {
-    // Extract patent risk level
-    let patentRiskLevel = 'Low';
-    if (reportText.toLowerCase().includes('risk level: high') || reportText.toLowerCase().includes('high risk')) {
-        patentRiskLevel = 'High';
-    } else if (reportText.toLowerCase().includes('risk level: medium') || reportText.toLowerCase().includes('medium risk')) {
-        patentRiskLevel = 'Medium';
-    }
-
-    // Extract verdict (last paragraph usually)
-    const verdictMatch = reportText.match(/### 8\. Overall Market Validation Verdict\s+([\s\S]+?)(?=###|$)/i);
-    const verdict = verdictMatch ? verdictMatch[1].trim() : 'Assessment complete. See detailed sections above.';
-
-    // Collect sources
-    const sources = [];
-
-    if (externalIntelligence) {
-        ['marketTrends', 'competitors', 'patents'].forEach(category => {
-            if (externalIntelligence[category]) {
-                externalIntelligence[category].forEach(result => {
-                    if (result.url && !sources.find(s => s.url === result.url)) {
-                        sources.push({
-                            title: result.title,
-                            url: result.url,
-                            category: category
-                        });
-                    }
-                });
-            }
-        });
-    }
+    // Collect all sources with dedupe
+    const sources = collectSources(structuredEvidence);
 
     return {
-        fullReport: reportText,
+        // Core report content
+        fullReport,
+
+        // Structured sections for frontend
+        sections: {
+            internalPosition: sections.internalPosition,
+            marketTrends: sections.marketTrends,
+            competitors: sections.competitors,
+            patentRisk: sections.patentRisk,
+            opportunities: sections.opportunities,
+            risks: sections.risks
+        },
+
+        // Key metrics
         internalAnalysis: {
             similarIdeas: internalAnalysis?.similarIdeas || [],
             noveltyScore: internalAnalysis?.noveltyScore || 0.5
         },
+
         externalEvidence: {
-            marketTrends: externalIntelligence?.marketTrends || [],
-            competitors: externalIntelligence?.competitors || [],
-            totalSources: sources.length
+            marketTrends: structuredEvidence.marketTrends,
+            competitors: structuredEvidence.competitors,
+            totalSources: sources.length,
+            hasEvidence: structuredEvidence.summary.hasEvidence
         },
+
         patentSignals: {
-            riskLevel: patentRiskLevel,
-            patents: externalIntelligence?.patents || []
+            riskLevel: ipRisk.level,
+            score: ipRisk.score,
+            patents: structuredEvidence.patents,
+            factors: ipRisk.factors
         },
-        verdict: verdict.substring(0, 500), // Limit length
-        sources: sources.slice(0, 10), // Max 10 sources
+
+        verdict,
+        sources,
         generatedAt: new Date().toISOString()
     };
+}
+
+/**
+ * Build full report text from sections
+ */
+function buildFullReportText(idea, sections) {
+    let report = `# Market Validation Report\n\n`;
+    report += `**Idea:** ${idea.title}\n\n`;
+    report += `---\n\n`;
+
+    // Section 1: Internal Position
+    report += `## 1. Internal Idea Position\n\n`;
+    report += `**Novelty Score:** ${sections.internalPosition.noveltyScore}% novel\n\n`;
+    report += `${sections.internalPosition.summary}\n\n`;
+
+    if (sections.internalPosition.similarIdeas.length > 0) {
+        report += `**Similar Internal Ideas:**\n`;
+        sections.internalPosition.similarIdeas.forEach(s => {
+            report += `- "${s.title}" (${s.similarityPct}% similar, ${s.band})\n`;
+        });
+        report += `\n`;
+    }
+    report += `---\n\n`;
+
+    // Section 2: Market Trends
+    report += `## 2. External Market Evidence\n\n`;
+    if (sections.marketTrends.hasEvidence) {
+        report += `${sections.marketTrends.summary}\n\n`;
+        report += `**Sources:** ${sections.marketTrends.trends.length} market trend sources analyzed\n\n`;
+    } else {
+        report += `${sections.marketTrends.summary}\n\n`;
+    }
+    report += `---\n\n`;
+
+    // Section 3: Competitor Landscape
+    report += `## 3. Competitor Landscape\n\n`;
+    if (sections.competitors.hasEvidence) {
+        report += `**Competitive Intensity:** ${sections.competitors.competitiveIntensity}\n\n`;
+        report += `${sections.competitors.summary}\n\n`;
+    } else {
+        report += `${sections.competitors.summary}\n\n`;
+    }
+    report += `---\n\n`;
+
+    // Section 4: Patent & IP Risk
+    report += `## 4. Patent & IP Risk Signals\n\n`;
+    report += `**Risk Level:** ${sections.patentRisk.riskLevel} (Score: ${sections.patentRisk.score}/100)\n\n`;
+    report += `${sections.patentRisk.summary}\n\n`;
+    report += `---\n\n`;
+
+    // Section 5: Opportunities
+    report += `## 5. Market Opportunities & Strategic Gaps\n\n`;
+    report += `${sections.opportunities.summary}\n\n`;
+    report += `---\n\n`;
+
+    // Section 6: Risks
+    report += `## 6. Risks & Challenges\n\n`;
+    report += `${sections.risks.summary}\n\n`;
+    report += `---\n\n`;
+
+    return report;
+}
+
+/**
+ * Generate executive summary/verdict
+ */
+function generateVerdict(sections, ipRisk, structuredEvidence) {
+    const novelty = sections.internalPosition.noveltyScore;
+    const hasMarketData = structuredEvidence.summary.hasMarketData;
+    const competitorCount = structuredEvidence.competitors.length;
+    const riskLevel = ipRisk.level;
+
+    let verdict = '';
+
+    // Novelty assessment
+    if (novelty >= 80) {
+        verdict += 'This idea shows high internal novelty. ';
+    } else if (novelty >= 50) {
+        verdict += 'This idea has moderate internal novelty. ';
+    } else {
+        verdict += 'This idea has low internal novelty with significant overlap to existing concepts. ';
+    }
+
+    // Market evidence
+    if (hasMarketData) {
+        verdict += 'Market evidence suggests active industry interest. ';
+    } else {
+        verdict += 'Limited market data available for validation. ';
+    }
+
+    // Competition
+    if (competitorCount >= 3) {
+        verdict += 'The competitive landscape is active with multiple players identified. ';
+    } else if (competitorCount > 0) {
+        verdict += 'Some competition exists but market may have room for entry. ';
+    } else {
+        verdict += 'No direct competitors identified in search. ';
+    }
+
+    // IP risk
+    verdict += `IP risk is assessed as ${riskLevel}. `;
+
+    // Final recommendation
+    if (novelty >= 70 && riskLevel !== 'High') {
+        verdict += 'Recommendation: Proceed with detailed feasibility analysis.';
+    } else if (novelty >= 40) {
+        verdict += 'Recommendation: Validate competitive differentiation before proceeding.';
+    } else {
+        verdict += 'Recommendation: Review for potential overlap with existing initiatives.';
+    }
+
+    return verdict;
+}
+
+/**
+ * Collect all unique sources
+ */
+function collectSources(structuredEvidence) {
+    const sources = [];
+    const seen = new Set();
+
+    const allEvidence = [
+        ...structuredEvidence.marketTrends,
+        ...structuredEvidence.competitors,
+        ...structuredEvidence.patents
+    ];
+
+    allEvidence.forEach(item => {
+        if (item.source && !seen.has(item.source)) {
+            sources.push({
+                title: item.title,
+                url: item.source,
+                category: item.category
+            });
+            seen.add(item.source);
+        }
+    });
+
+    return sources.slice(0, 15); // Max 15 sources
 }
 
 export default {

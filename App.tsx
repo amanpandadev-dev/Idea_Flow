@@ -370,12 +370,20 @@ const App: React.FC = () => {
 
           {activeTab.startsWith('market-validation:') && (() => {
             const ideaId = activeTab.split(':')[1];
-            return <MarketValidation ideas={ideas} ideaId={ideaId} />;
+            return <MarketValidation
+              ideas={ideas}
+              ideaId={ideaId}
+              onBack={() => handleTabChange(`detail:${ideaId}`)}
+            />;
           })()}
 
           {activeTab.startsWith('market-chat:') && (() => {
             const ideaId = activeTab.split(':')[1];
-            return <MarketValidatorChat ideas={ideas} ideaId={ideaId} />;
+            return <MarketValidatorChat
+              ideas={ideas}
+              ideaId={ideaId}
+              onBack={() => handleTabChange(`detail:${ideaId}`)}
+            />;
           })()}
         </div>
       </main>

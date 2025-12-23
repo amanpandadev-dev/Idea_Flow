@@ -897,7 +897,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                 title="Open filter explorer"
                             >
                                 <Compass className="w-4 h-4 text-white" />
-                                <span className="text-white text-xs font-medium">Explore</span>
+                                <span className="text-white text-xs font-medium">Filter By</span>
                                 {activeFilterCount > 0 && (
                                     <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border border-white text-white text-[10px] flex items-center justify-center font-bold">
                                         {activeFilterCount}

@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, Send, Bot, User, Lightbulb, TrendingUp,
     Shield, AlertTriangle, Loader2, X, MessageCircle
@@ -9,6 +8,7 @@ import { Idea } from '../types';
 interface MarketValidatorChatProps {
     ideas: Idea[];
     ideaId: string;
+    onBack?: () => void;
 }
 
 interface ChatMessage {
@@ -25,8 +25,7 @@ interface QuickQuestion {
     color: string;
 }
 
-const MarketValidatorChat: React.FC<MarketValidatorChatProps> = ({ ideas, ideaId }) => {
-    const navigate = useNavigate();
+const MarketValidatorChat: React.FC<MarketValidatorChatProps> = ({ ideas, ideaId, onBack }) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [inputValue, setInputValue] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -165,7 +164,7 @@ const MarketValidatorChat: React.FC<MarketValidatorChatProps> = ({ ideas, ideaId
                     <AlertTriangle className="h-12 w-12 text-red-600 mx-auto mb-4" />
                     <h2 className="text-xl font-semibold text-slate-700">Idea not found</h2>
                     <button
-                        onClick={() => navigate(-1)}
+                        onClick={onBack}
                         className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
                     >
                         Go Back
@@ -183,7 +182,7 @@ const MarketValidatorChat: React.FC<MarketValidatorChatProps> = ({ ideas, ideaId
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
                             <button
-                                onClick={() => navigate(-1)}
+                                onClick={onBack}
                                 className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
                             >
                                 <ArrowLeft className="h-5 w-5 text-slate-600" />
@@ -224,8 +223,8 @@ const MarketValidatorChat: React.FC<MarketValidatorChatProps> = ({ ideas, ideaId
                                     >
                                         <div
                                             className={`flex-shrink-0 h-10 w-10 rounded-full flex items-center justify-center ${message.role === 'user'
-                                                    ? 'bg-indigo-100 text-indigo-600'
-                                                    : 'bg-purple-100 text-purple-600'
+                                                ? 'bg-indigo-100 text-indigo-600'
+                                                : 'bg-purple-100 text-purple-600'
                                                 }`}
                                         >
                                             {message.role === 'user' ? (
@@ -240,8 +239,8 @@ const MarketValidatorChat: React.FC<MarketValidatorChatProps> = ({ ideas, ideaId
                                         >
                                             <div
                                                 className={`inline-block px-4 py-3 rounded-2xl ${message.role === 'user'
-                                                        ? 'bg-indigo-600 text-white'
-                                                        : 'bg-slate-100 text-slate-800'
+                                                    ? 'bg-indigo-600 text-white'
+                                                    : 'bg-slate-100 text-slate-800'
                                                     }`}
                                             >
                                                 <p className="text-sm whitespace-pre-wrap">{message.content}</p>

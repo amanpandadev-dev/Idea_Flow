@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, TrendingUp, Shield, Lightbulb, AlertTriangle, ChevronDown, ChevronUp, ExternalLink, Loader2 } from 'lucide-react';
+import { ArrowLeft, TrendingUp, Shield, Lightbulb, AlertTriangle, ChevronDown, ChevronUp, ExternalLink, Loader2, Download } from 'lucide-react';
 import { Idea } from '../types';
 
 interface MarketValidationProps {
     ideas: Idea[];
-    ideaId: string; // Pass ideaId as prop from App.tsx
+    ideaId: string;
+    onBack?: () => void;
 }
 
 interface ValidationReport {
@@ -43,13 +43,13 @@ interface ValidationReport {
     generatedAt: string;
 }
 
-const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId }) => {
-    const navigate = useNavigate();
+const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId, onBack }) => {
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [report, setReport] = useState<ValidationReport | null>(null);
-    const [sourcesExpanded, setSourcesExpanded] = useState(false);
+    const [expandedSources, setExpandedSources] = useState(false);
+    const [downloading, setDownloading] = useState(false);
 
     const idea = ideas.find(i => i.id === ideaId);
 
@@ -77,16 +77,46 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId }) =>
             });
 
             if (!response.ok) {
-                throw new Error(`Validation failed: ${response.statusText}`);
+                throw new Error('Failed to fetch validation report');
             }
 
             const data = await response.json();
             setReport(data);
         } catch (err: any) {
-            console.error('[MarketValidation] Error:', err);
-            setError(err.message || 'Failed to generate validation report');
+            setError(err.message || 'An error occurred');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleDownloadPDF = async () => {
+        setDownloading(true);
+        try {
+            const response = await fetch(`/api/ideas/${ideaId}/market-validation/download`, {
+                headers: {
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`
+                }
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || 'Download failed');
+            }
+
+            // Create blob and trigger download
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Market_Validation_${ideaId}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (err: any) {
+            alert(err.message || 'Failed to download PDF');
+        } finally {
+            setDownloading(false);
         }
     };
 
@@ -126,7 +156,7 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId }) =>
                         <h2 className="text-xl font-bold text-red-900 mb-2">Validation Failed</h2>
                         <p className="text-red-700">{error}</p>
                         <button
-                            onClick={() => navigate(-1)}
+                            onClick={onBack}
                             className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                         >
                             Go Back
@@ -149,7 +179,7 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId }) =>
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
                         <button
-                            onClick={() => navigate(-1)}
+                            onClick={onBack}
                             className="p-2 hover:bg-white rounded-lg transition-colors"
                         >
                             <ArrowLeft className="h-5 w-5 text-slate-600" />
@@ -163,6 +193,18 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId }) =>
                         <span className={`px-4 py-2 rounded-full text-sm font-medium border-2 ${getRiskColor(report.patentSignals.riskLevel)}`}>
                             {report.patentSignals.riskLevel} IP Risk
                         </span>
+                        <button
+                            onClick={handleDownloadPDF}
+                            disabled={downloading}
+                            className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm whitespace-nowrap"
+                        >
+                            {downloading ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                                <Download className="h-3.5 w-3.5" />
+                            )}
+                            Download Report
+                        </button>
                         <button
                             onClick={fetchValidationReport}
                             className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
@@ -227,7 +269,10 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId }) =>
                                             {report.internalAnalysis.similarIdeas.map((idea, idx) => (
                                                 <li key={idx} className="flex items-center justify-between bg-slate-50 p-3 rounded-lg">
                                                     <span>{idea.title}</span>
-                                                    <span className="text-sm text-slate-500">{(idea.similarity * 100).toFixed(0)}% similar</span>
+                                                    <div className="text-right">
+                                                        <div className="text-sm font-semibold text-slate-700">{idea.similarityPct || Math.round((idea.similarity || 0) * 100)}% similar</div>
+                                                        <div className="text-xs text-slate-500">{idea.band || 'N/A'}</div>
+                                                    </div>
                                                 </li>
                                             ))}
                                         </ul>
@@ -356,17 +401,17 @@ const MarketValidation: React.FC<MarketValidationProps> = ({ ideas, ideaId }) =>
                 {/* Evidence Sources - Expandable Footer */}
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200">
                     <button
-                        onClick={() => setSourcesExpanded(!sourcesExpanded)}
+                        onClick={() => setExpandedSources(!expandedSources)}
                         className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors"
                     >
                         <div className="flex items-center gap-3">
                             <ExternalLink className="h-5 w-5 text-slate-600" />
                             <span className="font-semibold text-slate-900">Evidence Sources ({report.sources.length})</span>
                         </div>
-                        {sourcesExpanded ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
+                        {expandedSources ? <ChevronUp className="h-5 w-5 text-slate-400" /> : <ChevronDown className="h-5 w-5 text-slate-400" />}
                     </button>
 
-                    {sourcesExpanded && (
+                    {expandedSources && (
                         <div className="px-6 pb-6 space-y-2">
                             {report.sources.map((source, idx) => (
                                 <a

@@ -185,6 +185,65 @@ app.post('/api/ideas/:ideaId/market-validation', async (req, res) => {
   }
 });
 
+// Market Validation PDF Download (NO regeneration - uses saved report)
+app.get('/api/ideas/:ideaId/market-validation/download', async (req, res) => {
+  try {
+    const { ideaId } = req.params;
+
+    console.log(`[MarketValidation] Downloading report for idea ${ideaId}`);
+
+    // Extract numeric ID
+    const numericId = ideaId.includes('-') ? ideaId.split('-')[1] : ideaId;
+
+    // Fetch most recent saved report
+    const reportResult = await pool.query(
+      'SELECT report, idea_id FROM market_validations WHERE idea_id = $1 ORDER BY generated_at DESC LIMIT 1',
+      [parseInt(numericId)]
+    );
+
+    if (reportResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No report found. Please generate a report first.'
+      });
+    }
+
+    const savedReport = reportResult.rows[0];
+    const reportData = typeof savedReport.report === 'string'
+      ? JSON.parse(savedReport.report)
+      : savedReport.report;
+
+    // Fetch idea details for PDF title
+    const ideaResult = await pool.query(
+      'SELECT idea_id, title, business_group FROM ideas WHERE idea_id = $1',
+      [parseInt(numericId)]
+    );
+
+    const idea = ideaResult.rows[0] || { idea_id: numericId, title: 'Unknown Idea', business_group: 'Unknown' };
+
+    // Generate PDF
+    const { generateMarketValidationPDF } = await import('./backend/services/pdfGenerator.js');
+    const pdfDoc = generateMarketValidationPDF(reportData, idea);
+
+    // Set response headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Market_Validation_${ideaId}.pdf"`);
+
+    // Pipe PDF to response
+    pdfDoc.pipe(res);
+    pdfDoc.end();
+
+    console.log(`[MarketValidation] PDF download initiated for ${ideaId}`);
+
+  } catch (error) {
+    console.error('[MarketValidation] Download error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'PDF generation failed'
+    });
+  }
+});
+
 app.use('/api/context', contextRoutes);
 app.use('/api/agent', agentRoutes); // Auth will be added after middleware definition
 

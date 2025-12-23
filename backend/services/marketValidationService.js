@@ -92,6 +92,8 @@ export async function analyzeInternalPosition(idea) {
                     id: similarId.replace('idea_', ''),
                     title: metadata.title || 'Unknown',
                     similarity: parseFloat(similarity.toFixed(3)),
+                    similarityPct: Math.round(similarity * 100),
+                    band: getSimilarityBand(similarity),
                     businessGroup: metadata.business_group || 'Unknown'
                 });
 
@@ -120,6 +122,15 @@ export async function analyzeInternalPosition(idea) {
             error: 'Internal analysis unavailable'
         };
     }
+}
+
+/**
+ * Get similarity band for display
+ */
+function getSimilarityBand(similarity) {
+    if (similarity >= 0.8) return 'Strong overlap';
+    if (similarity >= 0.5) return 'Moderate overlap';
+    return 'Low overlap';
 }
 
 /**
