@@ -32,7 +32,9 @@ import {
 import { classifyIntent, INTENTS } from '../services/intentClassifier.js';
 import { buildSemanticQuery, buildRefinedQuery } from '../services/queryBuilder.js';
 import { applyMetadataFilters, countActiveFilters } from '../services/metadataFilter.js';
-import { extractFilterInfo, normalizeFilterType, normalizeFilterValue } from '../services/filterExtractor.js';
+import { extractFilterInfo, normalizeFilterType, normalizeFilterValue, extractFiltersForPostgres } from '../services/filterExtractor.js';
+import { getFilteredIdeaIds, hasActiveFilters, mergeFilters, detectFilterMode } from '../services/postgresFilterService.js';
+import { buildFilterAwareQuery, detectBusinessGroups } from '../services/filterAwareQueryBuilder.js';
 import {
     getOrCreateContext,
     hasContext,
@@ -700,12 +702,13 @@ router.post('/conversational', async (req, res) => {
         // STEP 2: OPTIMIZED Intent Classification (FIX #2)
         const hasExistingContext = hasContext(userId, conversationId) && context.baseResults.length > 0;
 
-        // CRITICAL FIX 3: Hard override for refinement queries (BEFORE any classification!)
-        // Check FIRST if this is a filter/refinement query on existing results
+        // CRITICAL FIX: NEVER allow SEMANTIC_SEARCH if baseQuery exists
+        // Check FIRST if this is a refinement on existing results
         let intent = null;
-        if (context.baseQuery &&
-            trimmedQuery.match(/\b(using|only|filter|from the results|year|domain|tech|group|business|which|uses)\b/i)) {
-            console.log(`[Intent Override] Base query exists + refinement keywords → APPLY_FILTER`);
+        if (context.baseQuery) {
+            // Base query exists → this is ALWAYS a refinement, not a new search
+            console.log(`[Intent Override] Base query exists ("${context.baseQuery}") → APPLY_FILTER`);
+            console.log(`[Intent Override] Existing filters:`, context.filters);
             intent = INTENTS.APPLY_FILTER;
         } else {
             // Try fast heuristic first (0ms) - ENTERPRISE AWARE
@@ -758,91 +761,217 @@ router.post('/conversational', async (req, res) => {
         let semanticResults = [];
         let finalResults = [];
 
+        // Variables that need to be accessible outside switch statement
+        let constrainedIdeaIds = null;
+        let combinedFilters = {};
+        let cleanQuery = '';
+
         // STEP 3: Route based on intent
         switch (intent) {
             case INTENTS.SEMANTIC_SEARCH:
                 // Run semantic search with clean query
-                const cleanQuery = buildSemanticQuery(trimmedQuery);
+                cleanQuery = buildSemanticQuery(trimmedQuery);
 
                 console.log(`[Semantic] Searching: "${cleanQuery}"`);
-                console.log(`[Progressive] Phase 1: Initial semantic search`);
+                console.log(`[Two-Stage] Starting filter-aware semantic search`);
 
-                // FIX #3: Use cached embedding
+                // 🆕 CUMULATIVE FILTER MERGING + BUSINESS GROUP DETECTION
+                // Step 1: Extract filters from query
+                const extractedFilters = await extractFiltersForPostgres(trimmedQuery);
+
+                // Step 2: Detect business groups from natural language
+                const detectedBusinessGroups = detectBusinessGroups(trimmedQuery);
+                if (detectedBusinessGroups.length > 0) {
+                    // Merge detected business groups into extracted filters
+                    extractedFilters.businessGroups = [
+                        ...(extractedFilters.businessGroups || []),
+                        ...detectedBusinessGroups
+                    ];
+                    console.log(`[BusinessGroupDetection] Added: ${detectedBusinessGroups.join(', ')}`);
+                }
+
+                // Step 3: Get Explore UI filters from request
+                const exploreFilters = req.body.additionalFilters || {};
+
+                // Step 4: 🔑 CRITICAL: Use context.activeFilters as base (includes Explorer filters!)
+                // This is the SINGLE SOURCE OF TRUTH for all filters
+                const existingFilters = context.activeFilters || {};
+
+                // Step 5: Detect mode (ADD/REPLACE)
+                const filterMode = detectFilterMode(trimmedQuery);
+
+                // Step 6: Merge all filters cumulatively
+                // Order: existingFilters (Explorer + history) + extractedFilters (message) + exploreFilters (new UI)
+                let tempFilters = mergeFilters(existingFilters, extractedFilters, filterMode);
+                combinedFilters = mergeFilters(tempFilters, exploreFilters, 'ADD');
+
+                // Step 7: 🔑 Update context.activeFilters (persistence for next message)
+                context.activeFilters = combinedFilters;
+                context.filters = combinedFilters;  // Backward compatibility
+
+                console.log(`[Filter State] Existing (activeFilters):`, existingFilters);
+                console.log(`[Filter State] Extracted (from message):`, extractedFilters);
+                console.log(`[Filter State] Explore (from UI):`, exploreFilters);
+                console.log(`[Filter State] Mode:`, filterMode);
+                console.log(`[Filter State] Final Combined (activeFilters):`, context.activeFilters);
+
+                constrainedIdeaIds = null;
+                const totalStageStart = Date.now();
+
+                if (hasActiveFilters(combinedFilters)) {
+                    console.log(`[Two-Stage] 🔍 Stage 1: PostgreSQL filter`, combinedFilters);
+                    const filterStart = Date.now();
+
+                    try {
+                        constrainedIdeaIds = await getFilteredIdeaIds(combinedFilters, pool);
+                        const filterDuration = Date.now() - filterStart;
+                        console.log(`[Two-Stage] ✅ Stage 1 complete: ${constrainedIdeaIds.length} filtered IDs in ${filterDuration}ms`);
+                    } catch (error) {
+                        console.error(`[Two-Stage] ❌ Stage 1 error:`, error.message);
+                        // Continue without filtering if error
+                    }
+                } else {
+                    console.log(`[Two-Stage] ⏭️  Stage 1 skipped: No filters detected`);
+                }
+
+                // 🆕 STAGE 2: Filter-Aware ChromaDB Search
+                // Build filter-aware query (injects filter context for embeddings)
+                const filterAwareQuery = hasActiveFilters(combinedFilters)
+                    ? buildFilterAwareQuery(cleanQuery, combinedFilters)
+                    : cleanQuery;
+
+                console.log(`[Two-Stage] 🧠 Stage 2: ChromaDB semantic search`);
+                console.log(`[FilterAwareQuery] Using: "${filterAwareQuery}"`);
+
                 const embeddingStart = Date.now();
-                const embedding = await getCachedEmbedding(cleanQuery);
+                const embedding = await getCachedEmbedding(filterAwareQuery);
                 console.log(`[Embedding] Generated in ${Date.now() - embeddingStart}ms`);
 
-                // FIX #1: Use cached ChromaDB collection (CRITICAL)
-                const queryStart = Date.now();
                 const collection = await getIdeasCollection();
+                const chromaStart = Date.now();
 
-                const chromaResults = await collection.query({
+                // Build query options
+                const queryOptions = {
                     queryEmbeddings: [embedding],
                     nResults: 200  // High recall
-                });
-                console.log(`[ChromaDB] Queried in ${Date.now() - queryStart}ms`);
+                };
 
-                // Map and filter by threshold
-                semanticResults = chromaResults.ids[0].map((id, i) => ({
-                    id,
-                    document: chromaResults.documents[0][i],
-                    metadata: chromaResults.metadatas[0][i],
-                    similarity: 1 - chromaResults.distances[0][i]
-                })).filter(r => r.similarity >= 0.40);
+                // 🔥 Prepare for post-query filtering by metadata.idea_id
+                let chromaDocIdSet = null;
+                if (constrainedIdeaIds && constrainedIdeaIds.length > 0) {
+                    // Use integer IDs for metadata.idea_id matching
+                    chromaDocIdSet = new Set(constrainedIdeaIds);
 
-                console.log(`[Semantic] ${semanticResults.length} results above threshold 0.40`);
+                    // 🔑 CRITICAL: Query ALL ideas to ensure COMPLETE coverage of filtered IDs
+                    // When filters are active, we MUST show ALL matching ideas, not just top-ranked
+                    queryOptions.nResults = 5000;  // Query entire collection to guarantee all filtered ideas are included
 
-                // PROGRESSIVE NARROWING: Set as immutable base results
+                    console.log(`[Two-Stage] 🎯 Will post-filter ${queryOptions.nResults} results to ${constrainedIdeaIds.length} IDs`);
+                    console.log(`[Debug] Sample expected IDs: ${constrainedIdeaIds.slice(0, 5).join(', ')}...`);
+                } else if (constrainedIdeaIds && constrainedIdeaIds.length === 0) {
+                    // No IDs match filter - return empty results immediately
+                    console.log(`[Two-Stage] ⚠️  No IDs match filter - returning empty results`);
+                    semanticResults = [];
+                    context.setBaseResults(cleanQuery, semanticResults);
+                    break;
+                }
+
+                const chromaResults = await collection.query(queryOptions);
+                const chromaDuration = Date.now() - chromaStart;
+
+                console.log(`[Two-Stage] ✅ Stage 2 complete: ${chromaResults.ids[0]?.length || 0} results in ${chromaDuration}ms`);
+                if (chromaResults.ids[0]?.length > 0) {
+                    console.log(`[Debug] Sample ChromaDB IDs: ${chromaResults.ids[0].slice(0, 5).join(', ')}`);
+                    console.log(`[Debug] Sample metadata.idea_id: ${chromaResults.metadatas[0].slice(0, 3).map(m => m.idea_id).join(', ')}`);
+                }
+
+                // Map and filter results
+                semanticResults = chromaResults.ids[0]
+                    .map((id, i) => ({
+                        id,
+                        document: chromaResults.documents[0][i],
+                        metadata: chromaResults.metadatas[0][i],
+                        similarity: 1 - chromaResults.distances[0][i]
+                    }))
+                    .filter(r => {
+                        // 🔑 CRITICAL: When filters active, show ALL filtered results
+                        // Filter by metadata.idea_id (integer) not document id (string)
+                        if (chromaDocIdSet) {
+                            const ideaId = r.metadata.idea_id;
+                            return chromaDocIdSet.has(ideaId);  // Match by metadata ID
+                        }
+                        return r.similarity >= 0.40;  // Threshold for unfiltered only
+                    });
+
+                const totalDuration = Date.now() - totalStageStart;
+                const thresholdMsg = chromaDocIdSet ? '(no threshold - filtered)' : 'above threshold 0.40';
+                console.log(`[Two-Stage] 🎉 Complete: ${semanticResults.length} results ${thresholdMsg} (total: ${totalDuration}ms)`);
+
+                // ✅ NO POST-FILTERING NEEDED! Filters already applied in Stage 1
                 context.setBaseResults(cleanQuery, semanticResults);
                 console.log(`[Progressive] Base result set established: ${semanticResults.length} items`);
+
+                // Store embedding for potential refinement
+                context.lastEmbedding = embedding;
+                context.filters = combinedFilters;
 
                 break;
 
             case INTENTS.APPLY_FILTER:
-                // Extract filter info with action (REPLACE/ADD/REMOVE)
-                const filterInfo = await extractFilterInfo(trimmedQuery);
-                if (filterInfo.type && filterInfo.value) {
-                    const normalizedType = normalizeFilterType(filterInfo.type);
-                    const normalizedValue = normalizeFilterValue(filterInfo.value, normalizedType);
+                // 🆕 CUMULATIVE FILTER APPLICATION
+                console.log(`[APPLY_FILTER] Applying filter to existing base results`);
 
-                    if (normalizedType && normalizedValue) {
-                        // Handle action: REPLACE, ADD, or REMOVE
-                        switch (filterInfo.action) {
-                            case 'REPLACE':
-                                context.replaceFilters(normalizedType, normalizedValue);
-                                break;
+                // Extract new filter from query
+                const newExtractedFilters = await extractFiltersForPostgres(trimmedQuery);
 
-                            case 'REMOVE':
-                                if (Array.isArray(normalizedValue)) {
-                                    normalizedValue.forEach(v => context.removeFilter(normalizedType, v));
-                                } else {
-                                    context.removeFilter(normalizedType, normalizedValue);
-                                }
-                                break;
+                // 🔑 Get existing filters from context.activeFilters (includes Explorer!)
+                const currentFilters = context.activeFilters || {};
 
-                            case 'ADD':
-                            default:
-                                context.addFilter(normalizedType, normalizedValue);
-                                break;
-                        }
+                // Detect mode
+                const applyFilterMode = detectFilterMode(trimmedQuery);
+
+                // Merge cumulatively
+                combinedFilters = mergeFilters(currentFilters, newExtractedFilters, applyFilterMode);
+
+                // Update context.activeFilters (persistence)
+                context.activeFilters = combinedFilters;
+                context.filters = combinedFilters;  // Backward compatibility
+
+                console.log(`[APPLY_FILTER] Current (activeFilters):`, currentFilters);
+                console.log(`[APPLY_FILTER] New extracted:`, newExtractedFilters);
+                console.log(`[APPLY_FILTER] Mode:`, applyFilterMode);
+                console.log(`[APPLY_FILTER] Combined (activeFilters):`, context.activeFilters);
+
+                // 🔥 TWO-STAGE SEARCH with updated filters (NO re-embedding!)
+                // Re-use base query from context
+                const baseQuery = context.semanticQuery || buildSemanticQuery(trimmedQuery);
+
+                if (hasActiveFilters(combinedFilters)) {
+                    // Check if baseResults exist
+                    if (!context.baseResults || context.baseResults.length === 0) {
+                        console.error(`[APPLY_FILTER] ERROR: No baseResults!`);
+                        semanticResults = [];
+                        break;
                     }
+
+                    // ✅ IN-MEMORY FILTERING ONLY
+                    const filterStart = Date.now();
+
+                    semanticResults = applyMetadataFilters(
+                        context.baseResults,  // From existing results
+                        combinedFilters
+                    );
+
+                    console.log(`[APPLY_FILTER] ✅ ${context.baseResults.length} → ${semanticResults.length} in ${Date.now() - filterStart}ms`);
+
+                    // Cache results (but NOT baseResults!)
+                    context.cacheResults(semanticResults);
+                } else {
+                    // No filters - use base results
+                    semanticResults = context.baseResults || [];
                 }
 
-                // IN-MEMORY FILTER on currentResults
-                const filterStart = Date.now();
-                semanticResults = context.narrowResults(result => {
-                    return applyMetadataFilters([result], context.filters).length > 0;
-                });
-
-                const filterTime = Date.now() - filterStart;
-
-                // Clean summary with active filters
-                const activeFilters = Object.entries(context.filters)
-                    .filter(([_, values]) => values.length > 0)
-                    .map(([key, values]) => `${key}:${values.join(',')}`)
-                    .join(' ');
-
-                console.log(`[Filter] {${activeFilters}} → ${context.previousCount} → ${semanticResults.length} (${filterTime}ms)`);
+                console.log(`[APPLY_FILTER] Final: ${semanticResults.length} results`);
 
                 break;
 
@@ -986,7 +1115,72 @@ router.post('/conversational', async (req, res) => {
                 });
         }
 
-        // STEP 4: Apply metadata filters (AFTER semantic search)
+        // STEP 4: Post-processing (CONDITIONAL - avoid redundant work)
+        // 🚨 CRITICAL: Skip post-filtering if two-stage search was used!
+        // Two-stage search already applied filters in PostgreSQL (Stage 1)
+
+        const usedTwoStageSearch = (intent === INTENTS.SEMANTIC_SEARCH && constrainedIdeaIds !== null);
+
+        if (usedTwoStageSearch) {
+            console.log(`[Post-Processing] ⏭️  SKIPPED - filters already applied in PostgreSQL`);
+
+            // Use semanticResults directly (already filtered)
+            finalResults = semanticResults;
+
+            // NO hybrid scoring needed - rank by semantic similarity only
+            const scoredResults = finalResults.map(result => ({
+                ...result,
+                hybridScore: result.similarity,  // Pure semantic ranking
+                scoreBreakdown: {
+                    vector: result.similarity,
+                    metadata: 0,
+                    keyword: 0,
+                    raw_similarity: result.similarity
+                }
+            }));
+
+            scoredResults.sort((a, b) => b.hybridScore - a.hybridScore);
+            console.log(`[Two-Stage] ✅ Using semantic ranking only: ${scoredResults.length} results`);
+
+            // Format results
+            const formattedResults = formatResults(scoredResults);
+
+            // Simple AI response (no generation needed)
+            const aiResponse = `Found ${formattedResults.length} result${formattedResults.length === 1 ? '' : 's'}`;
+
+            // Smart suggestions
+            const suggestions = generateSmartSuggestions(formattedResults, context);
+
+            const duration = Date.now() - startTime;
+
+            return res.json({
+                intent,
+                conversationId,
+                results: formattedResults,
+                aiResponse,
+                suggestions,
+                filtersApplied: combinedFilters,
+                resultContext: {
+                    query: cleanQuery,
+                    action: 'two_stage_search',
+                    conversationId,
+                    filters: combinedFilters
+                },
+                metadata: {
+                    intent,
+                    totalResults: formattedResults.length,
+                    processingTime: duration,
+                    searchType: 'two_stage',
+                    filtersUsed: hasActiveFilters(combinedFilters),
+                    context: {
+                        query: cleanQuery,
+                        filters: combinedFilters
+                    }
+                }
+            });
+        }
+
+        // STEP 4: Apply metadata filters (ONLY for legacy non-two-stage paths)
         finalResults = applyMetadataFilters(semanticResults, context.filters);
 
         console.log(`[Metadata Filter] ${finalResults.length} of ${semanticResults.length} results passed filters`);
