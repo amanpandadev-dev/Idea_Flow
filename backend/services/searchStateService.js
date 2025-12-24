@@ -90,6 +90,63 @@ export class SearchStateService {
     }
 
     /**
+     * Save conversation embedding to database
+     * @param {string} conversationId - UUID of conversation
+     * @param {number[]} embedding - Embedding vector
+     * @param {number} messageCount - Number of messages accumulated
+     */
+    async saveConversationEmbedding(conversationId, embedding, messageCount) {
+        try {
+            await this.pool.query(`
+                UPDATE conversation_search_state
+                SET 
+                    conversation_embedding = $1,
+                    embedding_updated_at = NOW(),
+                    embedding_message_count = $2
+                WHERE conversation_id = $3
+            `, [JSON.stringify(embedding), messageCount, conversationId]);
+            
+            console.log(`[SearchState] Saved conversation embedding (${embedding.length}-dim, ${messageCount} messages)`);
+            return true;
+        } catch (error) {
+            console.error(`[SearchState] Failed to save embedding:`, error.message);
+            return false;
+        }
+    }
+
+    /**
+     * Load conversation embedding from database
+     * @param {string} conversationId - UUID of conversation
+     * @returns {Object|null} Embedding data or null
+     */
+    async loadConversationEmbedding(conversationId) {
+        try {
+            const result = await this.pool.query(`
+                SELECT 
+                    conversation_embedding,
+                    embedding_updated_at,
+                    embedding_message_count
+                FROM conversation_search_state
+                WHERE conversation_id = $1
+            `, [conversationId]);
+            
+            if (result.rows.length === 0 || !result.rows[0].conversation_embedding) {
+                return null;
+            }
+            
+            const row = result.rows[0];
+            return {
+                embedding: row.conversation_embedding, // Already parsed from JSONB
+                updatedAt: row.embedding_updated_at,
+                messageCount: row.embedding_message_count
+            };
+        } catch (error) {
+            console.error(`[SearchState] Failed to load embedding:`, error.message);
+            return null;
+        }
+    }
+
+    /**
      * Delete search state for a conversation
      * @param {string} conversationId - UUID of conversation
      */

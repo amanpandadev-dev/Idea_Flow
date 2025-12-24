@@ -694,6 +694,16 @@ router.post('/conversational', async (req, res) => {
                 context.currentResultIds = savedState.currentResultIds;
                 console.log(`[Context Rehydration] ✅ Also restored ${currentIdeas.length} filtered results`);
             }
+            
+            // 🆕 RESTORE CONVERSATION EMBEDDING
+            const embeddingData = await searchStateService.loadConversationEmbedding(conversationId);
+            if (embeddingData && embeddingData.embedding) {
+                context.conversationEmbedding = embeddingData.embedding;
+                context.embeddingUpdatedAt = embeddingData.updatedAt ? new Date(embeddingData.updatedAt).getTime() : Date.now();
+                context.messageCount = embeddingData.messageCount || 0;
+                
+                console.log(`[Context Rehydration] ✅ Restored conversation embedding (${context.messageCount} messages)`);
+            }
         } else {
             console.log(`[Context Rehydration] No saved state found - starting fresh`);
         }
@@ -844,15 +854,27 @@ router.post('/conversational', async (req, res) => {
                 console.log(`[FilterAwareQuery] Using: "${filterAwareQuery}"`);
 
                 const embeddingStart = Date.now();
-                const embedding = await getCachedEmbedding(filterAwareQuery);
+                const newEmbedding = await getCachedEmbedding(filterAwareQuery);
                 console.log(`[Embedding] Generated in ${Date.now() - embeddingStart}ms`);
+                
+                // 🆕 UPDATE CONVERSATION EMBEDDING
+                context.updateEmbedding(newEmbedding, {
+                    prevWeight: 0.7,
+                    newWeight: 0.3,
+                    useTimeDecay: false  // Can enable for advanced use
+                });
+                
+                // 🆕 USE CONVERSATION EMBEDDING FOR SEARCH
+                const searchEmbedding = context.getConversationEmbedding();
+                
+                console.log(`[Semantic] Using conversation embedding (${context.messageCount} messages accumulated)`);
 
                 const collection = await getIdeasCollection();
                 const chromaStart = Date.now();
 
                 // Build query options
                 const queryOptions = {
-                    queryEmbeddings: [embedding],
+                    queryEmbeddings: [searchEmbedding],  // ← Use accumulated embedding
                     nResults: 200  // High recall
                 };
 
@@ -911,8 +933,8 @@ router.post('/conversational', async (req, res) => {
                 context.setBaseResults(cleanQuery, semanticResults);
                 console.log(`[Progressive] Base result set established: ${semanticResults.length} items`);
 
-                // Store embedding for potential refinement
-                context.lastEmbedding = embedding;
+                // Store embedding for potential refinement (keep for backward compatibility)
+                context.lastEmbedding = newEmbedding;
                 context.filters = combinedFilters;
 
                 break;
@@ -1300,6 +1322,16 @@ router.post('/conversational', async (req, res) => {
                 });
 
                 console.log('[SearchState] ✅ Persisted successfully to conversation_search_state');
+                
+                // 🆕 SAVE CONVERSATION EMBEDDING
+                if (context.conversationEmbedding) {
+                    await searchStateService.saveConversationEmbedding(
+                        conversationId,
+                        context.conversationEmbedding,
+                        context.messageCount
+                    );
+                    console.log('[SearchState] ✅ Saved conversation embedding');
+                }
             } catch (saveError) {
                 console.error('[SearchState] ❌ CRITICAL: Persistence failed', saveError);
                 return res.status(500).json({
@@ -1329,6 +1361,8 @@ router.post('/conversational', async (req, res) => {
                 before: context.previousCount,
                 after: context.currentResultIds.length
             },
+            // 🆕 EMBEDDING METADATA
+            embeddingMetadata: context.getEmbeddingMetadata(),
             metadata: {
                 intent,
                 totalResults: formattedResults.length,

@@ -5,7 +5,10 @@
  * Key concept: baseResults (immutable) → currentResults (mutable via filters)
  * 
  * NEW: Conversation-scoped context - contextStore[sessionId][conversationId]
+ * NEW: Conversation embedding for semantic context accumulation
  */
+
+import { combineEmbeddings, cosineSimilarity, timeDecayWeight } from '../utils/vectorOperations.js';
 
 class ConversationContext {
     constructor(sessionId, conversationId) {
@@ -37,6 +40,12 @@ class ConversationContext {
 
         this.intentHistory = [];
 
+        // NEW: Semantic state - Conversation embedding
+        this.conversationEmbedding = null;  // Current accumulated embedding
+        this.lastEmbedding = null;          // Last message embedding (for debugging)
+        this.embeddingUpdatedAt = null;     // Timestamp of last update
+        this.messageCount = 0;              // Number of messages with embeddings
+
         // ENTERPRISE: In-memory indexes for O(1) refinement
         this.indexes = {
             byTechnology: new Map(),    // "Java" → Set([1, 5, 12])
@@ -50,6 +59,120 @@ class ConversationContext {
 
         // Legacy field for backward compatibility
         this.cachedResults = [];
+    }
+
+    /**
+     * Update conversation embedding with new message embedding
+     * @param {number[]} newEmbedding - Embedding of new message
+     * @param {Object} options - Configuration options
+     */
+    updateEmbedding(newEmbedding, options = {}) {
+        const {
+            prevWeight = 0.7,
+            newWeight = 0.3,
+            useTimeDecay = false
+        } = options;
+        
+        // Validate embedding
+        if (!newEmbedding || !Array.isArray(newEmbedding) || newEmbedding.length === 0) {
+            console.warn('[Embedding] Invalid embedding received, skipping update');
+            return;
+        }
+        
+        // First message - initialize
+        if (!this.conversationEmbedding) {
+            this.conversationEmbedding = newEmbedding;
+            this.lastEmbedding = newEmbedding;
+            this.embeddingUpdatedAt = Date.now();
+            this.messageCount = 1;
+            
+            console.log(`[Embedding] Initialized conversation embedding (dim: ${newEmbedding.length})`);
+            return;
+        }
+        
+        // Calculate weights (with optional time decay)
+        let effectivePrevWeight = prevWeight;
+        let effectiveNewWeight = newWeight;
+        
+        if (useTimeDecay && this.embeddingUpdatedAt) {
+            const age = Date.now() - this.embeddingUpdatedAt;
+            const decayFactor = timeDecayWeight(age);
+            effectivePrevWeight *= decayFactor;
+            
+            // Renormalize weights
+            const total = effectivePrevWeight + effectiveNewWeight;
+            effectivePrevWeight /= total;
+            effectiveNewWeight /= total;
+            
+            console.log(`[Embedding] Time decay applied: age=${age}ms, decay=${decayFactor.toFixed(3)}`);
+        }
+        
+        // Calculate similarity before update (for monitoring)
+        const similarity = cosineSimilarity(this.conversationEmbedding, newEmbedding);
+        
+        // Combine embeddings
+        try {
+            this.conversationEmbedding = combineEmbeddings(
+                this.conversationEmbedding,
+                newEmbedding,
+                effectivePrevWeight,
+                effectiveNewWeight
+            );
+            
+            this.lastEmbedding = newEmbedding;
+            this.embeddingUpdatedAt = Date.now();
+            this.messageCount++;
+            
+            console.log(`[Embedding] Updated: weights=[${effectivePrevWeight.toFixed(2)}, ${effectiveNewWeight.toFixed(2)}], similarity=${similarity.toFixed(3)}, messages=${this.messageCount}`);
+        } catch (error) {
+            console.error('[Embedding] Failed to combine embeddings:', error.message);
+            // On error, reset and use new embedding
+            this.conversationEmbedding = newEmbedding;
+            this.lastEmbedding = newEmbedding;
+            this.embeddingUpdatedAt = Date.now();
+            this.messageCount = 1;
+        }
+    }
+    
+    /**
+     * Get current conversation embedding for search
+     * @returns {number[]|null} Current conversation embedding
+     */
+    getConversationEmbedding() {
+        return this.conversationEmbedding;
+    }
+    
+    /**
+     * Reset conversation embedding (on explicit reset or new search)
+     */
+    resetEmbedding() {
+        this.conversationEmbedding = null;
+        this.lastEmbedding = null;
+        this.embeddingUpdatedAt = null;
+        this.messageCount = 0;
+        
+        console.log(`[Embedding] Reset conversation embedding`);
+    }
+    
+    /**
+     * Get embedding metadata for debugging
+     * @returns {Object} Embedding metadata
+     */
+    getEmbeddingMetadata() {
+        if (!this.conversationEmbedding) {
+            return {
+                hasEmbedding: false,
+                messageCount: 0
+            };
+        }
+        
+        return {
+            hasEmbedding: true,
+            messageCount: this.messageCount,
+            dimension: this.conversationEmbedding.length,
+            lastUpdated: this.embeddingUpdatedAt,
+            age: Date.now() - this.embeddingUpdatedAt
+        };
     }
 
     /**
@@ -270,6 +393,9 @@ class ConversationContext {
             themes: []
         };
         this.lastUpdated = Date.now();
+        
+        // Also reset embedding on full reset
+        this.resetEmbedding();
 
         console.log(`[Session ${this.sessionId}] Reset to base: ${this.baseResultIds.length} results`);
     }
