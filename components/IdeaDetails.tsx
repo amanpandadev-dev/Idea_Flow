@@ -73,7 +73,7 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
     }
   };
 
-  const getStatusColor = (status: Status) => {
+  const getStatusColor = (status: Status | string | undefined) => {
     switch (status) {
       case Status.IN_PRODUCTION: return 'text-emerald-600 bg-emerald-50 border-emerald-200';
       case Status.IN_DEVELOPMENT: return 'text-blue-600 bg-blue-50 border-blue-200';
@@ -83,7 +83,7 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
     }
   };
 
-  const getStatusIcon = (status: Status) => {
+  const getStatusIcon = (status: Status | string | undefined) => {
     switch (status) {
       case Status.IN_PRODUCTION: return <CheckCircle className="h-5 w-5" />;
       case Status.IN_DEVELOPMENT: return <Activity className="h-5 w-5" />;
@@ -269,7 +269,12 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
               Technology Stack
             </h3>
             <div className="flex flex-wrap gap-2">
-              {localIdea.technologies.map(tech => (
+              {(Array.isArray(localIdea.technologies)
+                ? localIdea.technologies
+                : typeof localIdea.technologies === 'string'
+                  ? localIdea.technologies.split(',').map(t => t.trim())
+                  : []
+              ).map(tech => (
                 <span key={tech} className="px-3 py-1 bg-slate-100 text-slate-700 rounded-md text-sm font-medium border border-slate-200">
                   {tech}
                 </span>
