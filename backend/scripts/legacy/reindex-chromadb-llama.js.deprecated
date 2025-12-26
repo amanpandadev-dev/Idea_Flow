@@ -65,6 +65,10 @@ try {
             i.theme as domain,
             i.business_group as "businessGroup",
             i.code_preference as technologies,
+            i.challenge_opportunity as challenge_opportunity,
+            i.responsible_ai as responsible_ai,
+            i.benefits as benefits,
+            i.risks as risks,
             i.score,
             i.created_at
         FROM ideas i

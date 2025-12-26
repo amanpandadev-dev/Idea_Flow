@@ -63,8 +63,19 @@ export interface Idea {
   description?: string;
   domain?: string;
   businessGroup?: string;
-  technologies?: string;
+  technologies?: string | string[]; // Allow array for UI usage
   submissionDate?: string;
+
+  // Engagement
+  isLiked?: boolean;
+  likesCount?: number;
+
+  // Status & Ownership
+  status?: Status | string;
+  score?: number;
+  associateId?: number;
+  associateAccount?: string;
+  buildType?: string;
 
   // Search Relevance Metadata
   matchScore?: number;
