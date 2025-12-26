@@ -936,8 +936,8 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                         </button>
                     </div>
 
-                    {/* Search Form - Only show in Agent Q/A mode */}
-                    {searchMode === 'agent' && (
+                    {/* Search Form */}
+                    {(searchMode === 'agent' || searchMode === 'semantic') && (
                         <form onSubmit={handleSubmit}>
                             <div className="flex flex-wrap sm:flex-nowrap gap-3">
                                 <div className="relative flex-1">
@@ -1035,7 +1035,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                             <div className="flex-1 min-w-0">
                                 <h2 className="text-xl font-bold text-slate-900 truncate">{selectedHistoryItem.query}</h2>
                                 <p className="text-sm text-slate-500 mt-1">
-                                    {new Date(selectedHistoryItem.created_at).toLocaleString()}
+                                    {new Date(selectedHistoryItem.timestamp).toLocaleString()}
                                 </p>
                             </div>
                             <button
@@ -1065,7 +1065,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                                     </div>
 
                                     {/* Citations Section */}
-                                    {selectedHistoryItem.session.result.citations && selectedHistoryItem.session.result.citations.length > 0 && (
+                                    {selectedHistoryItem.session.result.citations && (selectedHistoryItem.session.result.citations.internal.length > 0 || selectedHistoryItem.session.result.citations.external.length > 0) && (
                                         <div>
                                             <h3 className="font-semibold text-slate-900 mb-3">Citations</h3>
                                             <CitationDisplay citations={selectedHistoryItem.session.result.citations} />
