@@ -21,8 +21,8 @@ export async function searchSimilarIdeas(chromaClient, db, query, embeddingProvi
 
         // Get or create ideas collection
         const collection = await chromaClient.getOrCreateCollection({
-            name: 'ideas_search',
-            metadata: { description: 'Innovation idea submissions' }
+            name: 'ideas_semantic_index',
+            metadata: { description: 'Innovation idea submissions - Single authoritative collection' }
         });
 
         // Perform vector similarity search with large candidate pool
@@ -156,8 +156,8 @@ export async function searchSimilarIdeasWithContext(chromaClient, db, userId, em
 
         // Get ideas collection
         const collection = await chromaClient.getOrCreateCollection({
-            name: 'ideas_search',
-            metadata: { description: 'Innovation idea submissions' }
+            name: 'ideas_semantic_index',
+            metadata: { description: 'Innovation idea submissions - Single authoritative collection' }
         });
 
         // Track aggregated scores per idea (using max similarity)
@@ -311,8 +311,8 @@ export async function indexIdea(chromaClient, idea, embeddingProvider = 'gemini'
 
             // Get or create collection
             const collection = await chromaClient.getOrCreateCollection({
-                name: 'ideas_collection',
-                metadata: { description: 'Innovation idea submissions' }
+                name: 'ideas_semantic_index',
+                metadata: { description: 'Innovation idea submissions - Single authoritative collection' }
             });
 
             // Add to collection

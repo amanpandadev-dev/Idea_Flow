@@ -12,7 +12,7 @@ export async function indexNewIdea(chromaClient, idea, embeddingProvider = 'gemi
         try {
             console.log(`[IdeaIndexing] Starting background indexing for idea ${idea.id}`);
             const success = await indexIdea(chromaClient, idea, embeddingProvider);
-            
+
             if (success) {
                 console.log(`[IdeaIndexing] Successfully indexed idea ${idea.id}`);
             } else {
@@ -26,22 +26,22 @@ export async function indexNewIdea(chromaClient, idea, embeddingProvider = 'gemi
 }
 
 /**
- * Ensure ideas_collection exists on system startup
+ * Ensure ideas_semantic_index exists on system startup
  * @param {Object} chromaClient - ChromaDB client instance
  */
 export async function ensureIdeasCollection(chromaClient) {
     try {
-        console.log('[IdeaIndexing] Ensuring ideas_collection exists...');
-        
+        console.log('[IdeaIndexing] Ensuring ideas_semantic_index exists...');
+
         const collection = await chromaClient.getOrCreateCollection({
-            name: 'ideas_collection',
-            metadata: { description: 'Innovation idea submissions' }
+            name: 'ideas_semantic_index',
+            metadata: { description: 'Innovation idea submissions - Single authoritative collection' }
         });
-        
-        console.log('✅ ideas_collection is ready');
+
+        console.log('✅ ideas_semantic_index is ready');
         return collection;
     } catch (error) {
-        console.error('[IdeaIndexing] Error ensuring ideas_collection:', error.message);
+        console.error('[IdeaIndexing] Error ensuring ideas_semantic_index:', error.message);
         throw error;
     }
 }
@@ -55,22 +55,22 @@ export async function ensureIdeasCollection(chromaClient) {
  */
 export async function batchIndexIdeas(chromaClient, ideas, embeddingProvider = 'gemini', progressCallback = null) {
     console.log(`[IdeaIndexing] Starting batch indexing of ${ideas.length} ideas`);
-    
+
     let successCount = 0;
     let failureCount = 0;
-    
+
     for (let i = 0; i < ideas.length; i++) {
         const idea = ideas[i];
-        
+
         try {
             const success = await indexIdea(chromaClient, idea, embeddingProvider);
-            
+
             if (success) {
                 successCount++;
             } else {
                 failureCount++;
             }
-            
+
             // Progress callback
             if (progressCallback) {
                 progressCallback({
@@ -81,20 +81,20 @@ export async function batchIndexIdeas(chromaClient, ideas, embeddingProvider = '
                     currentIdea: idea.id
                 });
             }
-            
+
             // Small delay to avoid rate limiting
             if (i < ideas.length - 1) {
                 await new Promise(resolve => setTimeout(resolve, 100));
             }
-            
+
         } catch (error) {
             failureCount++;
             console.error(`[IdeaIndexing] Error indexing idea ${idea.id}:`, error.message);
         }
     }
-    
+
     console.log(`[IdeaIndexing] Batch indexing complete: ${successCount} successful, ${failureCount} failed`);
-    
+
     return {
         total: ideas.length,
         successCount,

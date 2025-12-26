@@ -53,18 +53,18 @@ async function testSemanticSearch() {
         let collectionCount = 0;
 
         try {
-            collection = await chromaClient.getCollection({ name: 'ideas_collection' });
+            collection = await chromaClient.getCollection({ name: 'ideas_semantic_index' });
             collectionCount = await collection.count();
             console.log(`📊 ChromaDB Status:`);
-            console.log(`   - Collection: ideas_collection`);
+            console.log(`   - Collection: ideas_semantic_index`);
             console.log(`   - Ideas indexed: ${collectionCount}\n`);
         } catch (err) {
-            console.log('⚠️  ideas_collection does not exist yet');
+            console.log('⚠️  ideas_semantic_index does not exist yet');
             console.log('   You need to index ideas first before semantic search will work\n');
 
             // Offer to create collection and index a few test ideas
-            console.log('💡 Tip: Run the full reindexing script after fixing database connection:\n');
-            console.log('   node verifyAndReindexIdeas.js\n');
+            console.log('💡 Tip: Run the authoritative reindexing script:\n');
+            console.log('   node backend/scripts/reindexIdeasSemanticIndex.js\n');
             process.exit(0);
         }
 
@@ -72,7 +72,7 @@ async function testSemanticSearch() {
             console.log('⚠️  No ideas indexed in ChromaDB yet');
             console.log('   Semantic search requires indexed ideas to work\n');
             console.log('💡 Next step: Index your ideas by running:\n');
-            console.log('   node verifyAndReindexIdeas.js\n');
+            console.log('   node backend/scripts/reindexIdeasSemanticIndex.js\n');
             process.exit(0);
         }
 

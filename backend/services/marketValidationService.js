@@ -64,7 +64,7 @@ export async function analyzeInternalPosition(idea) {
 
         // Query Chroma for similar ideas
         const chromaClient = getChromaClient();
-        const collection = await chromaClient.getCollection({ name: 'ideas_collection' });
+        const collection = await chromaClient.getCollection({ name: 'ideas_semantic_index' });
 
         const maxSimilarIdeas = parseInt(process.env.MARKET_VALIDATION_MAX_SIMILAR_IDEAS || '5');
 

@@ -70,15 +70,16 @@ const INDEX_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
 /**
  * Get cached ChromaDB collection (FAST PATH)
  * Returns immediately after first call (0ms vs 10-30s)
+ * Collection: ideas_semantic_index (SINGLE AUTHORITATIVE COLLECTION)
  */
 async function getIdeasCollection() {
     if (cachedIdeasCollection) {
         return cachedIdeasCollection; // INSTANT after first call
     }
 
-    console.log('[Chroma] Cache miss - loading ideas_search collection...');
+    console.log('[Chroma] Cache miss - loading ideas_semantic_index collection...');
     const chromaClient = getChromaClient();
-    cachedIdeasCollection = chromaClient.getCollection({ name: 'ideas_search' });
+    cachedIdeasCollection = chromaClient.getCollection({ name: 'ideas_semantic_index' });
     console.log('[Chroma] ✅ Collection cached - future queries will be instant');
 
     return cachedIdeasCollection;
@@ -310,8 +311,8 @@ async function indexIdeasToChroma(pool) {
         const chromaClient = getChromaClient();
 
         // Check if collection already has data (loaded from disk)
-        const hasCollection = chromaClient.hasCollection('ideas_search');
-        const stats = hasCollection ? chromaClient.getStats('ideas_search') : null;
+        const hasCollection = chromaClient.hasCollection('ideas_semantic_index');
+        const stats = hasCollection ? chromaClient.getStats('ideas_semantic_index') : null;
 
         if (hasCollection && stats && stats.documentCount > 0) {
             // Collection exists with data - mark as checked and skip indexing
@@ -417,7 +418,7 @@ async function indexIdeasToChroma(pool) {
             }
 
             if (documents.length > 0) {
-                chromaClient.addDocuments('ideas_search', documents, embeddings, metadatas);
+                chromaClient.addDocuments('ideas_semantic_index', documents, embeddings, metadatas);
             }
 
             // Small delay to avoid rate limits
@@ -1410,7 +1411,7 @@ async function semanticSearch(query, filters = {}, context = null, threshold = C
     try {
         const chromaClient = getChromaClient();
 
-        if (!chromaClient.hasCollection('ideas_search')) {
+        if (!chromaClient.hasCollection('ideas_semantic_index')) {
             return [];
         }
 
@@ -1420,7 +1421,7 @@ async function semanticSearch(query, filters = {}, context = null, threshold = C
         const queryEmbedding = await getEmbedding(query);
 
         // STEP 1: Retrieve large candidate set (high recall)
-        const results = chromaClient.query('ideas_search', queryEmbedding, CONFIG.TOP_K_INITIAL);
+        const results = chromaClient.query('ideas_semantic_index', queryEmbedding, CONFIG.TOP_K_INITIAL);
 
         if (!results || results.documents.length === 0) {
             console.log('[Pro Search] No candidates found in ChromaDB');
@@ -1919,7 +1920,7 @@ router.post('/reindex', async (req, res) => {
         // Reset to force reindex
         lastIndexTime = null;
         const chromaClient = getChromaClient();
-        chromaClient.deleteCollection('ideas_search');
+        chromaClient.deleteCollection('ideas_semantic_index');
 
         await indexIdeasToChroma(pool);
 
@@ -1947,9 +1948,9 @@ router.get('/health', async (req, res) => {
 
     try {
         const chromaClient = getChromaClient();
-        health.chromaDB = chromaClient.hasCollection('ideas_search');
+        health.chromaDB = chromaClient.hasCollection('ideas_semantic_index');
         if (health.chromaDB) {
-            const stats = chromaClient.getStats('ideas_search');
+            const stats = chromaClient.getStats('ideas_semantic_index');
             health.indexedIdeas = stats?.documentCount || 0;
         }
     } catch (e) {
