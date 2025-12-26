@@ -101,7 +101,7 @@ Enhanced Query:`;
         let paramIdx = 3;
 
         if (filterThemes.length > 0) {
-            filterClauses += ` AND i.challenge_opportunity = ANY($${paramIdx})`;
+            filterClauses += ` AND i.theme = ANY($${paramIdx})`;
             filterParams.push(filterThemes);
             paramIdx++;
         }
@@ -121,7 +121,7 @@ Enhanced Query:`;
         i.idea_id,
         i.title,
         i.summary,
-        i.challenge_opportunity,
+        i.theme,
         i.code_preference,
         i.business_group
       FROM ideas i
@@ -130,7 +130,7 @@ Enhanced Query:`;
             to_tsvector('english', 
                 COALESCE(i.title, '') || ' ' || 
                 COALESCE(i.summary, '') || ' ' || 
-                COALESCE(i.challenge_opportunity, '') || ' ' || 
+                COALESCE(i.theme, '') || ' ' || 
                 COALESCE(i.code_preference, '') || ' ' || 
                 COALESCE(i.business_group, '')
             ) @@ websearch_to_tsquery('english', $1)
@@ -138,7 +138,7 @@ Enhanced Query:`;
             to_tsvector('english', 
                 COALESCE(i.title, '') || ' ' || 
                 COALESCE(i.summary, '') || ' ' || 
-                COALESCE(i.challenge_opportunity, '') || ' ' || 
+                COALESCE(i.theme, '') || ' ' || 
                 COALESCE(i.code_preference, '')
             ) @@ to_tsquery('english', $2)
         )
@@ -157,7 +157,7 @@ Enhanced Query:`;
 
         // STEP 5: Apply Hybrid Search Algorithm
         const getDocText = (doc) => {
-            return `${doc.title || ''} ${doc.summary || ''} ${doc.challenge_opportunity || ''} ${doc.code_preference || ''}`;
+            return `${doc.title || ''} ${doc.summary || ''} ${doc.theme || ''} ${doc.code_preference || ''}`;
         };
 
         const getEmbedding = async (doc) => {
@@ -214,7 +214,7 @@ Enhanced Query:`;
                 dbId: row.idea_id,
                 title: row.title,
                 description: row.summary || '',
-                domain: row.challenge_opportunity || 'Other',
+                domain: row.theme || 'Other',
                 status: row.build_phase || 'Submitted',
                 businessGroup: row.idea_bg || 'Corporate Functions',
                 buildType: row.build_preference || 'New Solution / IP',

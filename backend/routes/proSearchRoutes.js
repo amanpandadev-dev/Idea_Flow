@@ -329,7 +329,7 @@ async function indexIdeasToChroma(pool) {
         // Fetch ALL fields from ideas table for comprehensive indexing
         const result = await pool.query(`
             SELECT 
-                idea_id, title, summary, challenge_opportunity,
+                idea_id, title, summary, theme,
                 scalability, novelty, benefits, risks,
                 responsible_ai, additional_info, prototype_url,
                 timeline, success_metrics, expected_outcomes,
@@ -363,7 +363,7 @@ async function indexIdeasToChroma(pool) {
                 const textParts = [
                     idea.title,
                     idea.summary,
-                    idea.challenge_opportunity,
+                    idea.theme,
                     idea.benefits,
                     idea.risks,
                     idea.additional_info,
@@ -394,7 +394,7 @@ async function indexIdeasToChroma(pool) {
                         idea_id: idea.idea_id,
                         title: idea.title || '',
                         summary: (idea.summary || '').substring(0, 500),
-                        domain: idea.challenge_opportunity || '',
+                        domain: idea.theme || '',
                         businessGroup: idea.business_group || '',
                         technologies: idea.code_preference || '',
                         buildPhase: idea.build_phase || '',
@@ -694,14 +694,14 @@ router.post('/conversational', async (req, res) => {
                 context.currentResultIds = savedState.currentResultIds;
                 console.log(`[Context Rehydration] ✅ Also restored ${currentIdeas.length} filtered results`);
             }
-            
+
             // 🆕 RESTORE CONVERSATION EMBEDDING
             const embeddingData = await searchStateService.loadConversationEmbedding(conversationId);
             if (embeddingData && embeddingData.embedding) {
                 context.conversationEmbedding = embeddingData.embedding;
                 context.embeddingUpdatedAt = embeddingData.updatedAt ? new Date(embeddingData.updatedAt).getTime() : Date.now();
                 context.messageCount = embeddingData.messageCount || 0;
-                
+
                 console.log(`[Context Rehydration] ✅ Restored conversation embedding (${context.messageCount} messages)`);
             }
         } else {
@@ -856,17 +856,17 @@ router.post('/conversational', async (req, res) => {
                 const embeddingStart = Date.now();
                 const newEmbedding = await getCachedEmbedding(filterAwareQuery);
                 console.log(`[Embedding] Generated in ${Date.now() - embeddingStart}ms`);
-                
+
                 // 🆕 UPDATE CONVERSATION EMBEDDING
                 context.updateEmbedding(newEmbedding, {
                     prevWeight: 0.7,
                     newWeight: 0.3,
                     useTimeDecay: false  // Can enable for advanced use
                 });
-                
+
                 // 🆕 USE CONVERSATION EMBEDDING FOR SEARCH
                 const searchEmbedding = context.getConversationEmbedding();
-                
+
                 console.log(`[Semantic] Using conversation embedding (${context.messageCount} messages accumulated)`);
 
                 const collection = await getIdeasCollection();
@@ -1322,7 +1322,7 @@ router.post('/conversational', async (req, res) => {
                 });
 
                 console.log('[SearchState] ✅ Persisted successfully to conversation_search_state');
-                
+
                 // 🆕 SAVE CONVERSATION EMBEDDING
                 if (context.conversationEmbedding) {
                     await searchStateService.saveConversationEmbedding(
@@ -1799,7 +1799,7 @@ router.post('/conversational', async (req, res) => {
             const significantTerms = searchTerms.filter(t => t.length > 2).slice(0, 3);
 
             for (const term of significantTerms) {
-                whereConditions.push(`(title ILIKE $${paramIndex} OR summary ILIKE $${paramIndex} OR challenge_opportunity ILIKE $${paramIndex} OR code_preference ILIKE $${paramIndex})`);
+                whereConditions.push(`(title ILIKE $${paramIndex} OR summary ILIKE $${paramIndex} OR theme ILIKE $${paramIndex} OR code_preference ILIKE $${paramIndex})`);
                 params.push(`%${term}%`);
                 paramIndex++;
             }
@@ -1812,7 +1812,7 @@ router.post('/conversational', async (req, res) => {
 
             const dbResult = await pool.query(`
                 SELECT idea_id, title, summary as description,
-                       challenge_opportunity as domain, business_group as "businessGroup",
+                       theme as domain, business_group as "businessGroup",
                        COALESCE(code_preference, '') as technologies,
                        created_at as "submissionDate", score
                 FROM ideas

@@ -42,7 +42,7 @@ async function verifyAndReindexIdeas() {
                 i.idea_id,
                 i.title,
                 i.summary as description,
-                i.challenge_opportunity as category,
+                i.theme as category,
                 i.build_phase as status,
                 i.business_group as team
             FROM ideas i

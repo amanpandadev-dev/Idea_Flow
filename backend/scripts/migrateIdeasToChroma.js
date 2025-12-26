@@ -39,7 +39,7 @@ async function migrateIdeas() {
                 title,
                 summary as description,
                 business_group as team,
-                challenge_opportunity as category,
+                theme as category,
                 'submitted' as status
             FROM ideas
             ORDER BY idea_id
@@ -61,7 +61,7 @@ async function migrateIdeas() {
         let lastProgress = 0;
         const progressCallback = (progress) => {
             const percent = Math.floor((progress.current / progress.total) * 100);
-            
+
             // Only log every 10% or on completion
             if (percent >= lastProgress + 10 || progress.current === progress.total) {
                 console.log(`Progress: ${progress.current}/${progress.total} (${percent}%) - Success: ${progress.successCount}, Failed: ${progress.failureCount}`);

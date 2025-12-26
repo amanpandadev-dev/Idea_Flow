@@ -57,7 +57,7 @@ export function applyMetadataFilters(results, filters) {
 
         // Domain filter (ANY logic - can match ANY domain)
         if (filters.domains?.length > 0) {
-            const domainString = (metadata.domain || metadata.challenge_opportunity || '').toLowerCase();
+            const domainString = (metadata.domain || metadata.theme || '').toLowerCase();
             const hasAnyDomain = filters.domains.some(domain =>
                 domainString.includes(domain.toLowerCase())
             );

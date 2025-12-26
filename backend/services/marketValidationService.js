@@ -30,7 +30,7 @@ export async function fetchIdeaDetails(ideaId, pool) {
             idea_id,
             title,
             summary,
-            challenge_opportunity,
+            theme,
             scalability,
             novelty,
             benefits,
@@ -57,7 +57,7 @@ export async function analyzeInternalPosition(idea) {
 
     try {
         // Build searchable text from idea
-        const ideaText = `${idea.title} ${idea.summary} ${idea.challenge_opportunity || ''}`.trim();
+        const ideaText = `${idea.title} ${idea.summary} ${idea.theme || ''}`.trim();
 
         // Generate embedding
         const embedding = await generateOllamaEmbedding(ideaText);

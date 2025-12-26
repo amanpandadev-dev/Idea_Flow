@@ -153,7 +153,7 @@ Input should be a search query describing what you're looking for.`
           i.idea_id,
           i.title,
           i.summary,
-          i.challenge_opportunity as domain,
+          i.theme as domain,
           i.business_group,
           i.code_preference as technologies,
           i.score,
@@ -162,7 +162,7 @@ Input should be a search query describing what you're looking for.`
         WHERE 
           i.title ILIKE $1 OR 
           i.summary ILIKE $1 OR 
-          i.challenge_opportunity ILIKE $1
+          i.theme ILIKE $1
         ORDER BY i.score DESC, i.created_at DESC
         LIMIT 5
       `;

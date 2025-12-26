@@ -58,7 +58,7 @@ Return ONLY a number between 0 and 100. Nothing else.`;
  * Helper: Extract document text
  */
 function getDocText(doc) {
-  return `${doc.title || ''} ${doc.summary || ''} ${doc.challenge_opportunity || ''} ${doc.code_preference || ''}`.toLowerCase();
+  return `${doc.title || ''} ${doc.summary || ''} ${doc.theme || ''} ${doc.code_preference || ''}`.toLowerCase();
 }
 
 /**
@@ -72,7 +72,7 @@ function mapDBToFrontend(row, matchScore = 0) {
     dbId: row.idea_id,
     title: row.title,
     description: row.summary || '',
-    domain: row.challenge_opportunity || 'Other',
+    domain: row.theme || 'Other',
     status: row.build_phase || 'Submitted',
     businessGroup: row.idea_bg || 'Corporate Functions',
     buildType: row.build_preference || 'New Solution / IP',
@@ -132,7 +132,7 @@ router.get('/search', async (req, res) => {
         i.idea_id,
         i.title,
         i.summary,
-        i.challenge_opportunity,
+        i.theme,
         i.code_preference,
         i.build_preference,
         i.build_phase,
@@ -151,11 +151,11 @@ router.get('/search', async (req, res) => {
       WHERE (
         i.title ILIKE $2 OR
         i.summary ILIKE $2 OR
-        i.challenge_opportunity ILIKE $2 OR
+        i.theme ILIKE $2 OR
         i.code_preference ILIKE $2 OR
         i.build_preference ILIKE $2
       )
-      GROUP BY i.idea_id, i.title, i.summary, i.challenge_opportunity, i.code_preference, i.build_preference, i.build_phase, i.business_group, i.score, i.created_at
+      GROUP BY i.idea_id, i.title, i.summary, i.theme, i.code_preference, i.build_preference, i.build_phase, i.business_group, i.score, i.created_at
     `;
 
     const params = [userId, searchPattern];
@@ -165,7 +165,7 @@ router.get('/search', async (req, res) => {
     if (themes && themes !== '') {
       const themeList = JSON.parse(themes);
       if (themeList.length > 0) {
-        sqlQuery += ` AND i.challenge_opportunity = ANY($${paramIndex})`;
+        sqlQuery += ` AND i.theme = ANY($${paramIndex})`;
         params.push(themeList);
         paramIndex++;
       }
@@ -205,7 +205,7 @@ router.get('/search', async (req, res) => {
         dbId: row.idea_id,
         title: row.title,
         description: row.summary || '',
-        domain: row.challenge_opportunity || 'Other',
+        domain: row.theme || 'Other',
         status: row.build_phase || 'Submitted',
         businessGroup: row.idea_bg || 'Corporate Functions',
         buildType: row.build_preference || 'New Solution / IP',

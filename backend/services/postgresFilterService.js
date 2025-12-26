@@ -42,7 +42,7 @@ export async function getFilteredIdeaIds(filters, pool) {
     if (filters.domains?.length > 0) {
         const domainConditions = filters.domains.map(domain => {
             params.push(`%${domain}%`);
-            return `challenge_opportunity ILIKE $${paramIndex++}`;
+            return `theme ILIKE $${paramIndex++}`;
         });
         whereClauses.push(`(${domainConditions.join(' OR ')})`);
     }

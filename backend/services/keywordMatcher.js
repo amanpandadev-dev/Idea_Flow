@@ -12,8 +12,8 @@ async function keywordSearch(db, keywords, limit = 10) {
 
     try {
         // Build search query with OR conditions for each keyword
-        const conditions = keywords.map((_, index) => 
-            `(title ILIKE $${index + 1} OR summary ILIKE $${index + 1} OR challenge_opportunity ILIKE $${index + 1})`
+        const conditions = keywords.map((_, index) =>
+            `(title ILIKE $${index + 1} OR summary ILIKE $${index + 1} OR theme ILIKE $${index + 1})`
         ).join(' OR ');
 
         const query = `
@@ -22,7 +22,7 @@ async function keywordSearch(db, keywords, limit = 10) {
                 title,
                 summary as description,
                 business_group as team,
-                challenge_opportunity as category,
+                theme as category,
                 score,
                 created_at
             FROM ideas

@@ -62,7 +62,7 @@ try {
             i.idea_id,
             i.title,
             i.summary,
-            i.challenge_opportunity as domain,
+            i.theme as domain,
             i.business_group as "businessGroup",
             i.code_preference as technologies,
             i.score,

@@ -53,7 +53,7 @@ export async function searchSimilarIdeas(chromaClient, db, query, embeddingProvi
 
         const placeholders = ideaIds.map((_, i) => `$${i + 1}`).join(',');
         const dbQuery = `
-            SELECT idea_id, title, summary as description, challenge_opportunity as category, build_phase as status, 
+            SELECT idea_id, title, summary as description, theme as category, build_phase as status, 
                    business_group as team, code_preference as tags, created_at
             FROM ideas
             WHERE idea_id IN (${placeholders})
@@ -234,7 +234,7 @@ export async function searchSimilarIdeasWithContext(chromaClient, db, userId, em
 
             const placeholders = normalizedIds.map((_, i) => `$${i + 1}`).join(',');
             const dbQuery = `
-                SELECT idea_id, title, summary as description, challenge_opportunity as category, build_phase as status,
+                SELECT idea_id, title, summary as description, theme as category, build_phase as status,
                        business_group as team, code_preference as tags, created_at
                 FROM ideas
                 WHERE idea_id IN (${placeholders})

@@ -40,7 +40,7 @@ export async function generateChatResponse(idea, userMessage, conversationHistor
         const ideaContext = `
 Idea Title: ${idea.title}
 Description: ${idea.description}
-Domain: ${idea.challenge_opportunity || idea.domain}
+Domain: ${idea.theme || idea.domain}
 Technologies: ${Array.isArray(idea.technologies) ? idea.technologies.join(', ') : idea.technologies}
 `;
 
@@ -88,7 +88,7 @@ Response:`;
  */
 function generateFallbackResponse(userMessage, idea) {
     const query = userMessage.toLowerCase();
-    const domain = idea.challenge_opportunity || idea.domain || 'this';
+    const domain = idea.theme || idea.domain || 'this';
 
     if (query.includes('competitor') || query.includes('competition')) {
         return `To analyze competitors for "${idea.title}" in the ${domain} domain, I'd recommend:

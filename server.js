@@ -402,7 +402,7 @@ const mapDBToFrontend = (row, matchScore = 0) => {
     dbId: row.idea_id,
     title: row.title,
     description: row.summary || '',
-    domain: row.challenge_opportunity || 'Other',
+    domain: row.theme || 'Other',
     status: row.build_phase || 'Submitted',
     businessGroup: row.idea_bg || 'Corporate Functions',
     businessGroup: row.idea_bg || 'Corporate Functions',
@@ -463,7 +463,7 @@ app.post('/api/ideas/:ideaId/market-chat/initialize', auth, async (req, res) => 
 
     const numericIdea = ideaId.replace('IDEA-', '');
     const ideaQuery = `
-      SELECT idea_id, title, summary as description, challenge_opportunity as domain, code_preference as technologies
+      SELECT idea_id, title, summary as description, theme as domain, code_preference as technologies
       FROM ideas
       WHERE idea_id = $1
     `;
@@ -502,7 +502,7 @@ app.post('/api/ideas/:ideaId/market-chat', auth, async (req, res) => {
 
     const numericId = ideaId.replace('IDEA-', '');
     const ideaQuery = `
-      SELECT idea_id, title, summary as description, challenge_opportunity as domain, code_preference as technologies
+      SELECT idea_id, title, summary as description, theme as domain, code_preference as technologies
       FROM ideas
       WHERE idea_id = $1
     `;
@@ -672,7 +672,7 @@ app.get('/api/ideas/:id/similar', auth, async (req, res) => {
 
     // 1. Fetch Current Idea
     const currentRes = await pool.query(
-      'SELECT title, challenge_opportunity, summary, business_group FROM ideas WHERE idea_id = $1',
+      'SELECT title, theme, summary, business_group FROM ideas WHERE idea_id = $1',
       [numericId]
     );
 
@@ -691,7 +691,7 @@ app.get('/api/ideas/:id/similar', auth, async (req, res) => {
       try {
         const [tVec, dVec] = await Promise.all([
           getEmbedding(currentIdea.title),
-          getEmbedding(currentIdea.challenge_opportunity || 'General')
+          getEmbedding(currentIdea.theme || 'General')
         ]);
         if (tVec.length > 0 && dVec.length > 0) {
           currentTitleVec = tVec;
@@ -722,7 +722,7 @@ app.get('/api/ideas/:id/similar', auth, async (req, res) => {
       WHERE 
         i.idea_id != $2 
         AND (
-            i.challenge_opportunity = $3
+            i.theme = $3
             OR 
             to_tsvector('english', i.title || ' ' || COALESCE(i.summary, '')) @@ to_tsquery('english', $4)
         )
@@ -732,7 +732,7 @@ app.get('/api/ideas/:id/similar', auth, async (req, res) => {
     const candidateRes = await pool.query(candidateQuery, [
       userId,
       numericId,
-      currentIdea.challenge_opportunity,
+      currentIdea.theme,
       keywords || 'AI'
     ]);
     const candidates = candidateRes.rows;
@@ -745,7 +745,7 @@ app.get('/api/ideas/:id/similar', auth, async (req, res) => {
       const candidatesWithScores = await Promise.all(candidates.map(async (row) => {
         const [candTitleVec, candDomainVec] = await Promise.all([
           getEmbedding(row.title),
-          getEmbedding(row.challenge_opportunity || 'General')
+          getEmbedding(row.theme || 'General')
         ]);
 
         if (candTitleVec.length === 0) return { row, similarity: 0 };

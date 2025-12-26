@@ -28,7 +28,7 @@ export async function fetchIdeasByIds(ideaIds) {
                 idea_id,
                 title,
                 summary,
-                challenge_opportunity,
+                theme,
                 business_group,
                 score
             FROM ideas
@@ -48,8 +48,8 @@ export async function fetchIdeasByIds(ideaIds) {
                 idea_id: row.idea_id,
                 title: row.title,
                 summary: row.summary,
-                challenge_opportunity: row.challenge_opportunity,
-                domain: row.challenge_opportunity,  // Map for compatibility
+                theme: row.theme,
+                domain: row.theme,  // Map for compatibility
                 business_group: row.business_group,
                 score: row.score,
                 impact_score: row.score  // Map for compatibility
