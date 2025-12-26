@@ -126,7 +126,7 @@ async function reindexSemanticIndex() {
 
         // Step 2: Create new collection
         console.log('Step 2/6: Creating new semantic index collection...');
-        const collection = chromaClient.createCollection({
+        const collection = await chromaClient.getOrCreateCollection({
             name: COLLECTION_NAME,
             metadata: {
                 description: 'Semantic index for all ideas with Llama embeddings',
@@ -236,13 +236,6 @@ async function reindexSemanticIndex() {
         console.log('\n\nStep 5/6: Verifying collection...');
         const count = await collection.count();
         console.log(`✅ Collection size: ${count} documents`);
-
-        // Peek at first few documents
-        const peek = await collection.peek(3);
-        console.log('\nSample metadata:');
-        peek.metadatas.forEach((meta, i) => {
-            console.log(`  ${i + 1}. Idea ${meta.idea_id}: ${meta.theme} | ${meta.business_group}`);
-        });
 
         // Step 6: Summary
         console.log('\n\nStep 6/6: Summary');

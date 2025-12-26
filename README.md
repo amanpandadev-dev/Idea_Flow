@@ -154,6 +154,9 @@ npm run server
 # Run ProSearch indexing script
 node backend/scripts/verifyAndReindexIdeas.js
 node backend/scripts/reindex-chromadb-llama.js
+
+###new command for indexing
+node backend/scripts/reindexIdeasSemanticIndex.js
 ```
 
 ---
