@@ -1260,12 +1260,12 @@ router.post('/conversational', async (req, res) => {
             aiResponse = `Found ${formattedResults.length} result${formattedResults.length === 1 ? '' : 's'}`;
         }
 
-        // FIX #2.3: LAZY Smart Suggestions (only on base search)
+        // FIX: Always generate suggestions for better user experience
         let suggestions = [];
-        if (intent === INTENTS.SEMANTIC_SEARCH && formattedResults.length > 0) {
+        if (formattedResults.length > 0) {
             suggestions = generateSmartSuggestions(formattedResults, context);
         } else {
-            console.log('[Suggestions] SKIPPED (only generated on base search)');
+            console.log('[Suggestions] SKIPPED (no results)');
         }
 
         // STEP 10: Determine action type for result context

@@ -139,7 +139,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     }, [isSearching, loadingMessages.length]);
 
     // Initialize with welcome message
-    const initializeNewChat = () => {
+    const initializeNewChat = (preserveState = false) => {
         setMessages([{
             id: 'welcome',
             role: 'assistant',
@@ -147,24 +147,27 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
             timestamp: new Date().toISOString()
         }]);
         setSuggestions([
-            'Show me latest ideas',
             'Find blockchain projects',
             'Filter by healthcare domain',
             'React projects from 2024'
         ]);
-        setResults([]);
-        setMetadata(null);
-        setCurrentSessionId(null);
-        setActiveResultMessageId(null);
 
-        // CRITICAL: Clear conversation state for new chat
-        setConversationId(null);
-        setResultContext(null);
-        setFiltersApplied({});
-        sessionStorage.removeItem(`prosearch_conversationId_${userId}`);
-        sessionStorage.removeItem(`prosearch_results_${userId}`);
+        if (!preserveState) {
+            setResults([]);
+            setMetadata(null);
+            setCurrentSessionId(null);
+            setActiveResultMessageId(null);
 
-        console.log('[ProSearch] New chat initialized - conversation state cleared');
+            // CRITICAL: Clear conversation state for new chat
+            setConversationId(null);
+            setResultContext(null);
+            setFiltersApplied({});
+            sessionStorage.removeItem(`prosearch_conversationId_${userId}`);
+            sessionStorage.removeItem(`prosearch_results_${userId}`);
+            console.log('[ProSearch] New chat initialized - conversation state cleared');
+        } else {
+            console.log('[ProSearch] New chat initialized - preserving existing state');
+        }
     };
 
     // Load most recent session on mount or show welcome
@@ -205,9 +208,10 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                     console.log(`[ProSearch] Loading most recent session: ${mostRecentSession.id}`);
                     await loadSession(mostRecentSession.id);
                 } else {
-                    // No sessions exist, show welcome
-                    console.log('[ProSearch] No previous sessions, showing welcome');
-                    initializeNewChat();
+                    // No sessions exist, show welcome but check if we have rehydrated state
+                    const hasRehydratedState = !!sessionStorage.getItem(`prosearch_conversationId_${userId}`);
+                    console.log('[ProSearch] No previous sessions, showing welcome. Preserving state:', hasRehydratedState);
+                    initializeNewChat(hasRehydratedState);
                 }
             } else {
                 console.warn('[ProSearch] Failed to load sessions, showing welcome');
@@ -623,9 +627,10 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
 
         try {
             const mappedFilters: any = {};
-            if (exploreFilters.technologies.length > 0) mappedFilters.techStack = exploreFilters.technologies;
-            if (exploreFilters.businessGroups.length > 0) mappedFilters.businessGroup = exploreFilters.businessGroups;
-            if (exploreFilters.themes.length > 0) mappedFilters.domain = exploreFilters.themes;
+            // FIX: Match keys with postgresFilterService expectations
+            if (exploreFilters.technologies.length > 0) mappedFilters.technologies = exploreFilters.technologies;
+            if (exploreFilters.businessGroups.length > 0) mappedFilters.businessGroups = exploreFilters.businessGroups;
+            if (exploreFilters.themes.length > 0) mappedFilters.domains = exploreFilters.themes;
 
             // Get recent conversation history for context-aware search (last 5 messages)
             const conversationHistory = messages

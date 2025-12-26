@@ -205,6 +205,7 @@ async function reindexSemanticIndex() {
                         embeddings: [embedding],
                         metadatas: [{
                             idea_id: idea.idea_id,
+                            title: idea.title || '',
                             submitter_id: idea.submitter_id || 0,
                             theme: idea.theme || '',
                             business_group: idea.business_group || '',

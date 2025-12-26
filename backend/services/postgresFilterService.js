@@ -26,7 +26,7 @@ export async function getFilteredIdeaIds(filters, pool) {
             params.push(`%${tech}%`);
             return `code_preference ILIKE $${paramIndex++}`;
         });
-        whereClauses.push(`(${techConditions.join(' OR ')})`);
+        whereClauses.push(`(${techConditions.join(' AND ')})`);
     }
 
     // Business Group filter (OR logic)
@@ -44,7 +44,7 @@ export async function getFilteredIdeaIds(filters, pool) {
             params.push(`%${domain}%`);
             return `theme ILIKE $${paramIndex++}`;
         });
-        whereClauses.push(`(${domainConditions.join(' OR ')})`);
+        whereClauses.push(`(${domainConditions.join(' AND ')})`);
     }
 
     // Year filter (OR logic)
