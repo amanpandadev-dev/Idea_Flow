@@ -405,13 +405,10 @@ const mapDBToFrontend = (row, matchScore = 0) => {
     domain: row.theme || 'Other',
     status: row.build_phase || 'Submitted',
     businessGroup: row.idea_bg || 'Corporate Functions',
-    businessGroup: row.idea_bg || 'Corporate Functions',
     buildType: row.build_preference || 'New Solution / IP',
-    technologies: row.code_preference ? (row.code_preference.includes(',') ? row.code_preference.split(',').map(s => s.trim()) : [row.code_preference]) : [],
     technologies: row.code_preference ? (row.code_preference.includes(',') ? row.code_preference.split(',').map(s => s.trim()) : [row.code_preference]) : [],
     submissionDate: row.created_at,
     associateId: row.associate_id,
-    associateAccount: row.account || 'Unknown',
     associateAccount: row.account || 'Unknown',
     associateBusinessGroup: row.assoc_bg || 'Unknown',
     score: row.idea_score !== undefined && row.idea_score !== null ? safeInt(row.idea_score) : 0,
@@ -419,7 +416,11 @@ const mapDBToFrontend = (row, matchScore = 0) => {
     isLiked: !!row.is_liked,
     matchScore: matchScore || 0,
     futureScope: "Integration with wider enterprise ecosystems.", // Placeholder logic
-    impactScore: 8, confidenceScore: 8, feasibilityScore: 8
+    impactScore: 8, confidenceScore: 8, feasibilityScore: 8,
+    // New attributes
+    challengeOpportunity: row.challenge_opportunity || row.challengeOpportunity || '',
+    benefits: row.benefits || '',
+    responsibleAi: row.responsible_ai || row.responsibleAi || ''
   };
 };
 

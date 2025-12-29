@@ -49,9 +49,9 @@ const App: React.FC = () => {
   const [allBusinessGroups, setAllBusinessGroups] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Navigation State
+  // Navigation State with Stack for proper back navigation
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
-  const [previousTab, setPreviousTab] = useState<TabType>('dashboard');
+  const [navigationStack, setNavigationStack] = useState<string[]>(['dashboard']);
 
   const [usingMockData, setUsingMockData] = useState(false);
 
@@ -158,7 +158,8 @@ const App: React.FC = () => {
     return sourceData.filter(idea => {
       const matchesTheme = globalFilters.themes.length === 0 || globalFilters.themes.includes(idea.domain);
       const matchesBG = globalFilters.businessGroups.length === 0 || globalFilters.businessGroups.includes(idea.businessGroup);
-      const matchesTech = globalFilters.technologies.length === 0 || idea.technologies.some(t => globalFilters.technologies.includes(t));
+      const techArray = Array.isArray(idea.technologies) ? idea.technologies : [idea.technologies].filter(Boolean);
+      const matchesTech = globalFilters.technologies.length === 0 || techArray.some(t => globalFilters.technologies.includes(t));
       return matchesTheme && matchesBG && matchesTech;
     });
   }, [ideas, searchResults, globalFilters]);
@@ -171,15 +172,54 @@ const App: React.FC = () => {
 
   const allTechnologies = useMemo(() => {
     const techSet = new Set<string>();
-    ideas.forEach(idea => idea.technologies.forEach(tech => techSet.add(tech)));
+    ideas.forEach(idea => {
+      const techs = Array.isArray(idea.technologies) ? idea.technologies : [idea.technologies].filter(Boolean);
+      techs.forEach(tech => techSet.add(tech));
+    });
     return Array.from(techSet).sort();
   }, [ideas]);
 
   // --- Handlers ---
 
+  // Navigation helpers
+  const pushNavigation = (tab: string) => {
+    setNavigationStack(prev => [...prev, tab]);
+    setActiveTab(tab as TabType);
+  };
+
+  const popNavigation = () => {
+    setNavigationStack(prev => {
+      if (prev.length <= 1) return prev; // Keep at least the home
+      const newStack = prev.slice(0, -1);
+      const prevTab = newStack[newStack.length - 1];
+
+      // Handle special cases for pro-search
+      if (prevTab === 'pro-search') {
+        setProSearchState(ps => ({ ...ps, isOpen: true }));
+        setActiveTab('dashboard');
+      } else if (prevTab.includes('wishlist')) {
+        setIsWishlistOpen(true);
+        setActiveTab('dashboard');
+      } else {
+        setActiveTab(prevTab as TabType);
+      }
+      return newStack;
+    });
+  };
+
+  const resetNavigationTo = (tab: string) => {
+    setNavigationStack([tab]);
+    setActiveTab(tab as TabType);
+  };
+
   const handleTabChange = (newTab: TabType) => {
-    setPreviousTab(activeTab);
-    setActiveTab(newTab);
+    // Reset navigation stack for main tabs
+    if (['dashboard', 'projects', 'agent'].includes(newTab)) {
+      resetNavigationTo(newTab);
+      return;
+    }
+    // For other tabs, just push to stack
+    pushNavigation(newTab);
   };
 
   const handleLogin = () => {
@@ -241,32 +281,24 @@ const App: React.FC = () => {
   }, [ideas]);
 
   const handleViewDetails = (idea: Idea) => {
+    const detailTab = `detail:${idea.id}`;
     if (proSearchState.isOpen) {
-      setPreviousTab('pro-search');
-      // Store the idea in proSearchState.results so it can be found when rendering details
-      setProSearchState(prev => ({
-        ...prev,
+      setNavigationStack(prev => [...prev, 'pro-search', detailTab]);
+      setProSearchState(ps => ({
+        ...ps,
         isOpen: false,
-        results: prev.results.some(r => r.id === idea.id)
-          ? prev.results
-          : [...prev.results, idea]
+        results: ps.results.some(r => r.id === idea.id)
+          ? ps.results
+          : [...ps.results, idea]
       }));
     } else {
-      setPreviousTab(activeTab);
+      setNavigationStack(prev => [...prev, detailTab]);
     }
-    setActiveTab(`detail:${idea.id}`);
+    setActiveTab(detailTab as TabType);
   };
 
   const handleBackFromDetails = () => {
-    if (previousTab === 'pro-search') {
-      setProSearchState(prev => ({ ...prev, isOpen: true }));
-      setActiveTab('dashboard');
-    } else if (activeTab.includes('wishlist')) {
-      setIsWishlistOpen(true);
-      setActiveTab('dashboard');
-    } else {
-      setActiveTab(previousTab);
-    }
+    popNavigation();
   };
 
   const handleRefreshData = () => {
@@ -373,7 +405,7 @@ const App: React.FC = () => {
             return <MarketValidation
               ideas={ideas}
               ideaId={ideaId}
-              onBack={() => handleTabChange(`detail:${ideaId}`)}
+              onBack={popNavigation}
             />;
           })()}
 
@@ -382,7 +414,7 @@ const App: React.FC = () => {
             return <MarketValidatorChat
               ideas={ideas}
               ideaId={ideaId}
-              onBack={() => handleTabChange(`detail:${ideaId}`)}
+              onBack={popNavigation}
             />;
           })()}
         </div>
@@ -414,7 +446,7 @@ const App: React.FC = () => {
           availableTechnologies={allTechnologies}
           availableThemes={allThemes}
           availableBusinessGroups={allBusinessGroups}
-          userId={user?.id}
+          userId={user?.id?.toString()}
         />
       )}
     </div>

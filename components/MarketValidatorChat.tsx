@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
     ArrowLeft, Send, Bot, User, Lightbulb, TrendingUp,
-    Shield, AlertTriangle, Loader2, X, MessageCircle
+    Shield, AlertTriangle, Loader2, X, MessageCircle, Download, ExternalLink, Maximize2, Minimize2
 } from 'lucide-react';
 import { Idea } from '../types';
 
@@ -25,11 +25,205 @@ interface QuickQuestion {
     color: string;
 }
 
+/**
+ * Parse markdown-like content and render as React elements
+ */
+const MarkdownRenderer: React.FC<{ content: string; isUserMessage?: boolean }> = ({ content, isUserMessage = false }) => {
+    // Convert markdown to HTML-like structure
+    const parseContent = (text: string) => {
+        const lines = text.split('\n');
+        const elements: JSX.Element[] = [];
+        let listItems: string[] = [];
+        let listType: 'ul' | 'ol' | null = null;
+
+        const flushList = () => {
+            if (listItems.length > 0 && listType) {
+                const ListTag = listType === 'ul' ? 'ul' : 'ol';
+                elements.push(
+                    <ListTag key={`list-${elements.length}`} className={`${listType === 'ul' ? 'list-disc' : 'list-decimal'} ml-4 my-2 space-y-1`}>
+                        {listItems.map((item, i) => (
+                            <li key={i} className="text-sm">{parseInline(item)}</li>
+                        ))}
+                    </ListTag>
+                );
+                listItems = [];
+                listType = null;
+            }
+        };
+
+        lines.forEach((line, idx) => {
+            // Headers
+            if (line.startsWith('## ')) {
+                flushList();
+                elements.push(
+                    <h2 key={idx} className="text-lg font-bold mt-4 mb-2 text-slate-900">
+                        {parseInline(line.slice(3))}
+                    </h2>
+                );
+                return;
+            }
+            if (line.startsWith('# ')) {
+                flushList();
+                elements.push(
+                    <h1 key={idx} className="text-xl font-bold mt-4 mb-2 text-slate-900">
+                        {parseInline(line.slice(2))}
+                    </h1>
+                );
+                return;
+            }
+
+            // Bullet points
+            if (line.match(/^[\*\-•]\s/)) {
+                if (listType !== 'ul') {
+                    flushList();
+                    listType = 'ul';
+                }
+                listItems.push(line.slice(2).trim());
+                return;
+            }
+
+            // Numbered lists
+            if (line.match(/^\d+\.\s/)) {
+                if (listType !== 'ol') {
+                    flushList();
+                    listType = 'ol';
+                }
+                listItems.push(line.replace(/^\d+\.\s/, '').trim());
+                return;
+            }
+
+            // Horizontal rule
+            if (line.match(/^---+$/)) {
+                flushList();
+                elements.push(<hr key={idx} className="my-3 border-slate-300" />);
+                return;
+            }
+
+            // Empty line
+            if (line.trim() === '') {
+                flushList();
+                return;
+            }
+
+            // Regular paragraph
+            flushList();
+            elements.push(
+                <p key={idx} className="text-sm my-1">
+                    {parseInline(line)}
+                </p>
+            );
+        });
+
+        flushList();
+        return elements;
+    };
+
+    // Parse inline elements (bold, italic, links)
+    const parseInline = (text: string): React.ReactNode => {
+        const parts: React.ReactNode[] = [];
+        let remaining = text;
+        let key = 0;
+
+        // Pattern for markdown links [text](url)
+        const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
+        // Pattern for bold **text**
+        const boldPattern = /\*\*([^*]+)\*\*/g;
+        // Pattern for URL-only (not in markdown format)
+        const urlPattern = /(https?:\/\/[^\s]+)/g;
+
+        // Combined regex to find all patterns
+        const combinedPattern = /(\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|🔗\s*\[([^\]]+)\]\(([^)]+)\)|(https?:\/\/[^\s]+))/g;
+
+        let match;
+        let lastIndex = 0;
+
+        while ((match = combinedPattern.exec(text)) !== null) {
+            // Add text before match
+            if (match.index > lastIndex) {
+                parts.push(<span key={key++}>{text.slice(lastIndex, match.index)}</span>);
+            }
+
+            // Markdown link [text](url)
+            if (match[2] && match[3]) {
+                parts.push(
+                    <a
+                        key={key++}
+                        href={match[3]}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-indigo-600 hover:text-indigo-800 underline inline-flex items-center gap-1"
+                    >
+                        {match[2]}
+                        <ExternalLink className="h-3 w-3" />
+                    </a>
+                );
+            }
+            // Bold **text**
+            else if (match[4]) {
+                parts.push(<strong key={key++} className="font-semibold">{match[4]}</strong>);
+            }
+            // Link with emoji 🔗 [text](url)
+            else if (match[5] && match[6]) {
+                parts.push(
+                    <a
+                        key={key++}
+                        href={match[6]}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-indigo-600 hover:text-indigo-800 underline inline-flex items-center gap-1"
+                    >
+                        🔗 {match[5]}
+                        <ExternalLink className="h-3 w-3" />
+                    </a>
+                );
+            }
+            // Plain URL
+            else if (match[7]) {
+                parts.push(
+                    <a
+                        key={key++}
+                        href={match[7]}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-indigo-600 hover:text-indigo-800 underline inline-flex items-center gap-1"
+                    >
+                        {match[7].length > 50 ? match[7].slice(0, 50) + '...' : match[7]}
+                        <ExternalLink className="h-3 w-3" />
+                    </a>
+                );
+            }
+            else {
+                parts.push(<span key={key++}>{match[0]}</span>);
+            }
+
+            lastIndex = match.index + match[0].length;
+        }
+
+        // Add remaining text
+        if (lastIndex < text.length) {
+            parts.push(<span key={key++}>{text.slice(lastIndex)}</span>);
+        }
+
+        return parts.length > 0 ? parts : text;
+    };
+
+    if (isUserMessage) {
+        return <p className="text-sm whitespace-pre-wrap">{content}</p>;
+    }
+
+    return (
+        <div className="prose prose-sm max-w-none">
+            {parseContent(content)}
+        </div>
+    );
+};
+
 const MarketValidatorChat: React.FC<MarketValidatorChatProps> = ({ ideas, ideaId, onBack }) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [inputValue, setInputValue] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [isInitializing, setIsInitializing] = useState(true);
+    const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const idea = ideas.find(i => i.id === ideaId);
@@ -157,6 +351,30 @@ const MarketValidatorChat: React.FC<MarketValidatorChatProps> = ({ ideas, ideaId
         }
     };
 
+    const handleDownloadReport = (message: ChatMessage) => {
+        const content = `# Market Validation Report
+Generated: ${message.timestamp.toLocaleString()}
+Idea: ${idea?.title || 'Unknown'}
+
+---
+
+${message.content}
+`;
+        const blob = new Blob([content], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `market-report-${idea?.id || 'report'}-${Date.now()}.md`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    const toggleExpand = (messageId: string) => {
+        setExpandedMessageId(prev => prev === messageId ? null : messageId);
+    };
+
     if (!idea) {
         return (
             <div className="min-h-screen bg-gradient-to-br from-slate-50 to-indigo-50 flex items-center justify-center">
@@ -215,42 +433,79 @@ const MarketValidatorChat: React.FC<MarketValidatorChatProps> = ({ ideas, ideaId
                             </div>
                         ) : (
                             <>
-                                {messages.map((message) => (
-                                    <div
-                                        key={message.id}
-                                        className={`flex items-start gap-3 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'
-                                            }`}
-                                    >
+                                {messages.map((message) => {
+                                    const isExpanded = expandedMessageId === message.id;
+                                    const isLongMessage = message.content.length > 500;
+
+                                    return (
                                         <div
-                                            className={`flex-shrink-0 h-10 w-10 rounded-full flex items-center justify-center ${message.role === 'user'
-                                                ? 'bg-indigo-100 text-indigo-600'
-                                                : 'bg-purple-100 text-purple-600'
-                                                }`}
-                                        >
-                                            {message.role === 'user' ? (
-                                                <User className="h-5 w-5" />
-                                            ) : (
-                                                <Bot className="h-5 w-5" />
-                                            )}
-                                        </div>
-                                        <div
-                                            className={`flex-1 max-w-[80%] ${message.role === 'user' ? 'text-right' : 'text-left'
-                                                }`}
+                                            key={message.id}
+                                            className={`flex items-start gap-3 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
                                         >
                                             <div
-                                                className={`inline-block px-4 py-3 rounded-2xl ${message.role === 'user'
-                                                    ? 'bg-indigo-600 text-white'
-                                                    : 'bg-slate-100 text-slate-800'
+                                                className={`flex-shrink-0 h-10 w-10 rounded-full flex items-center justify-center ${message.role === 'user'
+                                                    ? 'bg-indigo-100 text-indigo-600'
+                                                    : 'bg-purple-100 text-purple-600'
                                                     }`}
                                             >
-                                                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                                                {message.role === 'user' ? (
+                                                    <User className="h-5 w-5" />
+                                                ) : (
+                                                    <Bot className="h-5 w-5" />
+                                                )}
                                             </div>
-                                            <p className="text-xs text-slate-400 mt-1 px-2">
-                                                {message.timestamp.toLocaleTimeString()}
-                                            </p>
+                                            <div className={`flex-1 ${message.role === 'user' ? 'max-w-[70%]' : 'max-w-[85%]'} ${message.role === 'user' ? 'text-right' : 'text-left'}`}>
+                                                <div
+                                                    className={`inline-block px-4 py-3 rounded-2xl text-left ${message.role === 'user'
+                                                        ? 'bg-indigo-600 text-white'
+                                                        : 'bg-slate-100 text-slate-800'
+                                                        } ${isExpanded ? 'w-full' : ''}`}
+                                                >
+                                                    <div className={`${!isExpanded && isLongMessage && message.role === 'assistant' ? 'max-h-[400px] overflow-hidden' : ''}`}>
+                                                        <MarkdownRenderer
+                                                            content={message.content}
+                                                            isUserMessage={message.role === 'user'}
+                                                        />
+                                                    </div>
+
+                                                    {/* Action buttons for assistant messages */}
+                                                    {message.role === 'assistant' && message.content.length > 100 && (
+                                                        <div className="mt-3 pt-2 border-t border-slate-200 flex items-center gap-2">
+                                                            {isLongMessage && (
+                                                                <button
+                                                                    onClick={() => toggleExpand(message.id)}
+                                                                    className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                                                                >
+                                                                    {isExpanded ? (
+                                                                        <>
+                                                                            <Minimize2 className="h-3 w-3" />
+                                                                            Show Less
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <Maximize2 className="h-3 w-3" />
+                                                                            Show Full Report
+                                                                        </>
+                                                                    )}
+                                                                </button>
+                                                            )}
+                                                            <button
+                                                                onClick={() => handleDownloadReport(message)}
+                                                                className="flex items-center gap-1 text-xs text-emerald-600 hover:text-emerald-800 font-medium"
+                                                            >
+                                                                <Download className="h-3 w-3" />
+                                                                Download Report
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <p className="text-xs text-slate-400 mt-1 px-2">
+                                                    {message.timestamp.toLocaleTimeString()}
+                                                </p>
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                                 {isLoading && (
                                     <div className="flex items-start gap-3">
                                         <div className="flex-shrink-0 h-10 w-10 rounded-full flex items-center justify-center bg-purple-100 text-purple-600">

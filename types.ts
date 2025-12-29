@@ -92,6 +92,11 @@ export interface Idea {
   impactScore?: number;      // 1-10
   confidenceScore?: number;  // 1-10
   feasibilityScore?: number; // 1-10
+
+  // Additional Idea Attributes
+  challengeOpportunity?: string;  // Challenge/Opportunity being addressed
+  benefits?: string;              // Expected benefits
+  responsibleAi?: string;         // Responsible AI considerations
 }
 
 export interface ChartDataPoint {

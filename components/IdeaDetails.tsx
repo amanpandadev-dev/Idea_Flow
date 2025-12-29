@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Idea, Status } from '../types';
 import { DOMAIN_COLORS } from '../constants';
 import { fetchSimilarIdeas, toggleLikeIdea } from '../services';
-import { Calendar, User, ArrowLeft, CheckCircle, Clock, AlertCircle, Activity, Cpu, Layers, GitBranch, Building2, Hammer, Code2, Sparkles, Zap, TrendingUp, Target, ShieldCheck, Info, ArrowRight, Heart, MessageCircle } from 'lucide-react';
+import { Calendar, User, ArrowLeft, CheckCircle, Clock, AlertCircle, Activity, Cpu, Layers, GitBranch, Building2, Hammer, Code2, Sparkles, Zap, TrendingUp, Target, ShieldCheck, Info, ArrowRight, Heart, MessageCircle, Lightbulb, Award, Shield } from 'lucide-react';
 interface IdeaDetailsProps {
   idea: Idea;
   onBack?: () => void;
@@ -121,15 +121,6 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
             >
               <TrendingUp className="h-4 w-4" />
               Generate Report
-            </button>
-
-            {/* Market Chat Button */}
-            <button
-              onClick={() => onNavigateToMarketChat?.(idea.id)}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition-all shadow-md hover:shadow-lg"
-            >
-              <MessageCircle className="h-4 w-4" />
-              Market Chat
             </button>
           </div>
         </div>
@@ -261,61 +252,6 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
               </p>
             </div>
           </div>
-
-          {/* Technical Stack */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-            <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
-              <Code2 className="h-5 w-5 text-indigo-600" />
-              Technology Stack
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {(Array.isArray(localIdea.technologies)
-                ? localIdea.technologies
-                : typeof localIdea.technologies === 'string'
-                  ? localIdea.technologies.split(',').map(t => t.trim())
-                  : []
-              ).map(tech => (
-                <span key={tech} className="px-3 py-1 bg-slate-100 text-slate-700 rounded-md text-sm font-medium border border-slate-200">
-                  {tech}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          {/* Theme & Build Info */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-              <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
-                <GitBranch className="h-5 w-5 text-indigo-600" />
-                Theme Context
-              </h3>
-              <div className="bg-slate-50 rounded-lg p-4 border border-slate-100 h-full">
-                <div className="flex items-center gap-3 mb-2">
-                  <Cpu className="h-6 w-6 text-slate-400" />
-                  <span className="font-medium text-slate-700 line-clamp-1" title={localIdea.domain}>{localIdea.domain}</span>
-                </div>
-                <p className="text-sm text-slate-500 mt-2">
-                  Classified under <strong>{localIdea.domain}</strong>.
-                </p>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-              <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
-                <Hammer className="h-5 w-5 text-indigo-600" />
-                Build Type
-              </h3>
-              <div className="bg-slate-50 rounded-lg p-4 border border-slate-100 h-full">
-                <div className="flex items-center gap-3 mb-2">
-                  <Activity className="h-6 w-6 text-slate-400" />
-                  <span className="font-medium text-slate-700">{localIdea.buildType}</span>
-                </div>
-                <p className="text-sm text-slate-500 mt-2">
-                  Categorized as a <strong>{localIdea.buildType}</strong> project.
-                </p>
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* Right Column: Project Ownership (Combined Org & Submitter) */}
@@ -353,6 +289,103 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
                 <label className="text-xs text-slate-500 uppercase font-semibold">Submitted On</label>
                 <p className="text-slate-900 font-medium">{new Date(localIdea.submissionDate).toLocaleDateString()}</p>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Idea Details & Insights - Full Width Container */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-purple-500" />
+          Idea Details & Insights
+        </h3>
+
+        {/* Row 1: Challenge / Opportunity & Benefits */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          {/* Challenge / Opportunity */}
+          <div className="border border-slate-200 rounded-lg p-4 bg-amber-50/50">
+            <div className="flex items-center gap-2 mb-2">
+              <Lightbulb className="h-4 w-4 text-amber-500" />
+              <span className="font-semibold text-slate-800 text-sm">Challenge / Opportunity</span>
+            </div>
+            <p className="text-slate-600 text-sm leading-relaxed">
+              {localIdea.challengeOpportunity || 'Not specified'}
+            </p>
+          </div>
+
+          {/* Benefits */}
+          <div className="border border-slate-200 rounded-lg p-4 bg-emerald-50/50">
+            <div className="flex items-center gap-2 mb-2">
+              <Award className="h-4 w-4 text-emerald-500" />
+              <span className="font-semibold text-slate-800 text-sm">Expected Benefits</span>
+            </div>
+            <p className="text-slate-600 text-sm leading-relaxed">
+              {localIdea.benefits || 'Not specified'}
+            </p>
+          </div>
+        </div>
+
+        {/* Row 2: Responsible AI & Technical Stack */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          {/* Responsible AI */}
+          <div className="border border-slate-200 rounded-lg p-4 bg-blue-50/50">
+            <div className="flex items-center gap-2 mb-2">
+              <Shield className="h-4 w-4 text-blue-500" />
+              <span className="font-semibold text-slate-800 text-sm">Responsible AI Considerations</span>
+            </div>
+            <p className="text-slate-600 text-sm leading-relaxed">
+              {localIdea.responsibleAi || 'Not specified'}
+            </p>
+          </div>
+
+          {/* Technical Stack */}
+          <div className="border border-slate-200 rounded-lg p-4 bg-indigo-50/50">
+            <div className="flex items-center gap-2 mb-2">
+              <Code2 className="h-4 w-4 text-indigo-600" />
+              <span className="font-semibold text-slate-800 text-sm">Technology Stack</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(Array.isArray(localIdea.technologies)
+                ? localIdea.technologies
+                : typeof localIdea.technologies === 'string'
+                  ? localIdea.technologies.split(',').map(t => t.trim())
+                  : []
+              ).map(tech => (
+                <span key={tech} className="px-2 py-0.5 bg-white text-slate-700 rounded text-xs font-medium border border-slate-200">
+                  {tech}
+                </span>
+              ))}
+              {(!localIdea.technologies || (Array.isArray(localIdea.technologies) && localIdea.technologies.length === 0)) && (
+                <span className="text-slate-500 text-sm">Not specified</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Row 3: Theme Context & Build Type */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Theme Context */}
+          <div className="border border-slate-200 rounded-lg p-4 bg-slate-50/50">
+            <div className="flex items-center gap-2 mb-2">
+              <GitBranch className="h-4 w-4 text-violet-500" />
+              <span className="font-semibold text-slate-800 text-sm">Theme Context</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Cpu className="h-4 w-4 text-slate-400" />
+              <span className="text-slate-700 text-sm font-medium">{localIdea.domain || 'Not specified'}</span>
+            </div>
+          </div>
+
+          {/* Build Type */}
+          <div className="border border-slate-200 rounded-lg p-4 bg-orange-50/50">
+            <div className="flex items-center gap-2 mb-2">
+              <Hammer className="h-4 w-4 text-orange-500" />
+              <span className="font-semibold text-slate-800 text-sm">Build Type</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Activity className="h-4 w-4 text-slate-400" />
+              <span className="text-slate-700 text-sm font-medium">{localIdea.buildType || 'Not specified'}</span>
             </div>
           </div>
         </div>
@@ -404,6 +437,16 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
           </div>
         )}
       </div>
+
+      {/* Floating Market Chat Button */}
+      <button
+        onClick={() => onNavigateToMarketChat?.(idea.id)}
+        className="fixed bottom-6 right-6 flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-full hover:from-emerald-700 hover:to-teal-700 transition-all shadow-lg hover:shadow-xl hover:scale-105 z-50 animate-pulse hover:animate-none"
+        title="Open Market Chat"
+      >
+        <MessageCircle className="h-5 w-5" />
+        <span className="font-medium">Market Chat</span>
+      </button>
     </div>
   );
 };
