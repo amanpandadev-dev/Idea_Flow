@@ -64,6 +64,7 @@ export interface Idea {
   domain?: string;
   businessGroup?: string;
   technologies?: string | string[]; // Allow array for UI usage
+  technologiesArray?: string[]; // ✅ Full parsed array from backend (no truncation)
   submissionDate?: string;
 
   // Engagement

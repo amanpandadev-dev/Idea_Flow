@@ -178,28 +178,34 @@ class ConversationContext {
 }
 
 /**
- * Context Manager - Manages all user conversation contexts
+ * Context Manager - Manages all conversation contexts
+ * ✅ FIXED: Now keys by conversationId for proper isolation
  */
 class ConversationContextManager {
     constructor() {
-        this.contexts = new Map();  // userId → ConversationContext
+        this.contexts = new Map();  // conversationId → ConversationContext (NOT userId!)
         this.cleanupInterval = setInterval(() => this.cleanup(), 5 * 60 * 1000);  // Cleanup every 5 min
     }
 
     /**
-     * Get or create context for user
+     * Get or create context for conversation
+     * ✅ CRITICAL: Use conversationId, not userId!
      */
-    getContext(userId) {
-        if (!this.contexts.has(userId)) {
-            this.contexts.set(userId, new ConversationContext(userId));
-            console.log(`[ContextManager] Created new context for user ${userId}`);
+    getContext(conversationId, userId = null) {
+        if (!conversationId) {
+            throw new Error('[ContextManager] conversationId is required!');
         }
 
-        const context = this.contexts.get(userId);
+        if (!this.contexts.has(conversationId)) {
+            this.contexts.set(conversationId, new ConversationContext(userId || 'anonymous', conversationId));
+            console.log(`[ContextManager] ✅ Created NEW context for conversation ${conversationId}`);
+        }
+
+        const context = this.contexts.get(conversationId);
 
         // Reset if stale
         if (context.isStale()) {
-            console.log(`[ContextManager] Context for user ${userId} is stale, resetting`);
+            console.log(`[ContextManager] Context for conversation ${conversationId} is stale, resetting`);
             context.reset();
         }
 
@@ -207,12 +213,12 @@ class ConversationContextManager {
     }
 
     /**
-     * Reset context for user
+     * Reset context for conversation
      */
-    resetContext(userId) {
-        if (this.contexts.has(userId)) {
-            this.contexts.get(userId).reset();
-            console.log(`[ContextManager] Reset context for user ${userId}`);
+    resetContext(conversationId) {
+        if (this.contexts.has(conversationId)) {
+            this.contexts.get(conversationId).reset();
+            console.log(`[ContextManager] Reset context for conversation ${conversationId}`);
         }
     }
 
@@ -277,9 +283,9 @@ Return empty arrays if no new constraints found.`;
      */
     cleanup() {
         let removed = 0;
-        for (const [userId, context] of this.contexts.entries()) {
+        for (const [conversationId, context] of this.contexts.entries()) {
             if (context.isStale(60 * 60 * 1000)) {  // 1 hour timeout
-                this.contexts.delete(userId);
+                this.contexts.delete(conversationId);
                 removed++;
             }
         }

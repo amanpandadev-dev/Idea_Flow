@@ -1201,24 +1201,28 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                         </div>
 
                                         <div className="flex items-center gap-2 flex-wrap">
+                                            {/* Theme/Domain - Light Purple */}
                                             {idea.domain && (
-                                                <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs">
-                                                    {idea.domain}
+                                                <span className="px-2 py-1 bg-purple-50 text-purple-700 border border-purple-200 rounded text-xs font-medium">
+                                                    🎯 {idea.domain}
                                                 </span>
                                             )}
+                                            {/* Business Group - Light Blue */}
                                             {idea.businessGroup && (
-                                                <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs">
-                                                    {idea.businessGroup}
+                                                <span className="px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded text-xs font-medium">
+                                                    🏢 {idea.businessGroup}
                                                 </span>
                                             )}
-                                            {techArray.slice(0, 2).map((tech, idx) => (
-                                                <span key={idx} className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs">
-                                                    {tech}
+                                            {/* Tech Stack - Light Green - ALL ITEMS */}
+                                            {(idea.technologiesArray || techArray).map((tech, idx) => (
+                                                <span key={idx} className="px-2 py-1 bg-green-50 text-green-700 border border-green-200 rounded text-xs font-medium">
+                                                    💻 {tech}
                                                 </span>
                                             ))}
+                                            {/* Year - Neutral Grey */}
                                             {idea.submissionDate && (
-                                                <span className="text-xs text-slate-400 ml-auto">
-                                                    {new Date(idea.submissionDate).toLocaleDateString()}
+                                                <span className="px-2 py-1 bg-gray-50 text-gray-600 border border-gray-200 rounded text-xs ml-auto">
+                                                    📅 {new Date(idea.submissionDate).getFullYear()}
                                                 </span>
                                             )}
                                         </div>

@@ -86,19 +86,32 @@ function formatResults(results) {
     return results.map(result => {
         const metadata = result.metadata || {};
 
+        // Parse tech stack into array for full rendering
+        const techString = metadata.code_preference || metadata.technologies || '';
+        const technologiesArray = techString
+            .split(',')
+            .map(t => t.trim())
+            .filter(Boolean);
+
         return {
             id: `IDEA-${metadata.idea_id}`,
             dbId: metadata.idea_id,
             title: metadata.title || 'Untitled',
             description: metadata.summary || result.document?.substring(0, 300) || '',
-            domain: metadata.domain || 'General',
-            businessGroup: metadata.businessGroup || 'Unknown',
-            technologies: metadata.technologies || '',
+            // Use correct ChromaDB field names
+            domain: metadata.theme || metadata.domain || 'General',  // theme from ChromaDB
+            businessGroup: metadata.business_group || metadata.businessGroup || 'Unknown',  // business_group from ChromaDB
+            technologies: techString,  // Original string for backward compatibility
+            technologiesArray: technologiesArray,  // ✅ FULL array for UI rendering (no truncation)
             score: metadata.score || 0,
             submissionDate: metadata.created_at || new Date().toISOString(),
             matchScore: result.similarity ? Math.round(result.similarity * 100) : 70,
             hybridScore: result.hybridScore,
-            scoreBreakdown: result.scoreBreakdown
+            scoreBreakdown: result.scoreBreakdown,
+            // Add boost information for debugging
+            technologyBoost: result.technologyBoost,
+            businessGroupBoost: result.businessGroupBoost,
+            themeBoost: result.themeBoost
         };
     });
 }
