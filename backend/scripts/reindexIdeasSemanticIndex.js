@@ -199,18 +199,36 @@ async function reindexSemanticIndex() {
                     // Validate embedding
                     validateEmbedding(embedding, idea.idea_id);
 
-                    // Add to ChromaDB
+                    // Add to ChromaDB with COMPREHENSIVE metadata
+                    // ProSearch will use this metadata directly (no PostgreSQL joins needed)
                     await collection.add({
                         ids: [`idea_${idea.idea_id}`],
                         embeddings: [embedding],
                         metadatas: [{
+                            // Core IDs
                             idea_id: idea.idea_id,
-                            title: idea.title || '',
                             submitter_id: idea.submitter_id || 0,
+
+                            // Display fields
+                            title: idea.title || '',
+                            summary: idea.summary || '',
+
+                            // Content fields (embedded but also stored for display)
+                            challenge_opportunity: idea.challenge_opportunity || '',
+                            benefits: idea.benefits || '',
+                            risks: idea.risks || '',
+                            responsible_ai: idea.responsible_ai || '',
+
+                            // Classification fields
                             theme: idea.theme || '',
                             business_group: idea.business_group || '',
+                            code_preference: idea.code_preference || '', // Tech stack
+
+                            // Metrics
                             score: idea.score || 0,
                             build_phase: idea.build_phase || '',
+
+                            // Timestamps
                             created_at: idea.created_at ? idea.created_at.toISOString() : ''
                         }],
                         documents: [embeddingText.substring(0, 500)] // Store snippet for debugging

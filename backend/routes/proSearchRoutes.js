@@ -229,11 +229,18 @@ async function getEmbedding(text) {
     // Truncate to avoid token limits
     const truncatedText = text.substring(0, 1500);
 
+    console.log('[Pro Search Embedding] Provider: Ollama/Llama (nomic-embed-text)');
+    console.log('[Pro Search Embedding] Query text length:', truncatedText.length);
+    console.log('[Pro Search Embedding] Query preview:', truncatedText.substring(0, 100) + '...');
+
     try {
         // Use Ollama embedding (768-dim)
-        return await getEmbeddingVector(truncatedText, 'llama');
+        const embedding = await getEmbeddingVector(truncatedText, 'llama');
+        console.log(`[Pro Search Embedding] ✅ Generated: ${embedding.length} dimensions`);
+        return embedding;
     } catch (error) {
-        console.warn('[Pro Search] Ollama embedding failed:', error.message);
+        console.error('[Pro Search Embedding] ❌ Ollama failed:', error.message);
+        console.warn('[Pro Search] Falling back to local TF-IDF embedding');
         // Fallback to local TF-IDF if Ollama unavailable
         return generateLocalEmbedding(truncatedText);
     }
@@ -1411,11 +1418,15 @@ async function semanticSearch(query, filters = {}, context = null, threshold = C
     try {
         const chromaClient = getChromaClient();
 
+        // Verify correct collection exists
         if (!chromaClient.hasCollection('ideas_semantic_index')) {
+            console.error('[Pro Search] ❌ Collection ideas_semantic_index not found!');
+            console.error('[Pro Search] Run: node backend/scripts/reindexIdeasSemanticIndex.js');
             return [];
         }
 
-        console.log(`[Pro Search] High-recall search: query="${query}", threshold=${threshold}, topK=${CONFIG.TOP_K_INITIAL}`);
+        console.log('[Pro Search] ✅ Querying collection: ideas_semantic_index');
+        console.log(`[Pro Search] High-recall search: query="${query.substring(0, 50)}...", threshold=${threshold}, topK=${CONFIG.TOP_K_INITIAL}`);
 
         // Generate query embedding
         const queryEmbedding = await getEmbedding(query);
@@ -1440,18 +1451,47 @@ async function semanticSearch(query, filters = {}, context = null, threshold = C
             return {
                 similarity,  // Raw cosine similarity
                 idea: {
+                    // Core IDs
                     id: `IDEA-${dbId}`,
                     dbId: dbId,
+                    submitterId: metadata.submitter_id || 0,
+
+                    // Display fields (from ChromaDB metadata)
                     title: metadata.title || 'Untitled',
                     description: metadata.summary || doc.substring(0, 300),
-                    domain: metadata.domain || 'General',
-                    businessGroup: metadata.businessGroup || 'Unknown',
-                    technologies: metadata.technologies || '',
+
+                    // Content fields
+                    challengeOpportunity: metadata.challenge_opportunity || '',
+                    benefits: metadata.benefits || '',
+                    risks: metadata.risks || '',
+                    responsibleAi: metadata.responsible_ai || '',
+
+                    // Classification fields (CORRECTED from ChromaDB snake_case)
+                    theme: metadata.theme || '',                    // ✅ Was domain (wrong)
+                    businessGroup: metadata.business_group || '',    // ✅ Was businessGroup (wrong case)
+                    technologies: metadata.code_preference || '',    // ✅ Was technologies (not in metadata)
+
+                    // Metrics
                     score: metadata.score || 0,
+                    buildPhase: metadata.build_phase || '',
+
+                    // Timestamps
                     submissionDate: metadata.created_at || new Date().toISOString()
                 }
             };
         });
+
+        console.log(`[Pro Search] Mapped ${candidates.length} candidates with comprehensive metadata`);
+
+        // Log top 5 similarity scores for diagnostics
+        if (candidates.length > 0) {
+            const topScores = candidates
+                .slice(0, Math.min(5, candidates.length))
+                .map(c => `"${c.idea.title.substring(0, 40)}..." (${(c.similarity * 100).toFixed(1)}%)`)
+                .join(', ');
+            console.log(`[Pro Search] Top ${Math.min(5, candidates.length)} scores: ${topScores}`);
+        }
+
 
         // STEP 3: Apply threshold filtering (NO HARD LIMIT)
         const thresholdFiltered = candidates.filter(result => result.similarity >= threshold);
