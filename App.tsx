@@ -402,8 +402,20 @@ const App: React.FC = () => {
 
           {activeTab.startsWith('market-validation:') && (() => {
             const ideaId = activeTab.split(':')[1];
+            // Merge all possible idea sources to ensure we find the idea
+            const allIdeasSources = [
+              ...ideas,
+              ...likedIdeas,
+              ...(searchResults || []),
+              ...proSearchState.results
+            ];
+            // Remove duplicates based on ID
+            const uniqueIdeas = Array.from(
+              new Map(allIdeasSources.map(idea => [idea.id, idea])).values()
+            );
+
             return <MarketValidation
-              ideas={ideas}
+              ideas={uniqueIdeas}
               ideaId={ideaId}
               onBack={popNavigation}
             />;
@@ -411,8 +423,20 @@ const App: React.FC = () => {
 
           {activeTab.startsWith('market-chat:') && (() => {
             const ideaId = activeTab.split(':')[1];
+            // Merge all possible idea sources to ensure we find the idea
+            const allIdeasSources = [
+              ...ideas,
+              ...likedIdeas,
+              ...(searchResults || []),
+              ...proSearchState.results
+            ];
+            // Remove duplicates based on ID
+            const uniqueIdeas = Array.from(
+              new Map(allIdeasSources.map(idea => [idea.id, idea])).values()
+            );
+
             return <MarketValidatorChat
-              ideas={ideas}
+              ideas={uniqueIdeas}
               ideaId={ideaId}
               onBack={popNavigation}
             />;
