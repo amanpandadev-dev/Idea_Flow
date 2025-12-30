@@ -216,6 +216,7 @@ router.post('/sessions/:sessionId/messages', async (req, res) => {
 
 /**
  * DELETE /api/chat/sessions/:sessionId - Delete a chat session
+ * CASCADE DELETE will automatically remove associated chat_messages
  */
 router.delete('/sessions/:sessionId', async (req, res) => {
     const pool = getPool(req);
@@ -230,16 +231,21 @@ router.delete('/sessions/:sessionId', async (req, res) => {
             return res.status(400).json({ error: 'User ID required' });
         }
 
-        await pool.query('DELETE FROM chat_messages WHERE session_id = $1', [sessionId]);
-        await pool.query(
-            'DELETE FROM chat_sessions WHERE id = $1 AND user_id = $2',
+        // Delete the session - CASCADE will automatically delete associated messages
+        const result = await pool.query(
+            'DELETE FROM chat_sessions WHERE id = $1 AND user_id = $2 RETURNING id',
             [sessionId, userId]
         );
 
-        res.json({ success: true });
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Session not found or access denied' });
+        }
+
+        console.log(`[ChatHistory] Deleted session ${sessionId} and associated messages via CASCADE`);
+        res.json({ success: true, deletedSessionId: sessionId });
     } catch (err) {
         console.error('[ChatHistory] Error deleting session:', err);
-        res.status(500).json({ error: 'Failed to delete session' });
+        res.status(500).json({ error: 'Failed to delete session', message: err.message });
     }
 });
 

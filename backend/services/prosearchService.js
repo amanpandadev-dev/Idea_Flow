@@ -20,7 +20,7 @@ import { hydrateResults } from './resultHydrator.js';
 
 // Configuration
 const CHROMA_COLLECTION = 'ideas_semantic_index';
-const MAX_RESULTS = 100;
+const MAX_RESULTS = 300; // Increased from 100 to 300
 const DEFAULT_EMBEDDING_PROVIDER = process.env.EMBEDDING_PROVIDER || 'gemini';
 
 /**
