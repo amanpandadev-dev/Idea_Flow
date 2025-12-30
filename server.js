@@ -530,6 +530,49 @@ app.post('/api/ideas/:ideaId/market-chat', auth, async (req, res) => {
   }
 });
 
+// Download market chat as PDF
+app.post('/api/ideas/:ideaId/market-chat/download', auth, async (req, res) => {
+  try {
+    const { ideaId } = req.params;
+    const { messages } = req.body;
+
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: 'Messages array is required' });
+    }
+
+    const numericId = ideaId.replace('IDEA-', '');
+    const ideaQuery = `
+      SELECT idea_id, title, summary as description, theme as domain, code_preference as technologies, business_group
+      FROM ideas
+      WHERE idea_id = $1
+    `;
+    const ideaResult = await pool.query(ideaQuery, [numericId]);
+
+    if (ideaResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Idea not found' });
+    }
+
+    const idea = ideaResult.rows[0];
+
+    // Import PDF generator
+    const { generateMarketChatPDF } = await import('./backend/services/marketChatPdfService.js');
+
+    // Generate PDF
+    const doc = generateMarketChatPDF(idea, messages);
+
+    // Set response headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Market_Chat_${ideaId}_${Date.now()}.pdf"`);
+
+    // Pipe PDF to response
+    doc.pipe(res);
+    doc.end();
+  } catch (error) {
+    console.error('[MarketChat] Error generating PDF:', error);
+    res.status(500).json({ error: 'Failed to generate PDF report' });
+  }
+});
+
 // 1. Auth: Login (Issues Access + Refresh Token)
 app.post('/api/auth/login', async (req, res) => {
   console.log("[Login] Attempt started");

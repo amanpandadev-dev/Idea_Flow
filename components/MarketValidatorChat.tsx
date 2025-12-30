@@ -351,24 +351,37 @@ const MarketValidatorChat: React.FC<MarketValidatorChatProps> = ({ ideas, ideaId
         }
     };
 
-    const handleDownloadReport = (message: ChatMessage) => {
-        const content = `# Market Validation Report
-Generated: ${message.timestamp.toLocaleString()}
-Idea: ${idea?.title || 'Unknown'}
+    const handleDownloadReport = async (message: ChatMessage) => {
+        try {
+            const response = await fetch(`/api/ideas/${ideaId}/market-chat/download`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`
+                },
+                body: JSON.stringify({
+                    messages: messages
+                })
+            });
 
----
+            if (!response.ok) {
+                throw new Error('Failed to generate PDF');
+            }
 
-${message.content}
-`;
-        const blob = new Blob([content], { type: 'text/markdown' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `market-report-${idea?.id || 'report'}-${Date.now()}.md`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+            // Create blob and trigger download
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Market_Chat_${idea?.id || 'report'}_${Date.now()}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Error downloading PDF:', error);
+            alert('Failed to download PDF report. Please try again.');
+        }
     };
 
     const toggleExpand = (messageId: string) => {

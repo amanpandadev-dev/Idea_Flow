@@ -37,7 +37,7 @@ const CustomYAxisTick = (props: any) => {
   );
 };
 
-// Custom X Axis Tick for Business Groups to prevent overlap
+// Custom X Axis Tick for Industries to prevent overlap
 const CustomXAxisTick = (props: any) => {
   const { x, y, payload } = props;
   const maxLength = 15;
@@ -147,7 +147,7 @@ const StatsSection: React.FC<StatsSectionProps> = ({ data, onOpenChart }) => {
     }));
   }, [data]);
 
-  // 4. Submissions by Business Group (was OU)
+  // 4. Submissions by Industry (was OU)
   const bgData = useMemo(() => {
     const counts = data.reduce((acc, curr) => {
       acc[curr.businessGroup] = (acc[curr.businessGroup] || 0) + 1;
@@ -270,10 +270,10 @@ const StatsSection: React.FC<StatsSectionProps> = ({ data, onOpenChart }) => {
         </ChartCard>
       </div>
 
-      {/* Chart Row 2: Business Group (Full Width) */}
+      {/* Chart Row 2: Industry (Full Width) */}
       <div className="h-[400px]">
         <ChartCard
-          title="Submissions by Business Group"
+          title="Submissions by Industry"
           chartId="businessGroup"
           onOpen={() => onOpenChart('businessGroup')}
           className="h-full"
