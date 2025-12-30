@@ -17,7 +17,7 @@ import agentRoutes from './backend/routes/agentRoutes.js';
 import semanticSearchRoutes from './backend/routes/semanticSearchRoutes.js';
 import advancedSearchRoutes from './backend/routes/advancedSearchRoutes.js';
 import conversationRoutes from './backend/routes/conversationRoutes.js';
-import proSearchRoutes from './backend/routes/proSearchRoutes.js';
+import prosearchRoutes from './backend/routes/prosearchRoutes.js';
 import chatHistoryRoutes from './backend/routes/chatHistoryRoutes.js';
 const { Pool } = pg;
 const app = express();
@@ -247,7 +247,7 @@ app.get('/api/ideas/:ideaId/market-validation/download', async (req, res) => {
 app.use('/api/context', contextRoutes);
 app.use('/api/agent', agentRoutes); // Auth will be added after middleware definition
 
-app.use('/api/search', proSearchRoutes); // Pro Search with ChromaDB
+app.use('/api/prosearch', prosearchRoutes); // ProSearch with ChromaDB
 app.use('/api/chat', chatHistoryRoutes); // Chat history for Pro Search
 app.use('/api/ideas', advancedSearchRoutes); // Advanced search with NLP
 app.use('/api/ideas', semanticSearchRoutes); // Legacy semantic search

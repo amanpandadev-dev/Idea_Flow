@@ -501,6 +501,131 @@ router.get('/search/profiles', (req, res) => {
   });
 });
 
+/**
+ * POST /api/ideas/batch
+ * Fetch multiple ideas by their IDs for result rehydration
+ */
+router.post('/batch', async (req, res) => {
+  try {
+    const { ideaIds } = req.body;
+
+    if (!Array.isArray(ideaIds) || ideaIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'ideaIds must be a non-empty array'
+      });
+    }
+
+    const pool = req.app.locals.pool;
+    if (!pool) {
+      return res.status(503).json({
+        success: false,
+        error: 'Database not available'
+      });
+    }
+
+    // Fetch ideas by IDs with ALL columns
+    const result = await pool.query(`
+      SELECT 
+        i.idea_id,
+        i.title,
+        i.summary,
+        i.theme,
+        i.business_group,
+        i.code_preference,
+        i.created_at,
+        i.challenge_opportunity,
+        i.scalability,
+        i.novelty,
+        i.benefits,
+        i.risks,
+        i.responsible_ai,
+        i.additional_info,
+        i.prototype_url,
+        i.timeline,
+        i.success_metrics,
+        i.expected_outcomes,
+        i.scalability_potential,
+        i.business_model,
+        i.competitive_analysis,
+        i.risk_mitigation,
+        i.participation_week,
+        i.build_phase,
+        i.build_preference,
+        i.score,
+        i.submitter_id,
+        u.name as submitter_name,
+        u.emp_id as submitter_emp_id
+      FROM ideas i
+      LEFT JOIN users u ON i.submitter_id = u.id
+      WHERE i.idea_id = ANY($1)
+      ORDER BY array_position($1, i.idea_id)
+    `, [ideaIds]);
+
+    // Map to idea objects with all real data from database
+    const ideas = result.rows.map((row, index) => ({
+      id: String(row.idea_id),
+      idea_id: row.idea_id,
+      title: row.title || '',
+      description: row.summary || '',
+      summary: row.summary || '',
+      theme: row.theme || '',
+      domain: row.theme || '',
+      business_group: row.business_group || '',
+      businessGroup: row.business_group || '',
+      technologies: row.code_preference ? row.code_preference.split(',').map(t => t.trim()) : [],
+      code_preference: row.code_preference || '',
+      created_at: row.created_at,
+      submissionDate: row.created_at,
+      year: row.created_at ? new Date(row.created_at).getFullYear() : new Date().getFullYear(),
+      matchScore: 100 - (index * (100 / ideaIds.length)),
+      // Real data from database
+      challengeOpportunity: row.challenge_opportunity || '',
+      scalability: row.scalability || '',
+      novelty: row.novelty || '',
+      benefits: row.benefits || '',
+      risks: row.risks || '',
+      responsibleAi: row.responsible_ai || '',
+      additional_info: row.additional_info || '',
+      prototype_url: row.prototype_url || '',
+      timeline: row.timeline || '',
+      success_metrics: row.success_metrics || '',
+      expected_outcomes: row.expected_outcomes || '',
+      scalability_potential: row.scalability_potential || '',
+      business_model: row.business_model || '',
+      competitive_analysis: row.competitive_analysis || '',
+      risk_mitigation: row.risk_mitigation || '',
+      participation_week: row.participation_week || '',
+      build_phase: row.build_phase || '',
+      build_preference: row.build_preference || '',
+      buildType: row.build_preference || '',
+      score: row.score || 0,
+      // Submitter information
+      associateId: row.submitter_id || 0,
+      associateAccount: row.submitter_name || row.submitter_emp_id || 'Unknown',
+      // Like status (will be populated by frontend if needed)
+      isLiked: false,
+      likesCount: 0,
+      // Status (default since not in DB)
+      status: 'Submitted'
+    }));
+
+    res.json({
+      success: true,
+      ideas,
+      count: ideas.length
+    });
+
+  } catch (error) {
+    console.error('[Batch Ideas] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch ideas',
+      message: error.message
+    });
+  }
+});
+
 function getProfileDescription(profile) {
   const descriptions = {
     balanced: 'Balanced approach combining keyword and semantic search (default)',

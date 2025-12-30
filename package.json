@@ -38,6 +38,7 @@
     "react-dom": "^18.2.0",
     "react-router-dom": "^7.9.6",
     "recharts": "^2.7.2",
+    "uuid": "^13.0.0",
     "winston": "^3.18.3"
   },
   "devDependencies": {
@@ -48,6 +49,7 @@
     "@vitejs/plugin-react": "^4.0.3",
     "fast-check": "^4.3.0",
     "jest": "^30.2.0",
+    "supertest": "^7.1.4",
     "typescript": "^5.0.2",
     "vite": "^4.4.5"
   },

@@ -59,12 +59,19 @@ export interface Associate {
 export interface Idea {
   // Core hybrid search fields
   id?: string;
+  idea_id?: number; // Database ID
   title?: string;
   description?: string;
+  summary?: string; // Alias for description
   domain?: string;
+  theme?: string; // Alias for domain
   businessGroup?: string;
+  business_group?: string; // Database field name
   technologies?: string | string[]; // Allow array for UI usage
+  code_preference?: string; // Raw comma-separated technologies from DB
   submissionDate?: string;
+  created_at?: string | Date; // Database timestamp
+  year?: number; // Extracted year from created_at
 
   // Engagement
   isLiked?: boolean;
@@ -78,7 +85,7 @@ export interface Idea {
   buildType?: string;
 
   // Search Relevance Metadata
-  matchScore?: number;
+  matchScore?: number; // 0-100 scale
   hybridScore?: number;
   scoreBreakdown?: {
     vector?: number;
@@ -97,6 +104,10 @@ export interface Idea {
   challengeOpportunity?: string;  // Challenge/Opportunity being addressed
   benefits?: string;              // Expected benefits
   responsibleAi?: string;         // Responsible AI considerations
+  build_phase?: string;
+  build_preference?: string;
+  scalability?: string;
+  novelty?: string;
 }
 
 export interface ChartDataPoint {

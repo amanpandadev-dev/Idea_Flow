@@ -1,212 +1,342 @@
 /**
  * Filter Extractor Service
- * Extracts filter type, value, and action (REPLACE/ADD/REMOVE) from user message
- * Uses Llama for intelligent extraction
+ * Deterministic, rule-based extraction of filters from user messages
+ * 
+ * This service implements a deterministic filter extraction system that parses
+ * user messages to identify filter criteria without using AI/LLM inference.
+ * 
+ * Supported Filter Types:
+ * - Technologies: Known technology names (e.g., Java, Python, Kubernetes)
+ * - Business Groups: Known business group names (e.g., Healthcare, Banking)
+ * - Themes: Known theme names (e.g., AI for Organization, Edge AI)
+ * - Years: Year values between 2021 and 2025
+ * 
+ * Filter Modes:
+ * - ADD: Include additional filters (default)
+ * - REMOVE: Exclude items matching filters
+ * - REPLACE: Replace current filters with new ones
+ * 
+ * Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7
+ * 
+ * @module filterExtractor
  */
 
-import { generateStructuredJSON } from '../config/ollama.js';
-
-/**
- * Known categories/themes from the database
- * These should be checked BEFORE sending to LLM to avoid misidentification
- */
-const KNOWN_CATEGORIES = [
-    'GenAI & its techniques',
-    'Multi-modal UX',
-    'Edge AI',
-    'Agentic AI',
-    'Responsible AI',
-    'AI for accessibility',
-    'AI for Organization',
-    'AI for Industry',
-    'AI for Data & Data for AI',
-    'AI in service line',
-    'Classical AI/ML/DL for prediction/recommendations',
-    'Orchestration & MCP',
-    'Proprietary models'
+// Predefined filter values based on database schema
+const KNOWN_TECHNOLOGIES = [
+    'AI/ML',
+    'Java',
+    'JavaScript',
+    'Python',
+    'Flutter',
+    'React',
+    'Node.js',
+    'TypeScript',
+    'Go',
+    'Rust',
+    'C++',
+    'C#',
+    'Ruby',
+    'PHP',
+    'Swift',
+    'Kotlin',
+    'Datadog',
+    'Kubernetes',
+    'Docker',
+    'AWS',
+    'Azure',
+    'GCP',
+    'Terraform',
+    'Ansible'
 ];
 
+const KNOWN_BUSINESS_GROUPS = [
+    'Product Engineering & IoT',
+    'Sales, Marketing & Alliances',
+    'Business Group',
+    'Travel, Hospitality & Services (THS)',
+    'Finance & Procurement',
+    'Hi-Tech',
+    'Management Consulting',
+    'Enterprise Architecture Group',
+    'Healthcare',
+    'Banking',
+    'Retail',
+    'Manufacturing',
+    'Energy',
+    'Telecommunications',
+    'Government',
+    'Education'
+];
+
+const KNOWN_THEMES = [
+    'AI for Organization',
+    'AI for accessibility',
+    'AI for creative',
+    'Edge AI',
+    'Proprietary models',
+    'Classical AI/ML/DL for prediction/recommendations',
+    'Agents and APIs',
+    'Virtual workers/copilots',
+    'AI for Cybersecurity',
+    'AI for Data Analytics',
+    'AI for Customer Experience',
+    'AI for Operations',
+    'FinOps',
+    'DevOps',
+    'MLOps'
+];
+
+// Control words for mode detection
+const ADD_KEYWORDS = ['show', 'include', 'add', 'also', 'and', 'with', 'plus'];
+const REMOVE_KEYWORDS = ['exclude', 'remove', 'without', 'not', 'except', 'minus'];
+const REPLACE_KEYWORDS = ['only', 'just', 'switch to', 'change to', 'replace with'];
+
+// Year range validation
+const MIN_YEAR = 2021;
+const MAX_YEAR = 2025;
+
 /**
- * Extract filter information from message with action semantics
- * STRICT MODE: Only extract filters when EXPLICITLY mentioned
+ * Extract filters from user message using rule-based patterns
  * @param {string} message - User message
- * @returns {Promise<Object>} {type, value, action: 'REPLACE'|'ADD'|'REMOVE'}
+ * @param {Object} context - Current filter state and available values (optional)
+ * @returns {FilterExtractionResult}
  */
-export async function extractFilterInfo(message) {
-    // PRE-CHECK: Match against known categories first
-    const lowerMessage = message.toLowerCase();
+export function extractFilters(message, context = {}) {
+    if (!message || typeof message !== 'string') {
+        throw new Error('message must be a non-empty string');
+    }
 
-    // Check for category/theme matches
-    for (const category of KNOWN_CATEGORIES) {
-        if (lowerMessage.includes(category.toLowerCase())) {
-            console.log(`[Filter Extractor] Matched known category: "${category}"`);
+    const normalizedMessage = message.toLowerCase().trim();
 
-            // Determine action based on keywords
-            let action = 'ADD'; // default for categories
-            if (lowerMessage.includes('only') || lowerMessage.includes('just')) {
-                action = 'REPLACE';
-            } else if (lowerMessage.includes('remove') || lowerMessage.includes('without')) {
-                action = 'REMOVE';
-            } else if (lowerMessage.includes('also') || lowerMessage.includes('and')) {
-                action = 'ADD';
+    // Extract each filter type
+    const technologies = extractTechnologies(normalizedMessage);
+    const businessGroups = extractBusinessGroups(normalizedMessage);
+    const themes = extractThemes(normalizedMessage);
+    const years = extractYears(normalizedMessage);
+    const mode = detectMode(normalizedMessage);
+
+    return {
+        technologies,
+        businessGroups,
+        themes,
+        years,
+        mode
+    };
+}
+
+/**
+ * Extract technology names from message
+ * @param {string} normalizedMessage - Lowercase message
+ * @returns {string[]} Array of technology names
+ */
+function extractTechnologies(normalizedMessage) {
+    const found = [];
+
+    // Check each known technology
+    for (const tech of KNOWN_TECHNOLOGIES) {
+        const techLower = tech.toLowerCase();
+        
+        // Use word boundary matching for better precision
+        const wordBoundaryPattern = new RegExp(`\\b${escapeRegex(techLower)}\\b`, 'i');
+        if (wordBoundaryPattern.test(normalizedMessage)) {
+            found.push(tech);
+            continue;
+        }
+
+        // Common variations
+        const variations = getTechnologyVariations(tech);
+        for (const variation of variations) {
+            const variationPattern = new RegExp(`\\b${escapeRegex(variation)}\\b`, 'i');
+            if (variationPattern.test(normalizedMessage)) {
+                found.push(tech);
+                break;
             }
-
-            return {
-                type: 'theme',
-                value: category,
-                action: action
-            };
         }
     }
 
-    // 🚨 STRICT FILTER EXTRACTION - Only extract if EXPLICIT
-
-    // Check for EXPLICIT year mentions (e.g., "from 2024", "in 2023", "created in 2024")
-    const yearPattern = /\b(from|in|at|year|created\s+in|submitted\s+in|during)\s+(20\d{2})\b/i;
-    const yearMatch = message.match(yearPattern);
-    if (yearMatch) {
-        const year = parseInt(yearMatch[2]);
-        console.log(`[Filter Extractor] EXPLICIT year detected: ${year}`);
-        return {
-            type: 'year',
-            value: year,
-            action: 'REPLACE'
-        };
-    }
-
-    // Check for EXPLICIT technology mentions (e.g., "using Python", "with React")
-    const techPattern = /\b(using|with|in|built\s+with|written\s+in)\s+(Python|Java|JavaScript|React|Angular|Node\.?js|TypeScript|Go|Rust|C\+\+|Ruby|PHP|Swift|Kotlin)\b/i;
-    const techMatch = message.match(techPattern);
-    if (techMatch) {
-        const tech = techMatch[2];
-        console.log(`[Filter Extractor] EXPLICIT technology detected: ${tech}`);
-        return {
-            type: 'technology',
-            value: tech,
-            action: lowerMessage.includes('only') ? 'REPLACE' : 'ADD'
-        };
-    }
-
-    // Check for EXPLICIT domain/business group mentions (e.g., "in BFSI", "for healthcare")
-    const domainPattern = /\b(in|for|domain|sector)\s+(BFSI|Healthcare|Retail|Finance|Banking)\b/i;
-    const domainMatch = message.match(domainPattern);
-    if (domainMatch) {
-        const domain = domainMatch[2];
-        console.log(`[Filter Extractor] EXPLICIT domain detected: ${domain}`);
-        return {
-            type: 'domain',
-            value: domain,
-            action: lowerMessage.includes('only') ? 'REPLACE' : 'ADD'
-        };
-    }
-
-    // 🚨 NO IMPLICIT FILTERS!
-    // "latest", "find", "show me" → NOT treated as filters
-    // They affect SORTING, not FILTERING
-
-    console.log(`[Filter Extractor] No EXPLICIT filter detected in: "${message}"`);
-    return { type: null, value: null, action: null };
+    return [...new Set(found)]; // Remove duplicates
 }
 
 /**
- * Normalize filter type
+ * Escape special regex characters
+ * @param {string} str - String to escape
+ * @returns {string} Escaped string
  */
-export function normalizeFilterType(type) {
-    if (!type) return null;
-
-    const normalized = type.toLowerCase();
-
-    if (normalized.includes('tech')) return 'technologies';
-    if (normalized.includes('domain')) return 'domains';
-    if (normalized.includes('year')) return 'years';
-    if (normalized.includes('business') || normalized.includes('group')) return 'businessGroups';
-    if (normalized.includes('theme')) return 'themes';
-
-    return type;
+function escapeRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
- * Normalize filter value
+ * Get common variations for technology names
+ * @param {string} tech - Technology name
+ * @returns {string[]} Array of variations
  */
-export function normalizeFilterValue(value, type) {
-    if (!value) return null;
-
-    // Handle arrays
-    if (Array.isArray(value)) {
-        return value.map(v => normalizeFilterValue(v, type));
-    }
-
-    // Convert year strings to numbers
-    if (type === 'years' || type === 'year') {
-        const yearNum = parseInt(value);
-        return isNaN(yearNum) ? null : yearNum;
-    }
-
-    // Capitalize first letter for display
-    if (typeof value === 'string') {
-        return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
-    }
-
-    return value;
-}
-
-/**
- * Extract filters from query and convert to PostgreSQL-compatible format
- * Used for two-stage search architecture
- * @param {string} query - User query
- * @returns {Promise<Object>} { technologies, businessGroups, domains, years }
- */
-export async function extractFiltersForPostgres(query) {
-    const extracted = await extractFilterInfo(query);
-
-    const filters = {
-        technologies: [],
-        businessGroups: [],
-        domains: [],
-        years: []
+function getTechnologyVariations(tech) {
+    const variations = {
+        'Kubernetes': ['k8s', 'kube'],
+        'JavaScript': ['js', 'javascript'],
+        'TypeScript': ['ts', 'typescript'],
+        'Python': ['py', 'python'],
+        'AI/ML': ['ai', 'ml', 'machine learning', 'artificial intelligence'],
+        'Node.js': ['node', 'nodejs'],
+        'React': ['reactjs', 'react.js'],
+        'AWS': ['amazon web services'],
+        'Azure': ['microsoft azure'],
+        'GCP': ['google cloud', 'google cloud platform']
     };
 
-    if (!extracted.type || !extracted.value) {
-        return filters;
+    return variations[tech] || [];
+}
+
+/**
+ * Extract business group names from message
+ * @param {string} normalizedMessage - Lowercase message
+ * @returns {string[]} Array of business group names
+ */
+function extractBusinessGroups(normalizedMessage) {
+    const found = [];
+
+    for (const group of KNOWN_BUSINESS_GROUPS) {
+        const groupLower = group.toLowerCase();
+        
+        // Direct match
+        if (normalizedMessage.includes(groupLower)) {
+            found.push(group);
+            continue;
+        }
+
+        // Partial match (e.g., "health" matches "Healthcare")
+        const words = groupLower.split(/[\s,&()]+/);
+        for (const word of words) {
+            if (word.length > 3 && normalizedMessage.includes(word)) {
+                found.push(group);
+                break;
+            }
+        }
     }
 
-    const normalizedType = normalizeFilterType(extracted.type);
-    let normalizedValue = normalizeFilterValue(extracted.value, extracted.type);
+    return [...new Set(found)]; // Remove duplicates
+}
 
-    // Ensure value is array
-    if (!Array.isArray(normalizedValue)) {
-        normalizedValue = [normalizedValue];
+/**
+ * Extract theme names from message
+ * @param {string} normalizedMessage - Lowercase message
+ * @returns {string[]} Array of theme names
+ */
+function extractThemes(normalizedMessage) {
+    const found = [];
+
+    for (const theme of KNOWN_THEMES) {
+        const themeLower = theme.toLowerCase();
+        
+        // Direct match
+        if (normalizedMessage.includes(themeLower)) {
+            found.push(theme);
+            continue;
+        }
+
+        // Fuzzy match for multi-word themes
+        const themeWords = themeLower.split(/[\s/]+/).filter(w => w.length > 2);
+        const matchCount = themeWords.filter(word => 
+            normalizedMessage.includes(word)
+        ).length;
+
+        // If most words match, consider it a match
+        if (matchCount >= Math.ceil(themeWords.length * 0.6)) {
+            found.push(theme);
+        }
     }
 
-    // Map to correct filter category
-    switch (normalizedType) {
-        case 'technologies':
-        case 'techStack':
-            filters.technologies = normalizedValue;
-            break;
-        case 'businessGroups':
-        case 'businessGroup':
-            filters.businessGroups = normalizedValue;
-            break;
-        case 'domains':
-        case 'domain':
-        case 'themes':
-        case 'theme':
-            filters.domains = normalizedValue;
-            break;
-        case 'years':
-        case 'year':
-            filters.years = normalizedValue;
-            break;
+    return [...new Set(found)]; // Remove duplicates
+}
+
+/**
+ * Extract years from message
+ * @param {string} normalizedMessage - Lowercase message
+ * @returns {number[]} Array of year values
+ */
+function extractYears(normalizedMessage) {
+    const found = [];
+
+    // Handle "latest" keyword
+    if (normalizedMessage.includes('latest') || normalizedMessage.includes('recent')) {
+        found.push(MAX_YEAR);
     }
 
-    console.log(`[FilterExtractor] Postgres format:`, filters);
-    return filters;
+    // Extract 4-digit years in valid range
+    const yearPattern = /\b(202[1-5])\b/g;
+    const matches = normalizedMessage.matchAll(yearPattern);
+    
+    for (const match of matches) {
+        const year = parseInt(match[1]);
+        if (year >= MIN_YEAR && year <= MAX_YEAR) {
+            found.push(year);
+        }
+    }
+
+    // Handle year ranges (e.g., "2023 to 2024", "2023-2024")
+    const rangePattern = /\b(202[1-5])\s*(?:to|-|through)\s*(202[1-5])\b/g;
+    const rangeMatches = normalizedMessage.matchAll(rangePattern);
+    
+    for (const match of rangeMatches) {
+        const startYear = parseInt(match[1]);
+        const endYear = parseInt(match[2]);
+        
+        for (let year = startYear; year <= endYear; year++) {
+            if (year >= MIN_YEAR && year <= MAX_YEAR) {
+                found.push(year);
+            }
+        }
+    }
+
+    return [...new Set(found)].sort(); // Remove duplicates and sort
+}
+
+/**
+ * Detect filter mode from message
+ * @param {string} normalizedMessage - Lowercase message
+ * @returns {string} Mode: "ADD", "REMOVE", or "REPLACE"
+ */
+function detectMode(normalizedMessage) {
+    // Check for REPLACE keywords first (most specific)
+    for (const keyword of REPLACE_KEYWORDS) {
+        if (normalizedMessage.includes(keyword)) {
+            return 'REPLACE';
+        }
+    }
+
+    // Check for REMOVE keywords
+    for (const keyword of REMOVE_KEYWORDS) {
+        if (normalizedMessage.includes(keyword)) {
+            return 'REMOVE';
+        }
+    }
+
+    // Check for ADD keywords (or default)
+    for (const keyword of ADD_KEYWORDS) {
+        if (normalizedMessage.includes(keyword)) {
+            return 'ADD';
+        }
+    }
+
+    // Default mode is ADD
+    return 'ADD';
+}
+
+/**
+ * Get available filter values (for context)
+ * @returns {Object} Available filter options
+ */
+export function getAvailableFilters() {
+    return {
+        technologies: [...KNOWN_TECHNOLOGIES],
+        businessGroups: [...KNOWN_BUSINESS_GROUPS],
+        themes: [...KNOWN_THEMES],
+        yearRange: { min: MIN_YEAR, max: MAX_YEAR }
+    };
 }
 
 export default {
-    extractFilterInfo,
-    normalizeFilterType,
-    normalizeFilterValue,
-    extractFiltersForPostgres
+    extractFilters,
+    getAvailableFilters
 };

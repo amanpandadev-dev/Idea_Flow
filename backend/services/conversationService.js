@@ -33,6 +33,15 @@ class ConversationService {
         try {
             await client.query('BEGIN');
 
+            // ENSURE USER EXISTS (upsert pattern to avoid FK violation)
+            // This creates a user record if one doesn't exist
+            const ensureUserQuery = `
+                INSERT INTO users (emp_id, name, email)
+                VALUES ($1, $1, $1 || '@temp.local')
+                ON CONFLICT (emp_id) DO NOTHING
+            `;
+            await client.query(ensureUserQuery, [userId]);
+
             const query = `
                 INSERT INTO conversations (
                     user_id, title, tags, session_id, 

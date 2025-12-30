@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { Send, Loader2, Sparkles, X, Filter, TrendingUp, Calendar, Code, Building2, Compass, PanelLeftClose, PanelLeft, Save, Trash2 } from 'lucide-react';
 import type { Idea } from '../types';
 import ExploreModal, { ExploreFilters } from './ExploreModal';
@@ -64,6 +64,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     const [suggestions, setSuggestions] = useState<string[]>([]);
     const [metadata, setMetadata] = useState<SearchMetadata | null>(null);
     const [filtersApplied, setFiltersApplied] = useState<any>({}); // From backend
+    const [strictFilters, setStrictFilters] = useState<any>({}); // NEW: Strict AND filters from backend
     const [resultContext, setResultContext] = useState<any>(null); // NEW: Result origin metadata
     const [isSearching, setIsSearching] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -411,6 +412,72 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
         }
     };
 
+    // ========================================
+    // STRICT FILTER MANAGEMENT
+    // ========================================
+
+    /**
+     * Remove a single strict filter value
+     */
+    const removeStrictFilter = async (filterType: string, filterValue: string | number) => {
+        if (!conversationId) return;
+
+        try {
+            const response = await fetch(
+                `/api/search/context/strict-filter?userId=${userId}&conversationId=${conversationId}&filterType=${filterType}&filterValue=${encodeURIComponent(String(filterValue))}`,
+                { method: 'DELETE' }
+            );
+
+            if (response.ok) {
+                const data = await response.json();
+                setStrictFilters(data.strictFilters || {});
+                console.log(`[StrictFilter] Removed ${filterType}: ${filterValue}`);
+
+                // Re-run search with updated filters
+                if (query) {
+                    handleSearch(query);
+                }
+            }
+        } catch (error) {
+            console.error('[StrictFilter] Remove failed:', error);
+        }
+    };
+
+    /**
+     * Clear all strict filters
+     */
+    const clearAllStrictFilters = async () => {
+        if (!conversationId) return;
+
+        try {
+            const response = await fetch(
+                `/api/search/context/strict-filters?userId=${userId}&conversationId=${conversationId}`,
+                { method: 'DELETE' }
+            );
+
+            if (response.ok) {
+                setStrictFilters({});
+                console.log('[StrictFilter] Cleared all filters');
+
+                // Re-run base search
+                if (query) {
+                    handleSearch(query);
+                }
+            }
+        } catch (error) {
+            console.error('[StrictFilter] Clear failed:', error);
+        }
+    };
+
+    /**
+     * Check if any strict filters are active
+     */
+    const hasActiveStrictFilters = (): boolean => {
+        return Object.values(strictFilters).some((values: any) =>
+            Array.isArray(values) && values.length > 0
+        );
+    };
+
     /**
      * Load conversation state from backend using conversation_search_state table
      * This is the SINGLE SOURCE OF TRUTH for search results
@@ -541,33 +608,57 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
             if (response.ok) {
                 const data = await response.json();
                 if (data.messages.length > 0) {
-                    // Map messages (UI history only)
-                    const loadedMessages = data.messages.map((msg: any) => ({
-                        id: `msg_${msg.id}`,
-                        role: msg.role,
-                        content: msg.content,
-                        timestamp: msg.timestamp
+                    // Map messages and rehydrate results from metadata
+                    const loadedMessages = await Promise.all(data.messages.map(async (msg: any) => {
+                        const message: Message = {
+                            id: `msg_${msg.id}`,
+                            role: msg.role,
+                            content: msg.content,
+                            timestamp: msg.timestamp
+                        };
+
+                        // Rehydrate results for assistant messages with resultIds
+                        if (msg.role === 'assistant' && msg.metadata?.resultIds && msg.metadata.resultIds.length > 0) {
+                            try {
+                                // Fetch full idea objects using resultIds
+                                const rehydratedResults = await rehydrateIdeas(msg.metadata.resultIds);
+                                message.metadata = {
+                                    results: rehydratedResults,
+                                    searchMetadata: msg.metadata.searchMetadata,
+                                    resultsCount: rehydratedResults.length
+                                };
+                            } catch (error) {
+                                console.error('[ProSearch] Failed to rehydrate results for message:', error);
+                            }
+                        }
+
+                        return message;
                     }));
 
                     setMessages(loadedMessages);
 
-                    // CRITICAL: Find conversationId from last assistant message metadata
+                    // Find the last assistant message with results to display
+                    const lastMsgWithResults = [...loadedMessages]
+                        .reverse()
+                        .find((msg: Message) => msg.role === 'assistant' && msg.metadata?.results && msg.metadata.results.length > 0);
+
+                    if (lastMsgWithResults) {
+                        setResults(lastMsgWithResults.metadata!.results);
+                        setMetadata(lastMsgWithResults.metadata!.searchMetadata || null);
+                        setActiveResultMessageId(lastMsgWithResults.id);
+                        console.log(`[ProSearch] Restored ${lastMsgWithResults.metadata!.results.length} results from last message`);
+                    }
+
+                    // Restore conversationId for continued filtering
                     const lastMsgWithConvId = [...data.messages]
                         .reverse()
                         .find((msg: any) => msg.role === 'assistant' && msg.metadata?.conversationId);
 
                     if (lastMsgWithConvId?.metadata?.conversationId) {
                         const convId = lastMsgWithConvId.metadata.conversationId;
-                        console.log(`[ProSearch] Found conversationId: ${convId}, rehydrating results...`);
-
-                        // Rehydrate results from conversation_search_state
                         setConversationId(convId);
-                        await loadConversation(convId);
-                    } else {
-                        console.log('[ProSearch] No conversationId found in message metadata');
-                        setResults([]);
-                        setMetadata(null);
-                        setActiveResultMessageId(null);
+                        sessionStorage.setItem(`prosearch_conversationId_${userId}`, convId);
+                        console.log(`[ProSearch] Restored conversationId: ${convId}`);
                     }
                 } else {
                     // Empty session, show welcome
@@ -584,6 +675,28 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
             }
         } catch (err) {
             console.error('Failed to load session:', err);
+        }
+    };
+
+    // Rehydrate full idea objects from idea IDs
+    const rehydrateIdeas = async (ideaIds: number[]): Promise<Idea[]> => {
+        try {
+            const response = await fetch('/api/ideas/batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ ideaIds })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch ideas');
+            }
+
+            const data = await response.json();
+            return data.ideas || [];
+        } catch (error) {
+            console.error('[ProSearch] Failed to rehydrate ideas:', error);
+            return [];
         }
     };
 
@@ -640,15 +753,13 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                     content: msg.content
                 }));
 
-            const response = await fetch('/api/search/conversational', {
+            const response = await fetch('/api/prosearch/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
                 body: JSON.stringify({
-                    query: searchQuery,
-                    conversationId, // Send existing conversationId or undefined for new chat
-                    additionalFilters: mappedFilters,
-                    conversationHistory: conversationHistory // Include conversation context
+                    conversationId: conversationId || null, // Send existing conversationId or null for new chat
+                    message: searchQuery // The new API expects 'message' instead of 'query'
                 })
             });
 
@@ -657,65 +768,35 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
             const data = await response.json();
 
             const searchResults = data.results || [];
-            const searchMeta = data.metadata || null;
+            // Map new API response to expected SearchMetadata format
+            const searchMeta: SearchMetadata = {
+                intent: data.isNewBaseSearch ? 'new_search' : 'filter_refinement',
+                filters: {
+                    techStack: data.appliedFilters?.technologies || [],
+                    businessGroup: data.appliedFilters?.businessGroups?.[0],
+                    domain: data.appliedFilters?.themes?.[0],
+                    year: data.appliedFilters?.years?.[0]
+                },
+                totalResults: searchResults.length
+            };
 
             // PROGRESSIVE NARROWING: Save conversationId
             if (data.conversationId) {
                 setConversationId(data.conversationId);
                 sessionStorage.setItem(`prosearch_conversationId_${userId}`, data.conversationId);
                 console.log(`[ProSearch] Saved conversationId: ${data.conversationId}`);
-
-                // Log progressive narrowing stats
-                if (data.metadata?.progressive) {
-                    const prog = data.metadata.progressive;
-                    console.log(`[Progressive] Base: ${prog.baseResultCount}, Current: ${prog.currentResultCount}, Ratio: ${prog.narrowingRatio}`);
-                }
             }
 
-            // NEW: Save result context for UI display
-            if (data.resultContext) {
-                setResultContext(data.resultContext);
-                console.log(`[ResultContext] Action: ${data.resultContext.action}, Query: "${data.resultContext.query}"`);
-            }
-
-            // Save filters from backend
-            if (data.filtersApplied) {
-                setFiltersApplied(data.filtersApplied);
-                console.log(`[FiltersApplied]`, data.filtersApplied);
-            }
-
-            // Handle clear chat request
-            if (data.intent === 'reset_chat') {
-                console.log('[ProSearch] Chat reset requested');
-
-                // Clear UI state
-                setResults([]);
-                setMetadata(null);
-                setSuggestions([]);
-                setActiveResultMessageId(null);
-                setExploreFilters({ themes: [], businessGroups: [], technologies: [] });
-
-                // Clear sessionStorage
-                sessionStorage.removeItem(`prosearch_results_${userId}`);
-                sessionStorage.removeItem(`prosearch_metadata_${userId}`);
-
-                // Add reset message
-                const resetMessage: Message = {
-                    id: `reset_${Date.now()}`,
-                    role: 'assistant',
-                    content: data.aiResponse || 'Chat cleared! Start a fresh search.',
-                    timestamp: new Date().toISOString()
-                };
-
-                setMessages(prev => [...prev, resetMessage]);
-                setIsSearching(false);
-                return;
+            // Save filters from backend (map appliedFilters to filtersApplied)
+            if (data.appliedFilters) {
+                setFiltersApplied(data.appliedFilters);
+                console.log(`[FiltersApplied]`, data.appliedFilters);
             }
 
             const aiMessage: Message = {
                 id: `ai_${Date.now()}`,
                 role: 'assistant',
-                content: data.aiResponse || `Found ${searchResults.length} results`,
+                content: `Found ${searchResults.length} results`,
                 timestamp: new Date().toISOString(),
                 metadata: {
                     results: searchResults,
@@ -726,15 +807,9 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
 
             setMessages(prev => [...prev, aiMessage]);
             setResults(searchResults);
-            setSuggestions(data.suggestions || []);
+            setSuggestions([]);
             setMetadata(searchMeta);
             setActiveResultMessageId(aiMessage.id);
-
-            // FILTER UI SYNC: Save filters from backend
-            if (data.filtersApplied) {
-                setFiltersApplied(data.filtersApplied);
-                console.log('[ProSearch] Filters from backend:', data.filtersApplied);
-            }
 
             // Persist results in sessionStorage for navigation persistence
             try {
@@ -752,7 +827,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                     conversationId: data.conversationId,  // ✅ CRITICAL for rehydration
                     resultsCount: searchResults.length,
                     filters: searchMeta?.filters,
-                    resultIds: searchResults.map((r: any) => r.id || r.dbId), // Only save IDs
+                    resultIds: searchResults.map((r: any) => r.idea_id), // Use idea_id from ProSearch API
                     searchMetadata: searchMeta
                 });
             }
@@ -823,14 +898,31 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
     };
 
     const handleExploreApply = (filters: ExploreFilters) => {
+        console.log('[ProSearch] Applying explore filters:', filters);
         setExploreFilters(filters);
-        if (query.trim()) {
-            handleSearch(query);
+        setIsExploreOpen(false);
+        
+        // Convert filters to a natural language message for ProSearch
+        const filterParts = [];
+        if (filters.themes.length > 0) {
+            filterParts.push(`themes: ${filters.themes.join(', ')}`);
+        }
+        if (filters.businessGroups.length > 0) {
+            filterParts.push(`business groups: ${filters.businessGroups.join(', ')}`);
+        }
+        if (filters.technologies.length > 0) {
+            filterParts.push(`technologies: ${filters.technologies.join(', ')}`);
+        }
+        
+        if (filterParts.length > 0) {
+            const filterMessage = `Filter by ${filterParts.join(' and ')}`;
+            console.log('[ProSearch] Sending filter message:', filterMessage);
+            handleSearch(filterMessage);
         } else {
             setMessages(prev => [...prev, {
                 id: `sys_${Date.now()}`,
                 role: 'assistant',
-                content: `Filters applied: ${filters.themes.length + filters.businessGroups.length + filters.technologies.length} active.Type a query to search with these filters.`,
+                content: 'No filters selected. Please select at least one filter.',
                 timestamp: new Date().toISOString()
             }]);
         }
@@ -1135,6 +1227,98 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                     )}
                                 </div>
                             )}
+
+                            {/* 🆕 STRICT AND FILTERS - With Remove Buttons */}
+                            {hasActiveStrictFilters() && (
+                                <div className="flex items-center gap-2 mt-3 flex-wrap p-2 bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-100">
+                                    <span className="text-xs font-semibold text-slate-600 mr-1">Active Filters (AND):</span>
+
+                                    {/* Tech Stack */}
+                                    {strictFilters.techStack?.map((tech: string) => (
+                                        <span key={`strict-tech-${tech}`} className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs group hover:bg-green-200 transition-colors">
+                                            <Code className="w-3 h-3" />
+                                            {tech}
+                                            <button
+                                                onClick={() => removeStrictFilter('techStack', tech)}
+                                                className="ml-0.5 hover:text-red-500 opacity-60 group-hover:opacity-100"
+                                                title={`Remove ${tech} filter`}
+                                            >
+                                                <X className="w-3 h-3" />
+                                            </button>
+                                        </span>
+                                    ))}
+
+                                    {/* Years */}
+                                    {strictFilters.years?.map((year: number) => (
+                                        <span key={`strict-year-${year}`} className="inline-flex items-center gap-1 px-2 py-1 bg-amber-100 text-amber-700 rounded-full text-xs group hover:bg-amber-200 transition-colors">
+                                            <Calendar className="w-3 h-3" />
+                                            {year}
+                                            <button
+                                                onClick={() => removeStrictFilter('years', year)}
+                                                className="ml-0.5 hover:text-red-500 opacity-60 group-hover:opacity-100"
+                                                title={`Remove ${year} filter`}
+                                            >
+                                                <X className="w-3 h-3" />
+                                            </button>
+                                        </span>
+                                    ))}
+
+                                    {/* Concepts */}
+                                    {strictFilters.concepts?.map((concept: string) => (
+                                        <span key={`strict-concept-${concept}`} className="inline-flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs group hover:bg-purple-200 transition-colors">
+                                            <Sparkles className="w-3 h-3" />
+                                            {concept}
+                                            <button
+                                                onClick={() => removeStrictFilter('concepts', concept)}
+                                                className="ml-0.5 hover:text-red-500 opacity-60 group-hover:opacity-100"
+                                                title={`Remove ${concept} filter`}
+                                            >
+                                                <X className="w-3 h-3" />
+                                            </button>
+                                        </span>
+                                    ))}
+
+                                    {/* Business Groups */}
+                                    {strictFilters.businessGroups?.map((bg: string) => (
+                                        <span key={`strict-bg-${bg}`} className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs group hover:bg-blue-200 transition-colors">
+                                            <Building2 className="w-3 h-3" />
+                                            {bg}
+                                            <button
+                                                onClick={() => removeStrictFilter('businessGroups', bg)}
+                                                className="ml-0.5 hover:text-red-500 opacity-60 group-hover:opacity-100"
+                                                title={`Remove ${bg} filter`}
+                                            >
+                                                <X className="w-3 h-3" />
+                                            </button>
+                                        </span>
+                                    ))}
+
+                                    {/* Themes */}
+                                    {strictFilters.themes?.map((theme: string) => (
+                                        <span key={`strict-theme-${theme}`} className="inline-flex items-center gap-1 px-2 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs group hover:bg-indigo-200 transition-colors">
+                                            <Filter className="w-3 h-3" />
+                                            {theme}
+                                            <button
+                                                onClick={() => removeStrictFilter('themes', theme)}
+                                                className="ml-0.5 hover:text-red-500 opacity-60 group-hover:opacity-100"
+                                                title={`Remove ${theme} filter`}
+                                            >
+                                                <X className="w-3 h-3" />
+                                            </button>
+                                        </span>
+                                    ))}
+
+                                    {/* Clear All Button */}
+                                    <button
+                                        onClick={clearAllStrictFilters}
+                                        className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-600 rounded-full text-xs hover:bg-red-200 transition-colors font-medium"
+                                        title="Clear all strict filters"
+                                    >
+                                        <X className="w-3 h-3" />
+                                        Clear All
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -1158,9 +1342,18 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                         ? techs.split(',').map(t => t.trim()).filter(Boolean)
                                         : [];
 
+                                // Get theme (try both field names)
+                                const theme = idea.theme || idea.domain;
+                                
+                                // Get business group (try both field names)
+                                const businessGroup = idea.business_group || idea.businessGroup;
+                                
+                                // Get year (from year field or created_at)
+                                const year = idea.year || (idea.created_at ? new Date(idea.created_at).getFullYear() : null);
+
                                 return (
                                     <div
-                                        key={idea.id || `result - ${index} `}
+                                        key={idea.id || idea.idea_id || `result-${index}`}
                                         className="bg-white rounded-xl p-5 border border-slate-200 hover:border-blue-400 hover:shadow-lg transition-all cursor-pointer group"
                                         onClick={() => onNavigateToIdea?.(idea)}
                                     >
@@ -1170,7 +1363,7 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                                     {idea.title || 'Untitled'}
                                                 </h4>
                                                 <p className="text-sm text-slate-600 mt-1 line-clamp-2">
-                                                    {idea.description || 'No description available'}
+                                                    {idea.description || idea.summary || 'No description available'}
                                                 </p>
                                             </div>
                                             {/* High-Recall Hybrid Score Display */}
@@ -1179,16 +1372,16 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                                     <div
                                                         className="px-3 py-1.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-full text-xs font-bold shadow-lg flex items-center gap-2"
                                                         title={idea.scoreBreakdown ?
-                                                            `Vector: ${(idea.scoreBreakdown.vector * 100).toFixed(0)}% | Metadata: ${(idea.scoreBreakdown.metadata * 100).toFixed(0)}% | Keyword: ${(idea.scoreBreakdown.keyword * 100).toFixed(0)}% `
+                                                            `Vector: ${(idea.scoreBreakdown.vector * 100).toFixed(0)}% | Metadata: ${(idea.scoreBreakdown.metadata * 100).toFixed(0)}% | Keyword: ${(idea.scoreBreakdown.keyword * 100).toFixed(0)}%`
                                                             : 'Match score'}
                                                     >
                                                         {idea.hybridScore !== undefined ? (
                                                             <>
                                                                 <TrendingUp className="w-3 h-3" />
-                                                                <span>{(idea.hybridScore * 100).toFixed(0)}%</span>
+                                                                <span>{Math.round(idea.hybridScore * 100)}%</span>
                                                             </>
                                                         ) : (
-                                                            <span>{idea.matchScore}%</span>
+                                                            <span>{Math.round(idea.matchScore || 0)}%</span>
                                                         )}
                                                     </div>
                                                     {idea.scoreBreakdown && (
@@ -1201,24 +1394,30 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                                         </div>
 
                                         <div className="flex items-center gap-2 flex-wrap">
-                                            {idea.domain && (
-                                                <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs">
-                                                    {idea.domain}
+                                            {theme && (
+                                                <span className="px-2 py-1 bg-purple-50 text-purple-600 rounded text-xs font-medium">
+                                                    {theme}
                                                 </span>
                                             )}
-                                            {idea.businessGroup && (
-                                                <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs">
-                                                    {idea.businessGroup}
+                                            {businessGroup && (
+                                                <span className="px-2 py-1 bg-green-50 text-green-600 rounded text-xs font-medium">
+                                                    {businessGroup}
                                                 </span>
                                             )}
-                                            {techArray.slice(0, 2).map((tech, idx) => (
+                                            {year && (
+                                                <span className="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs flex items-center gap-1">
+                                                    <Calendar className="w-3 h-3" />
+                                                    {year}
+                                                </span>
+                                            )}
+                                            {techArray.slice(0, 3).map((tech, idx) => (
                                                 <span key={idx} className="px-2 py-1 bg-blue-50 text-blue-600 rounded text-xs">
                                                     {tech}
                                                 </span>
                                             ))}
-                                            {idea.submissionDate && (
-                                                <span className="text-xs text-slate-400 ml-auto">
-                                                    {new Date(idea.submissionDate).toLocaleDateString()}
+                                            {techArray.length > 3 && (
+                                                <span className="text-xs text-slate-400">
+                                                    +{techArray.length - 3} more
                                                 </span>
                                             )}
                                         </div>
