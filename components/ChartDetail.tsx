@@ -93,7 +93,7 @@ const ChartDetail: React.FC<ChartDetailProps> = ({ chartId, data, onBack }) => {
       case 'theme': return 'Submissions by Theme';
       case 'status': return 'Idea Status Distribution & Theme Breakdown';
       case 'build': return 'Submissions by Build Type';
-      case 'businessGroup': return 'Submissions by Business Group';
+      case 'businessGroup': return 'Submissions by Industry';
       default: return 'Chart Details';
     }
   };
