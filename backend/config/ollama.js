@@ -2,7 +2,7 @@
 // Provides embeddings, chat, structured output, and retry logic
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
-const REASONING_MODEL = process.env.OLLAMA_REASONING_MODEL || 'llama3.1';
+const REASONING_MODEL = process.env.OLLAMA_REASONING_MODEL || 'qwen2.5:3b';
 const EMBEDDING_MODEL = process.env.OLLAMA_EMBEDDING_MODEL || 'nomic-embed-text';
 
 /**

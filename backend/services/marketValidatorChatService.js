@@ -2,11 +2,8 @@
 // Provides conversational AI support for market validation inquiries
 // Enhanced with intelligent query routing and external/internal resource selection
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { generateChatCompletion } from '../config/ollama.js';
 import { searchPatents, searchMarketTrends, searchCompetitors } from './tavilySearchService.js';
-
-// Initialize Gemini AI
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
 
 // Intent categories for query routing
 const INTENTS = {
@@ -28,16 +25,98 @@ const INTENT_KEYWORDS = {
     [INTENTS.OFF_TOPIC]: ['weather', 'joke', 'hello', 'hi', 'bye', 'how are you', 'what time', 'who are you', 'your name']
 };
 
+// Analysis keywords that indicate user wants LLM analysis rather than raw search
+const ANALYSIS_KEYWORDS = [
+    'analyze', 'analysis', 'compare', 'comparison', 'evaluate', 'assessment',
+    'strengths', 'weaknesses', 'pros', 'cons', 'advantages', 'disadvantages',
+    'differentiate', 'differentiation', 'how does', 'what makes', 'why',
+    'explain', 'breakdown', 'deep dive', 'insights', 'implications'
+];
+
 /**
- * Classify user intent from message
+ * Extract query parameters from user message
+ * Extracts numbers, specific requirements, and constraints
+ */
+function extractQueryParameters(message) {
+    const params = {
+        limit: null,
+        specificNames: [],
+        timeframe: null,
+        region: null,
+        constraints: []
+    };
+
+    // Extract numerical limits (top 2, first 5, 3 competitors, etc.)
+    const limitPatterns = [
+        /(?:top|first|best|leading)\s+(\d+)/i,
+        /(\d+)\s+(?:top|best|leading|main|key)/i,
+        /give\s+(?:me\s+)?(\d+)/i,
+        /list\s+(\d+)/i
+    ];
+
+    for (const pattern of limitPatterns) {
+        const match = message.match(pattern);
+        if (match) {
+            params.limit = parseInt(match[1]);
+            break;
+        }
+    }
+
+    // Extract specific company/competitor names (capitalized words)
+    const namePattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/g;
+    let nameMatch;
+    while ((nameMatch = namePattern.exec(message)) !== null) {
+        const name = nameMatch[1];
+        // Filter out common words that aren't company names
+        if (!['What', 'Who', 'Give', 'Tell', 'Show', 'List', 'Find'].includes(name)) {
+            params.specificNames.push(name);
+        }
+    }
+
+    // Extract timeframe
+    const timeframePattern = /(?:in|for|during)\s+(202\d|next\s+\d+\s+years?|last\s+\d+\s+years?)/i;
+    const timeMatch = message.match(timeframePattern);
+    if (timeMatch) {
+        params.timeframe = timeMatch[1];
+    }
+
+    // Extract region/geography
+    const regionPattern = /(?:in|for)\s+(US|USA|Europe|Asia|China|India|global|worldwide)/i;
+    const regionMatch = message.match(regionPattern);
+    if (regionMatch) {
+        params.region = regionMatch[1];
+    }
+
+    // Extract constraints (biggest, smallest, newest, oldest, etc.)
+    const constraintKeywords = ['biggest', 'largest', 'smallest', 'newest', 'oldest', 'most funded', 'fastest growing'];
+    for (const keyword of constraintKeywords) {
+        if (message.toLowerCase().includes(keyword)) {
+            params.constraints.push(keyword);
+        }
+    }
+
+    return params;
+}
+
+/**
+ * Classify user intent from message with enhanced parameter extraction
  */
 function classifyIntent(message) {
     const lowerMessage = message.toLowerCase();
+    const params = extractQueryParameters(message);
+
+    // Check if this is an analysis request (should use LLM, not raw search)
+    const isAnalysisRequest = ANALYSIS_KEYWORDS.some(keyword => lowerMessage.includes(keyword));
+    
+    // If it's an analysis request, route to GENERAL for LLM processing
+    if (isAnalysisRequest) {
+        return { intent: INTENTS.GENERAL, metadata: { ...params, requiresAnalysis: true } };
+    }
 
     // Check for off-topic first
     for (const keyword of INTENT_KEYWORDS[INTENTS.OFF_TOPIC]) {
         if (lowerMessage.includes(keyword) && lowerMessage.length < 50) {
-            return { intent: INTENTS.OFF_TOPIC, metadata: {} };
+            return { intent: INTENTS.OFF_TOPIC, metadata: params };
         }
     }
 
@@ -47,39 +126,39 @@ function classifyIntent(message) {
     if (competitorMatch) {
         const competitorName = competitorMatch[1] || competitorMatch[2];
         if (competitorName && competitorName.length > 2) {
-            return { intent: INTENTS.COMPETITOR_RISK, metadata: { competitor: competitorName } };
+            return { intent: INTENTS.COMPETITOR_RISK, metadata: { ...params, competitor: competitorName } };
         }
     }
 
     // Check for patent/IP risk
     for (const keyword of INTENT_KEYWORDS[INTENTS.PATENT_RISK]) {
         if (lowerMessage.includes(keyword)) {
-            return { intent: INTENTS.PATENT_RISK, metadata: {} };
+            return { intent: INTENTS.PATENT_RISK, metadata: params };
         }
     }
 
     // Check for market trends
     for (const keyword of INTENT_KEYWORDS[INTENTS.MARKET_TRENDS]) {
         if (lowerMessage.includes(keyword)) {
-            return { intent: INTENTS.MARKET_TRENDS, metadata: {} };
+            return { intent: INTENTS.MARKET_TRENDS, metadata: params };
         }
     }
 
-    // Check for competitors
+    // Check for competitors (but not if it's an analysis request)
     for (const keyword of INTENT_KEYWORDS[INTENTS.COMPETITORS]) {
         if (lowerMessage.includes(keyword)) {
-            return { intent: INTENTS.COMPETITORS, metadata: {} };
+            return { intent: INTENTS.COMPETITORS, metadata: params };
         }
     }
 
     // Check for summarize
     for (const keyword of INTENT_KEYWORDS[INTENTS.SUMMARIZE]) {
         if (lowerMessage.includes(keyword)) {
-            return { intent: INTENTS.SUMMARIZE, metadata: {} };
+            return { intent: INTENTS.SUMMARIZE, metadata: params };
         }
     }
 
-    return { intent: INTENTS.GENERAL, metadata: {} };
+    return { intent: INTENTS.GENERAL, metadata: params };
 }
 
 /**
@@ -126,8 +205,8 @@ function formatTavilyResults(results, category) {
 /**
  * Handle patent risk queries using Tavily
  */
-async function handlePatentRiskQuery(idea) {
-    console.log('[MarketChat] Handling PATENT_RISK query via Tavily');
+async function handlePatentRiskQuery(idea, metadata) {
+    console.log('[MarketChat] Handling PATENT_RISK query via Tavily with params:', metadata);
 
     try {
         const patentResults = await searchPatents(idea);
@@ -135,8 +214,18 @@ async function handlePatentRiskQuery(idea) {
         let response = `## Patent & IP Risk Analysis for "${idea.title}"\n\n`;
 
         if (patentResults && patentResults.length > 0) {
-            response += `I found **${patentResults.length} potential patent-related results** that may be relevant:\n\n`;
-            response += formatTavilyResults(patentResults, 'patents');
+            const limitedResults = metadata.limit 
+                ? patentResults.slice(0, metadata.limit)
+                : patentResults;
+                
+            response += `I found **${limitedResults.length} potential patent-related results** that may be relevant:\n\n`;
+            
+            limitedResults.forEach((result, index) => {
+                response += `**${index + 1}. ${result.title}**\n`;
+                response += `${result.content?.substring(0, 200)}...\n`;
+                response += `🔗 [Source](${result.url})\n\n`;
+            });
+            
             response += `\n⚠️ **Disclaimer**: This is a preliminary search. For comprehensive IP analysis, consult with a qualified patent attorney.`;
         } else {
             response += `Good news! My search didn't find obvious patent conflicts for "${idea.title}". However, this doesn't guarantee freedom-to-operate.\n\n`;
@@ -156,17 +245,31 @@ async function handlePatentRiskQuery(idea) {
 /**
  * Handle market trends queries using Tavily
  */
-async function handleMarketTrendsQuery(idea) {
-    console.log('[MarketChat] Handling MARKET_TRENDS query via Tavily');
+async function handleMarketTrendsQuery(idea, metadata) {
+    console.log('[MarketChat] Handling MARKET_TRENDS query via Tavily with params:', metadata);
 
     try {
         const trendResults = await searchMarketTrends(idea);
 
         let response = `## Market Trends Analysis for "${idea.title}"\n\n`;
 
+        if (metadata.timeframe) {
+            response = `## Market Trends Analysis for "${idea.title}" (${metadata.timeframe})\n\n`;
+        }
+
         if (trendResults && trendResults.length > 0) {
+            const limitedResults = metadata.limit 
+                ? trendResults.slice(0, metadata.limit)
+                : trendResults.slice(0, 5);
+                
             response += `Here are the latest market insights:\n\n`;
-            response += formatTavilyResults(trendResults, 'market trends');
+            
+            limitedResults.forEach((result, index) => {
+                response += `**${index + 1}. ${result.title}**\n`;
+                response += `${result.content?.substring(0, 200)}...\n`;
+                response += `🔗 [Source](${result.url})\n\n`;
+            });
+            
             response += `\n📊 **Key Takeaway**: The ${idea.theme || idea.domain || 'technology'} sector shows active development. Consider how your idea differentiates within these trends.`;
         } else {
             response += `I couldn't find specific market trend data for "${idea.title}". This might indicate:\n\n`;
@@ -184,20 +287,73 @@ async function handleMarketTrendsQuery(idea) {
 }
 
 /**
- * Handle competitor queries using Tavily
+ * Handle competitor queries using Tavily with query-specific filtering
  */
-async function handleCompetitorsQuery(idea) {
-    console.log('[MarketChat] Handling COMPETITORS query via Tavily');
+async function handleCompetitorsQuery(idea, userMessage, metadata, conversationHistory) {
+    console.log('[MarketChat] Handling COMPETITORS query via Tavily with params:', metadata);
 
     try {
-        const competitorResults = await searchCompetitors(idea);
+        // Check if this is a follow-up query asking for refinement
+        const isFollowUp = conversationHistory && conversationHistory.some(msg => 
+            msg.role === 'assistant' && msg.content.includes('Competitive Landscape')
+        );
 
-        let response = `## Competitive Landscape for "${idea.title}"\n\n`;
+        // Build enhanced search query based on user parameters
+        let searchQuery = `companies building ${idea.title} competitors products`;
+        
+        if (metadata.constraints && metadata.constraints.length > 0) {
+            searchQuery += ` ${metadata.constraints.join(' ')}`;
+        }
+        
+        if (metadata.region) {
+            searchQuery += ` in ${metadata.region}`;
+        }
+        
+        if (metadata.timeframe) {
+            searchQuery += ` ${metadata.timeframe}`;
+        }
+
+        // Perform search with enhanced query
+        const competitorResults = await searchCompetitors(idea, searchQuery);
+
+        let response = '';
+
+        // If this is a follow-up asking for fewer results, acknowledge the refinement
+        if (isFollowUp && metadata.limit) {
+            response += `Here are the **top ${metadata.limit} competitors** based on your request:\n\n`;
+        } else if (metadata.limit) {
+            response += `## Top ${metadata.limit} Competitors for "${idea.title}"\n\n`;
+        } else {
+            response += `## Competitive Landscape for "${idea.title}"\n\n`;
+        }
 
         if (competitorResults && competitorResults.length > 0) {
-            response += `I found information about companies in this space:\n\n`;
-            response += formatTavilyResults(competitorResults, 'competitors');
-            response += `\n🎯 **Strategic Insight**: Analyze these competitors' strengths and weaknesses to identify your differentiation opportunities.`;
+            // Apply limit if specified
+            const limitedResults = metadata.limit 
+                ? competitorResults.slice(0, metadata.limit)
+                : competitorResults.slice(0, 5);
+
+            if (metadata.limit && limitedResults.length < metadata.limit) {
+                response += `I found ${limitedResults.length} relevant competitor${limitedResults.length > 1 ? 's' : ''}:\n\n`;
+            } else if (!isFollowUp) {
+                response += `I found information about companies in this space:\n\n`;
+            }
+
+            // Format results with numbering
+            limitedResults.forEach((result, index) => {
+                response += `**${index + 1}. ${result.title}**\n`;
+                response += `${result.content?.substring(0, 200)}...\n`;
+                response += `🔗 [Source](${result.url})\n\n`;
+            });
+
+            // Add strategic insight based on constraints
+            if (metadata.constraints.includes('biggest') || metadata.constraints.includes('largest')) {
+                response += `\n🎯 **Strategic Insight**: These are the major players. Consider how you can differentiate through niche focus, better UX, or underserved segments.`;
+            } else if (metadata.constraints.includes('newest')) {
+                response += `\n🎯 **Strategic Insight**: These newer entrants show market validation. Study their approach and identify gaps you can fill.`;
+            } else {
+                response += `\n🎯 **Strategic Insight**: Analyze these competitors' strengths and weaknesses to identify your differentiation opportunities.`;
+            }
         } else {
             response += `I couldn't find direct competitors for "${idea.title}". This could mean:\n\n`;
             response += `• You're in a blue ocean market (great opportunity!)\n`;
@@ -312,21 +468,21 @@ What would you like to know about your idea's market potential?`;
 export async function generateChatResponse(idea, userMessage, conversationHistory) {
     console.log(`[MarketChat] Processing query: "${userMessage}"`);
 
-    // Step 1: Classify intent
+    // Step 1: Classify intent with parameter extraction
     const { intent, metadata } = classifyIntent(userMessage);
     console.log(`[MarketChat] Classified intent: ${intent}`, metadata);
 
-    // Step 2: Route to appropriate handler
+    // Step 2: Route to appropriate handler with conversation context
     try {
         switch (intent) {
             case INTENTS.PATENT_RISK:
-                return await handlePatentRiskQuery(idea);
+                return await handlePatentRiskQuery(idea, metadata);
 
             case INTENTS.MARKET_TRENDS:
-                return await handleMarketTrendsQuery(idea);
+                return await handleMarketTrendsQuery(idea, metadata);
 
             case INTENTS.COMPETITORS:
-                return await handleCompetitorsQuery(idea);
+                return await handleCompetitorsQuery(idea, userMessage, metadata, conversationHistory);
 
             case INTENTS.COMPETITOR_RISK:
                 return await handleCompetitorRiskQuery(idea, metadata.competitor);
@@ -339,7 +495,7 @@ export async function generateChatResponse(idea, userMessage, conversationHistor
 
             case INTENTS.GENERAL:
             default:
-                return await handleGeneralQuery(idea, userMessage, conversationHistory);
+                return await handleGeneralQuery(idea, userMessage, conversationHistory, metadata);
         }
     } catch (error) {
         console.error('[MarketChat] Error in intent handler:', error);
@@ -348,14 +504,13 @@ export async function generateChatResponse(idea, userMessage, conversationHistor
 }
 
 /**
- * Handle general market validation queries using Gemini
+ * Handle general market validation queries using Qwen 2.5 (3B) with enhanced context awareness
+ * Qwen 2.5 is much faster than llama3.1 while maintaining good quality
  */
-async function handleGeneralQuery(idea, userMessage, conversationHistory) {
-    console.log('[MarketChat] Handling GENERAL query via Gemini');
+async function handleGeneralQuery(idea, userMessage, conversationHistory, metadata) {
+    console.log('[MarketChat] Handling GENERAL query via Qwen 2.5 (3B) - Fast model');
 
     try {
-        const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-
         // Build context from idea
         const ideaContext = `
 Idea Title: ${idea.title}
@@ -364,45 +519,111 @@ Domain: ${idea.theme || idea.domain}
 Technologies: ${Array.isArray(idea.technologies) ? idea.technologies.join(', ') : idea.technologies}
 `;
 
-        // Build conversation context (limited)
+        // Extract data from previous responses if this is an analysis request
+        let previousDataContext = '';
+        if (metadata?.requiresAnalysis && conversationHistory && conversationHistory.length > 0) {
+            console.log('[MarketChat] Analysis request detected - extracting previous data');
+            
+            // Look for the most recent assistant response with substantial data
+            for (let i = conversationHistory.length - 1; i >= 0; i--) {
+                const msg = conversationHistory[i];
+                if (msg.role === 'assistant' && msg.content.length > 200) {
+                    // Extract the full previous response for analysis
+                    previousDataContext = `\n\nPrevious search results to analyze:\n${msg.content}\n`;
+                    console.log('[MarketChat] Extracted previous data for analysis:', msg.content.substring(0, 200) + '...');
+                    break;
+                }
+            }
+        }
+
+        // Build conversation context with more detail
         let conversationContext = '';
         if (conversationHistory && conversationHistory.length > 0) {
-            const recentHistory = conversationHistory.slice(-4); // Last 4 messages only
+            const recentHistory = conversationHistory.slice(-6); // Last 6 messages for better context
             conversationContext = '\n\nRecent conversation:\n';
             recentHistory.forEach(msg => {
                 if (msg.role === 'user') {
                     conversationContext += `User: ${msg.content}\n`;
                 } else if (msg.role === 'assistant') {
+                    // Include summary of previous response
                     conversationContext += `Assistant: ${msg.content.substring(0, 200)}...\n`;
                 }
             });
         }
 
-        // Create focused prompt that avoids asking questions
-        const prompt = `You are a Market Validation AI Assistant. You provide DIRECT ANSWERS about market validation topics.
+        // Extract query parameters for better response tailoring
+        const params = metadata || extractQueryParameters(userMessage);
+        let paramContext = '';
+        if (params.limit) {
+            paramContext += `\nUser wants exactly ${params.limit} items in the response.`;
+        }
+        if (params.constraints && params.constraints.length > 0) {
+            paramContext += `\nUser is specifically interested in: ${params.constraints.join(', ')}.`;
+        }
+        if (params.requiresAnalysis) {
+            paramContext += `\nUser is requesting ANALYSIS/INSIGHTS, not raw data. Provide strategic analysis.`;
+        }
 
-${ideaContext}
+        // Create system message
+        const systemMessage = {
+            role: 'system',
+            content: 'You are a Market Validation AI Assistant. You provide DIRECT, SPECIFIC ANSWERS about market validation topics. You analyze data, provide strategic insights, and help users understand competitive landscapes, market opportunities, and differentiation strategies.'
+        };
+
+        // Create user message with full context
+        const userPrompt = `${ideaContext}
+
+${previousDataContext}
 
 ${conversationContext}
 
+${paramContext}
+
 User's question: ${userMessage}
 
-IMPORTANT RULES:
-1. Provide a direct, helpful answer - DO NOT ask follow-up questions
-2. Focus on market validation: trends, opportunities, risks, and strategic insights
-3. If you don't have specific data, give general industry guidance
-4. Keep response concise (under 300 words)
-5. Use markdown formatting for readability
+CRITICAL RULES:
+1. Provide a DIRECT, SPECIFIC answer - NEVER ask follow-up questions
+2. If the user asks for ANALYSIS (strengths, weaknesses, comparison, differentiation), provide DEEP STRATEGIC INSIGHTS
+3. If previous search results are provided, ANALYZE them thoroughly - don't just repeat them
+4. When analyzing competitors: identify their strengths, weaknesses, market positioning, and differentiation opportunities
+5. If the user asks for a specific number of items (e.g., "top 2", "3 competitors"), provide EXACTLY that many
+6. If this is a follow-up question refining a previous query, acknowledge the refinement and provide NEW information
+7. Focus on market validation: trends, opportunities, risks, competitors, and strategic insights
+8. If you don't have specific data, provide actionable general guidance based on the domain
+9. Keep response concise (under 500 words for analysis, 400 for general) and well-structured
+10. Use markdown formatting with headers, bullet points, and bold text
+11. End with ONE actionable insight or recommendation
+12. NEVER say "I don't have enough information" - always provide value based on what you know
+13. If the user is asking for fewer/more details than before, adjust accordingly
 
-Response:`;
+Provide your response now:`;
 
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
+        const userMessageObj = {
+            role: 'user',
+            content: userPrompt
+        };
 
-        return text;
+        // Call Qwen 2.5 (3B) via Ollama - Much faster than llama3.1
+        const result = await generateChatCompletion(
+            [systemMessage, userMessageObj],
+            process.env.OLLAMA_REASONING_MODEL || 'qwen2.5:3b',
+            {
+                temperature: 0.7,
+                num_predict: 600 // Reduced for faster responses
+            }
+        );
+
+        let text = result.message?.content || result.response || '';
+
+        // Post-process to remove any questions that slipped through
+        text = text.replace(/\?[^\n]*$/gm, ''); // Remove lines ending with questions
+        text = text.replace(/Would you like.*?\?/gi, ''); // Remove "Would you like" questions
+        text = text.replace(/Do you want.*?\?/gi, ''); // Remove "Do you want" questions
+        text = text.replace(/Should I.*?\?/gi, ''); // Remove "Should I" questions
+
+        return text.trim();
     } catch (error) {
-        console.error('[MarketChat] Gemini error:', error);
+        console.error('[MarketChat] Qwen error:', error);
         return generateFallbackResponse(userMessage, idea);
     }
 }
@@ -436,3 +657,6 @@ Based on ${domain}, consider what problems are customers struggling with and wha
 
 Try asking specifically about patents, competitors, or market trends for more detailed analysis.`;
 }
+
+// Export functions for testing
+export { extractQueryParameters, classifyIntent };

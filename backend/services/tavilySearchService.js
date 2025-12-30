@@ -43,9 +43,11 @@ export async function searchMarketTrends(idea) {
 
 /**
  * Search for competitors and similar products
+ * @param {Object} idea - The idea object
+ * @param {String} customQuery - Optional custom search query for specific requests
  */
-export async function searchCompetitors(idea) {
-    const query = `companies building ${idea.title} competitors products`;
+export async function searchCompetitors(idea, customQuery = null) {
+    const query = customQuery || `companies building ${idea.title} competitors products`;
 
     try {
         return await tavilySearch(query, 'competitors');
