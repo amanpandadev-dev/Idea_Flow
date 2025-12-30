@@ -20,13 +20,17 @@ const upload = multer({
     fileFilter: (req, file, cb) => {
         const allowedTypes = [
             'application/pdf',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // DOCX
+            'application/msword', // DOC
+            'application/vnd.ms-powerpoint', // PPT
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation', // PPTX
+            'text/plain' // TXT
         ];
 
         if (allowedTypes.includes(file.mimetype)) {
             cb(null, true);
         } else {
-            cb(new Error('Only PDF and DOCX files are supported'));
+            cb(new Error('Only PDF, DOCX, DOC, PPT, PPTX, and TXT files are supported'));
         }
     }
 });
@@ -61,6 +65,14 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         const processed = await processDocument(req.file.buffer, req.file.mimetype);
         if (!processed.success) {
             throw new Error('Document processing failed');
+        }
+
+        // Validate that document has content
+        if (!processed.text || processed.text.trim().length === 0) {
+            return res.status(400).json({
+                error: true,
+                message: 'The uploaded file is empty or contains no extractable text. Please upload a file with content.'
+            });
         }
 
         console.log(`🔢 Generating embeddings for ${processed.chunks.length} chunks...`);
@@ -99,11 +111,12 @@ router.post('/upload', upload.single('file'), async (req, res) => {
                 userId
             };
 
-            // Store suggested questions and keywords in the first chunk's metadata
+            // Store suggested questions, keywords, and summary in the first chunk's metadata
             if (index === 0) {
                 baseMetadata.suggestedQuestions = processed.suggestedQuestions || [];
                 baseMetadata.keywords = processed.keywords || [];
                 baseMetadata.themes = processed.themes || [];
+                baseMetadata.documentSummary = processed.documentSummary || '';
             }
 
             return baseMetadata;
@@ -118,6 +131,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
             themes: processed.themes,
             keywords: processed.keywords || [],
             suggestedQuestions: processed.suggestedQuestions || [],
+            documentSummary: processed.documentSummary || '',
             ragData: processed.ragData || { themes: processed.themes }
         };
 
@@ -128,6 +142,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
             themes: processed.themes,
             keywords: processed.keywords || [],
             suggestedQuestions: processed.suggestedQuestions || [],
+            documentSummary: processed.documentSummary || '',
             ragData: processed.ragData || { themes: processed.themes },
             userId,
             collectionId,
@@ -213,10 +228,11 @@ router.get('/status', async (req, res) => {
         const stats = await getCollectionStats(collectionId);
         const hasContext = stats !== null;
 
-        // Try to get suggested questions from ChromaDB metadata (first document)
+        // Try to get suggested questions, keywords, and summary from ChromaDB metadata (first document)
         let suggestedQuestions = [];
         let keywords = [];
         let themes = [];
+        let documentSummary = '';
         let filename = null;
 
         if (hasContext && stats.documentCount > 0) {
@@ -235,16 +251,18 @@ router.get('/status', async (req, res) => {
                     suggestedQuestions = firstMetadata.suggestedQuestions || [];
                     keywords = firstMetadata.keywords || [];
                     themes = firstMetadata.themes || [];
+                    documentSummary = firstMetadata.documentSummary || '';
                     filename = firstMetadata.filename || null;
-                    console.log(`[Context Status] Retrieved ${suggestedQuestions.length} suggested questions from ChromaDB`);
+                    console.log(`[Context Status] Retrieved metadata from ChromaDB including document summary`);
                 }
             } catch (err) {
-                console.warn('[Context Status] Failed to retrieve suggested questions from ChromaDB:', err.message);
+                console.warn('[Context Status] Failed to retrieve metadata from ChromaDB:', err.message);
                 // Fall back to session metadata if available
                 const contextMetadata = req.session.contextMetadata || {};
                 suggestedQuestions = contextMetadata.suggestedQuestions || [];
                 keywords = contextMetadata.keywords || [];
                 themes = contextMetadata.themes || [];
+                documentSummary = contextMetadata.documentSummary || '';
             }
         }
 
@@ -257,6 +275,7 @@ router.get('/status', async (req, res) => {
                 themes,
                 keywords,
                 suggestedQuestions,
+                documentSummary,
                 filename
             } : null
         });

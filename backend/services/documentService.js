@@ -128,6 +128,22 @@ export async function extractDOCX(buffer) {
 }
 
 /**
+ * Extract text from DOC buffer (legacy Word format)
+ * @param {Buffer} buffer - DOC file buffer
+ * @returns {Promise<string>} Extracted text
+ */
+export async function extractDOC(buffer) {
+    try {
+        // Mammoth can handle both DOCX and DOC formats
+        const result = await mammoth.extractRawText({ buffer });
+        return result.value;
+    } catch (error) {
+        console.error('Error extracting DOC:', error.message);
+        throw new Error(`Failed to extract DOC: ${error.message}`);
+    }
+}
+
+/**
  * Extract text from document based on file type
  * @param {Buffer} buffer - File buffer
  * @param {string} mimetype - File MIME type
@@ -138,9 +154,19 @@ export async function extractDocument(buffer, mimetype) {
         return await extractPDF(buffer);
     } else if (mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
         return await extractDOCX(buffer);
+    } else if (mimetype === 'application/msword') {
+        return await extractDOC(buffer);
     } else if (mimetype === 'text/plain') {
-        // Support plain text files
-        return buffer.toString('utf-8');
+        // Support plain text files with empty validation
+        const text = buffer.toString('utf-8');
+        if (!text || text.trim().length === 0) {
+            throw new Error('Text file is empty');
+        }
+        return text;
+    } else if (mimetype === 'application/vnd.ms-powerpoint' ||
+        mimetype === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
+        // PowerPoint files - extract text from slides
+        throw new Error('PowerPoint files are not yet supported. Please convert to PDF or DOCX.');
     } else {
         throw new Error(`Unsupported file type: ${mimetype}`);
     }
@@ -188,12 +214,18 @@ export async function extractThemesWithAI(text) {
 
         const prompt = `Analyze the following document text and extract key insights for a RAG (Retrieval Augmented Generation) system.
 
-Return a JSON object with exactly these 5 arrays:
-1. "topics": Key topics discussed (max 5) - these will be used to find similar ideas
-2. "techStack": Technologies, tools, or frameworks mentioned (max 5)
-3. "industry": Industries or domains relevant to the content (max 3)
-4. "keywords": Important keywords for search (max 10) - single words or short phrases
-5. "suggestedQuestions": 5-8 questions that are SPECIFIC to this document's content
+Return a JSON object with exactly these 6 fields:
+1. "summary": A concise 2-3 sentence summary describing what this document is about and its main purpose
+2. "topics": Key topics discussed (max 5) - these will be used to find similar ideas
+3. "techStack": Technologies, tools, or frameworks mentioned (max 5)
+4. "industry": Industries or domains relevant to the content (max 3)
+5. "keywords": Important keywords for search (max 10) - single words or short phrases
+6. "suggestedQuestions": 5-8 questions that are SPECIFIC to this document's content
+
+IMPORTANT for summary:
+- Keep it concise (2-3 sentences maximum)
+- Focus on the main topic, purpose, and key takeaways
+- Make it informative and easy to understand
 
 IMPORTANT for suggestedQuestions:
 - Questions MUST be specific to the actual content, problems, and solutions mentioned in the document
@@ -212,6 +244,7 @@ ${inputContext}`;
         });
 
         // Validate and normalize the response structure
+        const summary = typeof data.summary === 'string' ? data.summary.trim() : '';
         const topics = Array.isArray(data.topics) ? data.topics.slice(0, 5) : [];
         const techStack = Array.isArray(data.techStack) ? data.techStack.slice(0, 5) : [];
         const industry = Array.isArray(data.industry) ? data.industry.slice(0, 3) : [];
@@ -226,10 +259,11 @@ ${inputContext}`;
         // Combine topics, techStack, and industry into themes array
         const themes = [...topics, ...techStack, ...industry].slice(0, 10);
 
-        console.log(`[AI Extraction] Extracted ${themes.length} themes, ${keywords.length} keywords, ${suggestedQuestions.length} questions using Llama`);
+        console.log(`[AI Extraction] Extracted summary, ${themes.length} themes, ${keywords.length} keywords, ${suggestedQuestions.length} questions using Llama`);
 
         // Return structured data for RAG functionality
         return {
+            summary,
             themes,
             keywords,
             suggestedQuestions,
@@ -255,6 +289,7 @@ ${inputContext}`;
 export function extractThemesSimple(text) {
     if (!text) {
         return {
+            summary: '',
             themes: [],
             keywords: [],
             suggestedQuestions: [],
@@ -304,7 +339,12 @@ export function extractThemesSimple(text) {
 
     console.log(`[Simple Extraction] Extracted ${themes.length} themes using frequency analysis`);
 
+    // Generate a simple summary from first few sentences
+    const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
+    const summary = sentences.slice(0, 2).join(' ').trim().substring(0, 200);
+
     return {
+        summary: summary || 'Document content extracted successfully.',
         themes,
         keywords: sortedWords,
         suggestedQuestions,
@@ -352,6 +392,7 @@ export async function processDocument(buffer, mimetype, options = {}) {
         }
 
         // Extract fields with defaults
+        const summary = ragData.summary || '';
         const themes = ragData.themes || [];
         const keywords = ragData.keywords || [];
         const suggestedQuestions = ragData.suggestedQuestions || [];
@@ -359,7 +400,7 @@ export async function processDocument(buffer, mimetype, options = {}) {
         const techStack = ragData.techStack || [];
         const industry = ragData.industry || [];
 
-        console.log(`[Document Processing] Successfully processed document: ${chunks.length} chunks, ${themes.length} themes, ${keywords.length} keywords, ${suggestedQuestions.length} questions`);
+        console.log(`[Document Processing] Successfully processed document: ${chunks.length} chunks, ${themes.length} themes, ${keywords.length} keywords, ${suggestedQuestions.length} questions, summary generated`);
 
         return {
             success: true,
@@ -368,7 +409,9 @@ export async function processDocument(buffer, mimetype, options = {}) {
             themes,
             keywords,
             suggestedQuestions,
+            documentSummary: summary,
             ragData: {
+                summary,
                 themes,
                 keywords,
                 suggestedQuestions,
