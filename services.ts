@@ -283,7 +283,10 @@ export interface ContextUploadResponse {
   themes: string[];
   keywords?: string[];
   suggestedQuestions?: string[];
+  documentSummary?: string;
+  filename?: string;
   ragData?: {
+    summary?: string;
     themes: string[];
     keywords: string[];
     suggestedQuestions: string[];
@@ -333,10 +336,16 @@ export const resetContext = async (): Promise<{ success: boolean; message: strin
 export interface ContextStatus {
   hasContext: boolean;
   sessionId: string | null;
+  userId?: string;
   stats?: {
     sessionId: string;
     documentCount: number;
     collectionName: string;
+    themes?: string[];
+    keywords?: string[];
+    suggestedQuestions?: string[];
+    documentSummary?: string;
+    filename?: string;
   };
 }
 

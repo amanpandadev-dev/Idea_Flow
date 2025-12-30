@@ -34,6 +34,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
                         themes: status.stats.themes || [],
                         keywords: status.stats.keywords || [],
                         suggestedQuestions: status.stats.suggestedQuestions || [],
+                        documentSummary: status.stats.documentSummary || '',
                         sessionId: status.userId || '',
                         filename: status.stats.filename || 'Uploaded Document', // Get filename from stats
                         stats: {
@@ -84,10 +85,17 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
     }, []);
 
     const handleFileSelect = (selectedFile: File) => {
-        const allowedTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+        const allowedTypes = [
+            'application/pdf',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // DOCX
+            'application/msword', // DOC
+            'application/vnd.ms-powerpoint', // PPT
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation', // PPTX
+            'text/plain' // TXT
+        ];
 
         if (!allowedTypes.includes(selectedFile.type)) {
-            setError('Only PDF and DOCX files are supported');
+            setError('Only PDF, DOCX, DOC, PPT, PPTX, and TXT files are supported');
             return;
         }
 
@@ -126,7 +134,15 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
             // Similar ideas are now loaded ONLY when user clicks "Find Similar Ideas" button
             // This prevents 404 errors from ChromaDB collection not being ready yet
         } catch (err: any) {
-            setError(err.message || 'Upload failed');
+            // Handle specific error messages
+            const errorMessage = err.message || 'Upload failed';
+            if (errorMessage.includes('empty') || errorMessage.includes('no extractable text')) {
+                setError('The file you uploaded is empty or contains no text. Please upload a file with content.');
+            } else if (errorMessage.includes('PowerPoint')) {
+                setError('PowerPoint files are not yet supported. Please convert to PDF or DOCX.');
+            } else {
+                setError(errorMessage);
+            }
         } finally {
             setUploading(false);
         }
@@ -207,12 +223,12 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
                                         <input
                                             type="file"
                                             className="hidden"
-                                            accept=".pdf,.docx"
+                                            accept=".pdf,.docx,.doc,.ppt,.pptx,.txt"
                                             onChange={(e) => e.target.files?.[0] && handleFileSelect(e.target.files[0])}
                                         />
                                     </label>
                                 </p>
-                                <p className="text-xs text-slate-500">PDF or DOCX, max 10MB</p>
+                                <p className="text-xs text-slate-500">PDF, DOCX, DOC, PPT, PPTX, or TXT (max 10MB)</p>
                             </>
                         ) : (
                             <div className="flex items-center justify-between">
@@ -257,7 +273,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
                     )}
                 </>
             ) : (
-                <div className="space-y-3">
+                <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
                     <div className="flex items-start gap-2 p-3 bg-green-50 border border-green-200 rounded-lg">
                         <CheckCircle className="h-5 w-5 text-green-600 mt-0.5" />
                         <div className="flex-1">
@@ -297,6 +313,19 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ embeddingProvider, onUp
                                     </span>
                                 ))}
                             </div>
+                        </div>
+                    )}
+
+                    {/* Document Summary - NEW */}
+                    {(uploadedContext as any).documentSummary && (
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                            <div className="text-xs font-medium text-blue-900 mb-1.5 flex items-center gap-1.5">
+                                <FileText className="h-3.5 w-3.5" />
+                                Document Summary
+                            </div>
+                            <p className="text-xs text-blue-800 leading-relaxed">
+                                {(uploadedContext as any).documentSummary}
+                            </p>
                         </div>
                     )}
 
