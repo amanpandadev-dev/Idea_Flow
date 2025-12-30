@@ -120,7 +120,7 @@ const IdeaDetails: React.FC<IdeaDetailsProps> = ({ idea, onBack, onViewAssociate
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
             >
               <TrendingUp className="h-4 w-4" />
-              Generate Report
+              Market Validator Report
             </button>
           </div>
         </div>
