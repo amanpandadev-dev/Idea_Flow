@@ -17,8 +17,8 @@ import agentRoutes from './backend/routes/agentRoutes.js';
 import semanticSearchRoutes from './backend/routes/semanticSearchRoutes.js';
 import advancedSearchRoutes from './backend/routes/advancedSearchRoutes.js';
 import conversationRoutes from './backend/routes/conversationRoutes.js';
-import proSearchRoutes from './backend/routes/proSearchRoutes.js';
-import chatHistoryRoutes from './backend/routes/chatHistoryRoutes.js';
+import proSearchRoutes from './backend/routes/proSearchRoutes.js'; // Clean ProSearch implementation
+import chatHistoryRoutes from './backend/routes/chatHistoryRoutes.js'; // ProSearch chat history
 const { Pool } = pg;
 const app = express();
 const port = process.env.PORT || 3001;
@@ -247,8 +247,11 @@ app.get('/api/ideas/:ideaId/market-validation/download', async (req, res) => {
 app.use('/api/context', contextRoutes);
 app.use('/api/agent', agentRoutes); // Auth will be added after middleware definition
 
-app.use('/api/search', proSearchRoutes); // Pro Search with ChromaDB
-app.use('/api/chat', chatHistoryRoutes); // Chat history for Pro Search
+// ProSearch - Clean conversational search
+app.use('/api/prosearch', proSearchRoutes); // Internal endpoint
+app.use('/api/search', proSearchRoutes); // Frontend expects /api/search/conversational
+app.use('/api/chat', chatHistoryRoutes); // Frontend expects /api/chat/sessions
+
 app.use('/api/ideas', advancedSearchRoutes); // Advanced search with NLP
 app.use('/api/ideas', semanticSearchRoutes); // Legacy semantic search
 // --- Helpers ---

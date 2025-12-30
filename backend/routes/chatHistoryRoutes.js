@@ -1,280 +1,259 @@
 /**
- * Chat History Routes for Pro Search
- * Stores and retrieves chat sessions and messages
+ * Chat History Routes - Complete Implementation
+ * Manages chat sessions, messages, and integration with ProSearch
  */
 
 import express from 'express';
+import pg from 'pg';
 
 const router = express.Router();
+const { Pool } = pg;
 
-// Get pool from app
-const getPool = (req) => req.app.get('db');
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL
+});
 
 /**
- * GET /api/chat/sessions - Get all chat sessions for a user
+ * GET /api/chat/sessions
+ * Load all chat sessions for user (grouped by date)
  */
 router.get('/sessions', async (req, res) => {
-    const pool = getPool(req);
-    if (!pool) return res.status(503).json({ error: 'Database not connected' });
-
     try {
-        // Get user ID from JWT token
-        const userId = req.headers['x-user-id'];
+        const userId = req.headers['x-user-id'] || req.user?.user?.emp_id;
+        console.log('[ChatHistory] Loading sessions for user:', userId);
 
-        if (!userId) {
-            return res.status(400).json({ error: 'User ID required' });
-        }
-
-        const result = await pool.query(`
-            SELECT 
-                cs.id,
-                cs.title,
-                cs.created_at,
-                cs.updated_at,
-                COUNT(cm.id) as message_count
-            FROM chat_sessions cs
-            LEFT JOIN chat_messages cm ON cs.id = cm.session_id
-            WHERE cs.user_id = $1
-            GROUP BY cs.id
-            ORDER BY cs.updated_at DESC
+        const query = `
+            SELECT id, user_id, title, created_at, updated_at
+            FROM chat_sessions
+            WHERE user_id = $1
+            ORDER BY updated_at DESC
             LIMIT 50
-        `, [userId]);
+        `;
 
-        // Group sessions by date
-        const grouped = {};
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const result = await pool.query(query, [userId]);
+
+        // Format and group by date
+        const sessions = result.rows.map(row => ({
+            id: row.id,
+            title: row.title,
+            updatedAt: row.updated_at,
+            createdAt: row.created_at
+        }));
+
+        // Group by time periods
+        const grouped = {
+            today: [],
+            yesterday: [],
+            thisWeek: [],
+            older: []
+        };
+
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const yesterday = new Date(today);
         yesterday.setDate(yesterday.getDate() - 1);
-        const lastWeek = new Date(today);
-        lastWeek.setDate(lastWeek.getDate() - 7);
+        const weekAgo = new Date(today);
+        weekAgo.setDate(weekAgo.getDate() - 7);
 
-        result.rows.forEach(session => {
-            const date = new Date(session.created_at);
-            date.setHours(0, 0, 0, 0);
-
-            let dateKey;
-            if (date.getTime() === today.getTime()) {
-                dateKey = 'Today';
-            } else if (date.getTime() === yesterday.getTime()) {
-                dateKey = 'Yesterday';
-            } else if (date > lastWeek) {
-                dateKey = 'Last 7 Days';
+        sessions.forEach(session => {
+            const sessionDate = new Date(session.updatedAt);
+            if (sessionDate >= today) {
+                grouped.today.push(session);
+            } else if (sessionDate >= yesterday) {
+                grouped.yesterday.push(session);
+            } else if (sessionDate >= weekAgo) {
+                grouped.thisWeek.push(session);
             } else {
-                dateKey = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                grouped.older.push(session);
             }
-
-            if (!grouped[dateKey]) grouped[dateKey] = [];
-            grouped[dateKey].push({
-                id: session.id,
-                title: session.title,
-                messageCount: parseInt(session.message_count),
-                createdAt: session.created_at,
-                updatedAt: session.updated_at
-            });
         });
 
+        console.log(`[ChatHistory] Returning ${sessions.length} sessions`);
         res.json({ sessions: grouped });
-    } catch (err) {
-        console.error('[ChatHistory] Error fetching sessions:', err);
-        res.status(500).json({ error: 'Failed to fetch chat sessions' });
+
+    } catch (error) {
+        console.error('[ChatHistory] Error loading sessions:', error);
+        res.json({ sessions: { today: [], yesterday: [], thisWeek: [], older: [] } });
     }
 });
 
 /**
- * POST /api/chat/sessions - Create a new chat session
+ * POST /api/chat/sessions
+ * Create a new chat session
  */
 router.post('/sessions', async (req, res) => {
-    const pool = getPool(req);
-    if (!pool) return res.status(503).json({ error: 'Database not connected' });
-
     try {
-        // Get user ID from JWT token
-        const userId = req.headers['x-user-id'];
-
-        if (!userId) {
-            return res.status(400).json({ error: 'User ID required' });
-        }
-
+        const userId = req.headers['x-user-id'] || req.user?.user?.emp_id;
         const { title } = req.body;
 
-        const result = await pool.query(`
-            INSERT INTO chat_sessions (user_id, title)
-            VALUES ($1, $2)
-            RETURNING id, title, created_at, updated_at
-        `, [userId, title || 'New Chat']);
+        console.log('[ChatHistory] Creating session for user:', userId);
 
-        res.json({ session: result.rows[0] });
-    } catch (err) {
-        console.error('[ChatHistory] Error creating session:', err);
-        res.status(500).json({ error: 'Failed to create chat session' });
+        const query = `
+            INSERT INTO chat_sessions (user_id, title, created_at, updated_at)
+            VALUES ($1, $2, NOW(), NOW())
+            RETURNING id, title, created_at, updated_at
+        `;
+
+        const result = await pool.query(query, [userId, title || 'New Chat']);
+        const session = result.rows[0];
+
+        console.log(`[ChatHistory] Created session ${session.id}`);
+
+        res.json({
+            session: {
+                id: session.id,
+                title: session.title,
+                created_at: session.created_at,
+                updated_at: session.updated_at
+            }
+        });
+
+    } catch (error) {
+        console.error('[ChatHistory] Error creating session:', error);
+        res.status(500).json({
+            error: true,
+            message: 'Failed to create session'
+        });
     }
 });
 
 /**
- * GET /api/chat/sessions/:sessionId/messages - Get messages for a session
+ * GET /api/chat/sessions/:sessionId/messages
+ * Load all messages for a session
  */
 router.get('/sessions/:sessionId/messages', async (req, res) => {
-    const pool = getPool(req);
-    if (!pool) return res.status(503).json({ error: 'Database not connected' });
-
     try {
         const { sessionId } = req.params;
+        const userId = req.headers['x-user-id'] || req.user?.user?.emp_id;
 
-        const result = await pool.query(`
+        console.log(`[ChatHistory] Loading messages for session ${sessionId}`);
+
+        // Verify session belongs to user
+        const sessionCheck = await pool.query(
+            'SELECT id FROM chat_sessions WHERE id = $1 AND user_id = $2',
+            [sessionId, userId]
+        );
+
+        if (sessionCheck.rows.length === 0) {
+            return res.status(404).json({ error: true, message: 'Session not found' });
+        }
+
+        // Load messages
+        const query = `
             SELECT id, role, content, metadata, created_at
             FROM chat_messages
             WHERE session_id = $1
             ORDER BY created_at ASC
-        `, [sessionId]);
+        `;
 
-        res.json({
-            messages: result.rows.map(msg => ({
-                id: msg.id,
-                role: msg.role,
-                content: msg.content,
-                metadata: msg.metadata,
-                timestamp: msg.created_at
-            }))
-        });
-    } catch (err) {
-        console.error('[ChatHistory] Error fetching messages:', err);
-        res.status(500).json({ error: 'Failed to fetch messages' });
+        const result = await pool.query(query, [sessionId]);
+
+        const messages = result.rows.map(row => ({
+            id: row.id,
+            role: row.role,
+            content: row.content,
+            metadata: row.metadata,
+            timestamp: row.created_at
+        }));
+
+        console.log(`[ChatHistory] Loaded ${messages.length} messages`);
+
+        res.json({ messages });
+
+    } catch (error) {
+        console.error('[ChatHistory] Error loading messages:', error);
+        res.status(500).json({ error: true, message: 'Failed to load messages' });
     }
 });
 
 /**
- * POST /api/chat/sessions/:sessionId/messages - Add a message to a session
+ * POST /api/chat/sessions/:sessionId/messages
+ * Save a message to a session
  */
 router.post('/sessions/:sessionId/messages', async (req, res) => {
-    const pool = getPool(req);
-    if (!pool) return res.status(503).json({ error: 'Database not connected' });
-
     try {
         const { sessionId } = req.params;
         const { role, content, metadata } = req.body;
+        const userId = req.headers['x-user-id'] || req.user?.user?.emp_id;
 
-        // Limit results stored to prevent huge payloads (store top 10 only)
-        let processedMetadata = metadata;
-        if (metadata?.results && Array.isArray(metadata.results)) {
-            processedMetadata = {
-                ...metadata,
-                results: metadata.results.slice(0, 10).map((r) => ({
-                    id: r.id,
-                    title: r.title,
-                    description: r.description?.substring(0, 200),
-                    domain: r.domain,
-                    businessGroup: r.businessGroup,
-                    technologies: r.technologies,
-                    matchScore: r.matchScore
-                }))
-            };
-        }
+        console.log(`[ChatHistory] Saving message to session ${sessionId}`);
 
-        // Insert message
-        const msgResult = await pool.query(`
-            INSERT INTO chat_messages (session_id, role, content, metadata)
-            VALUES ($1, $2, $3, $4)
-            RETURNING id, role, content, metadata, created_at
-        `, [sessionId, role, content, processedMetadata ? JSON.stringify(processedMetadata) : null]);
-
-        // Update session title if first user message
-        if (role === 'user') {
-            const countResult = await pool.query(
-                'SELECT COUNT(*) FROM chat_messages WHERE session_id = $1 AND role = $2',
-                [sessionId, 'user']
-            );
-
-            if (parseInt(countResult.rows[0].count) === 1) {
-                const title = content.length > 50 ? content.substring(0, 47) + '...' : content;
-                await pool.query(
-                    'UPDATE chat_sessions SET title = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-                    [title, sessionId]
-                );
-            } else {
-                await pool.query(
-                    'UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = $1',
-                    [sessionId]
-                );
-            }
-        }
-
-        res.json({
-            message: {
-                id: msgResult.rows[0].id,
-                role: msgResult.rows[0].role,
-                content: msgResult.rows[0].content,
-                metadata: msgResult.rows[0].metadata,
-                timestamp: msgResult.rows[0].created_at
-            }
-        });
-    } catch (err) {
-        console.error('[ChatHistory] Error adding message:', err);
-        res.status(500).json({ error: 'Failed to add message' });
-    }
-});
-
-/**
- * DELETE /api/chat/sessions/:sessionId - Delete a chat session
- */
-router.delete('/sessions/:sessionId', async (req, res) => {
-    const pool = getPool(req);
-    if (!pool) return res.status(503).json({ error: 'Database not connected' });
-
-    try {
-        const { sessionId } = req.params;
-        // Get user ID from JWT token
-        const userId = req.headers['x-user-id'];
-
-        if (!userId) {
-            return res.status(400).json({ error: 'User ID required' });
-        }
-
-        await pool.query('DELETE FROM chat_messages WHERE session_id = $1', [sessionId]);
-        await pool.query(
-            'DELETE FROM chat_sessions WHERE id = $1 AND user_id = $2',
+        // Verify session belongs to user
+        const sessionCheck = await pool.query(
+            'SELECT id FROM chat_sessions WHERE id = $1 AND user_id = $2',
             [sessionId, userId]
         );
 
-        res.json({ success: true });
-    } catch (err) {
-        console.error('[ChatHistory] Error deleting session:', err);
-        res.status(500).json({ error: 'Failed to delete session' });
+        if (sessionCheck.rows.length === 0) {
+            return res.status(404).json({ error: true, message: 'Session not found' });
+        }
+
+        // Save message
+        const query = `
+            INSERT INTO chat_messages (session_id, role, content, metadata, created_at)
+            VALUES ($1, $2, $3, $4, NOW())
+            RETURNING id, role, content, metadata, created_at
+        `;
+
+        const result = await pool.query(query, [
+            sessionId,
+            role,
+            content,
+            JSON.stringify(metadata || {})
+        ]);
+
+        // Update session updated_at
+        await pool.query(
+            'UPDATE chat_sessions SET updated_at = NOW() WHERE id = $1',
+            [sessionId]
+        );
+
+        const message = result.rows[0];
+
+        res.json({
+            message: {
+                id: message.id,
+                role: message.role,
+                content: message.content,
+                metadata: message.metadata,
+                timestamp: message.created_at
+            }
+        });
+
+    } catch (error) {
+        console.error('[ChatHistory] Error saving message:', error);
+        res.status(500).json({ error: true, message: 'Failed to save message' });
     }
 });
 
 /**
- * PATCH /api/chat/sessions/:sessionId - Rename a chat session
+ * DELETE /api/chat/sessions/:sessionId
+ * Delete a chat session and all its messages
  */
-router.patch('/sessions/:sessionId', async (req, res) => {
-    const pool = getPool(req);
-    if (!pool) return res.status(503).json({ error: 'Database not connected' });
-
+router.delete('/sessions/:sessionId', async (req, res) => {
     try {
         const { sessionId } = req.params;
-        const { title } = req.body;
-        // Get user ID from JWT token
-        const userId = req.headers['x-user-id'];
+        const userId = req.headers['x-user-id'] || req.user?.user?.emp_id;
 
-        if (!userId) {
-            return res.status(400).json({ error: 'User ID required' });
-        }
+        console.log(`[ChatHistory] Deleting session ${sessionId}`);
 
-        const result = await pool.query(`
-            UPDATE chat_sessions 
-            SET title = $1, updated_at = CURRENT_TIMESTAMP 
-            WHERE id = $2 AND user_id = $3
-            RETURNING id, title, updated_at
-        `, [title, sessionId, userId]);
+        // Delete session (messages will cascade)
+        const result = await pool.query(
+            'DELETE FROM chat_sessions WHERE id = $1 AND user_id = $2 RETURNING id',
+            [sessionId, userId]
+        );
 
         if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Session not found' });
+            return res.status(404).json({ error: true, message: 'Session not found' });
         }
 
-        res.json({ session: result.rows[0] });
-    } catch (err) {
-        console.error('[ChatHistory] Error renaming session:', err);
-        res.status(500).json({ error: 'Failed to rename session' });
+        console.log(`[ChatHistory] Deleted session ${sessionId}`);
+
+        res.json({ success: true, message: 'Session deleted' });
+
+    } catch (error) {
+        console.error('[ChatHistory] Error deleting session:', error);
+        res.status(500).json({ error: true, message: 'Failed to delete session' });
     }
 });
 
