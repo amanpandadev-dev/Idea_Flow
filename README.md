@@ -395,3 +395,5 @@ For issues or questions, check the logs:
 - Frontend: Terminal running `npm run dev`
 - ChromaDB: Look for `[ChromaDB]` prefixed logs
 - Ollama: `ollama logs` or service logs
+
+## Just Do it
