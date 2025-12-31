@@ -2,6 +2,9 @@
 // Provides embeddings, chat, structured output, and retry logic
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+// Recommended models for Market Chat:
+// - qwen2.5:3b (fastest, concise, good for business analysis)
+// - phi3:mini (detailed, better reasoning, slightly slower)
 const REASONING_MODEL = process.env.OLLAMA_REASONING_MODEL || 'qwen2.5:3b';
 const EMBEDDING_MODEL = process.env.OLLAMA_EMBEDDING_MODEL || 'nomic-embed-text';
 

@@ -34,6 +34,131 @@ const ANALYSIS_KEYWORDS = [
 ];
 
 /**
+ * Beautify and format LLM response
+ * Removes markdown artifacts, formats properly for display
+ */
+function beautifyResponse(text) {
+    if (!text) return text;
+    
+    // Remove triple asterisks (***) - common markdown artifact
+    text = text.replace(/\*\*\*/g, '');
+    
+    // Remove markdown headers (##, ###, ####) - keep content but remove header markers
+    text = text.replace(/^#{1,6}\s+/gm, '');
+    
+    // Fix double asterisks to proper bold (keep them for frontend to render)
+    // Frontend should handle ** as bold
+    
+    // Remove extra newlines (more than 2 consecutive)
+    text = text.replace(/\n{3,}/g, '\n\n');
+    
+    // Trim whitespace
+    text = text.trim();
+    
+    return text;
+}
+
+/**
+ * Format external sources with proper citations
+ */
+function formatSourcesWithCitations(results, category) {
+    if (!results || results.length === 0) {
+        return null;
+    }
+
+    let formatted = '';
+    
+    results.forEach((result, index) => {
+        formatted += `${index + 1}. **${result.title}**\n`;
+        formatted += `   ${result.content?.substring(0, 200)}...\n`;
+        formatted += `   [Source](${result.url})\n\n`;
+    });
+
+    return formatted;
+}
+
+/**
+ * Generate LLM-enhanced response with external data
+ * This ensures all responses go through LLM for proper formatting and intelligence
+ */
+async function generateEnhancedResponse(idea, userMessage, externalData, dataType) {
+    console.log(`[MarketChat] Generating LLM-enhanced response for ${dataType}`);
+
+    try {
+        const systemMessage = {
+            role: 'system',
+            content: 'You are a Market Validation AI Assistant. You provide well-formatted, professional responses about market validation. You cite sources when using external data. You use proper markdown formatting without artifacts like ***.'
+        };
+
+        let prompt = `Idea: ${idea.title}
+Domain: ${idea.theme || idea.domain}
+
+User asked: ${userMessage}
+
+`;
+
+        if (externalData && externalData.length > 0) {
+            prompt += `External research data (${dataType}):\n\n`;
+            externalData.forEach((item, index) => {
+                prompt += `Source ${index + 1}: ${item.title}\n`;
+                prompt += `Content: ${item.content}\n`;
+                prompt += `URL: ${item.url}\n\n`;
+            });
+            
+            prompt += `\nInstructions:
+1. Provide a comprehensive answer using the external data above
+2. Cite sources using [Source 1], [Source 2] format after each point
+3. Structure your response with clear headers and bullet points
+4. Do NOT use *** (triple asterisks) - use ** for bold only
+5. Include a strategic insight at the end
+6. Format links as: [Source Name](URL)
+7. Be specific and actionable
+
+Generate your response:`;
+        } else {
+            prompt += `No external data available. Provide guidance based on general market validation principles for the ${idea.theme || idea.domain} domain.
+
+Instructions:
+1. Provide helpful, actionable advice
+2. Structure with clear headers and bullet points
+3. Do NOT use *** (triple asterisks) - use ** for bold only
+4. Be specific to the domain
+5. Include a strategic recommendation
+
+Generate your response:`;
+        }
+
+        const userMessageObj = {
+            role: 'user',
+            content: prompt
+        };
+
+        const result = await generateChatCompletion(
+            [systemMessage, userMessageObj],
+            process.env.OLLAMA_REASONING_MODEL || 'qwen2.5:3b',
+            {
+                temperature: 0.7,
+                num_predict: 600
+            }
+        );
+
+        let response = result.message?.content || result.response || '';
+        
+        // Beautify the response
+        response = beautifyResponse(response);
+        
+        return response;
+    } catch (error) {
+        console.error('[MarketChat] Error generating enhanced response:', error);
+        // Return formatted external data as fallback
+        if (externalData && externalData.length > 0) {
+            return formatSourcesWithCitations(externalData, dataType);
+        }
+        return `I encountered an issue generating a response. Please try again.`;
+    }
+}
+
+/**
  * Extract query parameters from user message
  * Extracts numbers, specific requirements, and constraints
  */
@@ -204,38 +329,26 @@ function formatTavilyResults(results, category) {
 
 /**
  * Handle patent risk queries using Tavily
+ * Enhanced to use LLM for final response generation with proper citations
  */
-async function handlePatentRiskQuery(idea, metadata) {
+async function handlePatentRiskQuery(idea, metadata, userMessage) {
     console.log('[MarketChat] Handling PATENT_RISK query via Tavily with params:', metadata);
 
     try {
         const patentResults = await searchPatents(idea);
 
-        let response = `## Patent & IP Risk Analysis for "${idea.title}"\n\n`;
-
-        if (patentResults && patentResults.length > 0) {
-            const limitedResults = metadata.limit 
-                ? patentResults.slice(0, metadata.limit)
-                : patentResults;
-                
-            response += `I found **${limitedResults.length} potential patent-related results** that may be relevant:\n\n`;
-            
-            limitedResults.forEach((result, index) => {
-                response += `**${index + 1}. ${result.title}**\n`;
-                response += `${result.content?.substring(0, 200)}...\n`;
-                response += `🔗 [Source](${result.url})\n\n`;
-            });
-            
-            response += `\n⚠️ **Disclaimer**: This is a preliminary search. For comprehensive IP analysis, consult with a qualified patent attorney.`;
-        } else {
-            response += `Good news! My search didn't find obvious patent conflicts for "${idea.title}". However, this doesn't guarantee freedom-to-operate.\n\n`;
-            response += `**Recommended next steps:**\n`;
-            response += `1. Conduct a formal patent search on Google Patents or USPTO\n`;
-            response += `2. Consider a professional IP clearance study\n`;
-            response += `3. Consult with an IP attorney for thorough analysis`;
+        if (!patentResults || patentResults.length === 0) {
+            // No patents found - use LLM to provide guidance
+            return await generateEnhancedResponse(idea, userMessage || 'Are there any patent risks?', null, 'patents');
         }
 
-        return response;
+        const limitedResults = metadata.limit 
+            ? patentResults.slice(0, metadata.limit)
+            : patentResults;
+
+        // Use LLM to generate enhanced response with citations
+        return await generateEnhancedResponse(idea, userMessage || 'What are the patent risks?', limitedResults, 'patents');
+
     } catch (error) {
         console.error('[MarketChat] Patent search failed:', error.message);
         return `I encountered an issue searching for patent information. Please try again or conduct a manual search on Google Patents for "${idea.title}".`;
@@ -244,42 +357,26 @@ async function handlePatentRiskQuery(idea, metadata) {
 
 /**
  * Handle market trends queries using Tavily
+ * Enhanced to use LLM for final response generation with proper citations
  */
-async function handleMarketTrendsQuery(idea, metadata) {
+async function handleMarketTrendsQuery(idea, metadata, userMessage) {
     console.log('[MarketChat] Handling MARKET_TRENDS query via Tavily with params:', metadata);
 
     try {
         const trendResults = await searchMarketTrends(idea);
 
-        let response = `## Market Trends Analysis for "${idea.title}"\n\n`;
-
-        if (metadata.timeframe) {
-            response = `## Market Trends Analysis for "${idea.title}" (${metadata.timeframe})\n\n`;
+        if (!trendResults || trendResults.length === 0) {
+            // No trends found - use LLM to provide guidance
+            return await generateEnhancedResponse(idea, userMessage || 'What are the market trends?', null, 'market trends');
         }
 
-        if (trendResults && trendResults.length > 0) {
-            const limitedResults = metadata.limit 
-                ? trendResults.slice(0, metadata.limit)
-                : trendResults.slice(0, 5);
-                
-            response += `Here are the latest market insights:\n\n`;
-            
-            limitedResults.forEach((result, index) => {
-                response += `**${index + 1}. ${result.title}**\n`;
-                response += `${result.content?.substring(0, 200)}...\n`;
-                response += `🔗 [Source](${result.url})\n\n`;
-            });
-            
-            response += `\n📊 **Key Takeaway**: The ${idea.theme || idea.domain || 'technology'} sector shows active development. Consider how your idea differentiates within these trends.`;
-        } else {
-            response += `I couldn't find specific market trend data for "${idea.title}". This might indicate:\n\n`;
-            response += `• An emerging/nascent market (first-mover opportunity)\n`;
-            response += `• A niche segment with limited public research\n`;
-            response += `• Need for more specific search terms\n\n`;
-            response += `**Suggestion**: Try asking about specific aspects like "AI market trends" or "healthcare technology growth".`;
-        }
+        const limitedResults = metadata.limit 
+            ? trendResults.slice(0, metadata.limit)
+            : trendResults.slice(0, 5);
 
-        return response;
+        // Use LLM to generate enhanced response with citations
+        return await generateEnhancedResponse(idea, userMessage || 'What are the market trends?', limitedResults, 'market trends');
+
     } catch (error) {
         console.error('[MarketChat] Market trends search failed:', error.message);
         return `I encountered an issue fetching market trends. Please try again or check industry reports manually.`;
@@ -288,16 +385,12 @@ async function handleMarketTrendsQuery(idea, metadata) {
 
 /**
  * Handle competitor queries using Tavily with query-specific filtering
+ * Enhanced to use LLM for final response generation with proper citations
  */
 async function handleCompetitorsQuery(idea, userMessage, metadata, conversationHistory) {
     console.log('[MarketChat] Handling COMPETITORS query via Tavily with params:', metadata);
 
     try {
-        // Check if this is a follow-up query asking for refinement
-        const isFollowUp = conversationHistory && conversationHistory.some(msg => 
-            msg.role === 'assistant' && msg.content.includes('Competitive Landscape')
-        );
-
         // Build enhanced search query based on user parameters
         let searchQuery = `companies building ${idea.title} competitors products`;
         
@@ -316,53 +409,19 @@ async function handleCompetitorsQuery(idea, userMessage, metadata, conversationH
         // Perform search with enhanced query
         const competitorResults = await searchCompetitors(idea, searchQuery);
 
-        let response = '';
-
-        // If this is a follow-up asking for fewer results, acknowledge the refinement
-        if (isFollowUp && metadata.limit) {
-            response += `Here are the **top ${metadata.limit} competitors** based on your request:\n\n`;
-        } else if (metadata.limit) {
-            response += `## Top ${metadata.limit} Competitors for "${idea.title}"\n\n`;
-        } else {
-            response += `## Competitive Landscape for "${idea.title}"\n\n`;
+        if (!competitorResults || competitorResults.length === 0) {
+            // No external data - use LLM with internal knowledge
+            return await generateEnhancedResponse(idea, userMessage, null, 'competitors');
         }
 
-        if (competitorResults && competitorResults.length > 0) {
-            // Apply limit if specified
-            const limitedResults = metadata.limit 
-                ? competitorResults.slice(0, metadata.limit)
-                : competitorResults.slice(0, 5);
+        // Apply limit if specified
+        const limitedResults = metadata.limit 
+            ? competitorResults.slice(0, metadata.limit)
+            : competitorResults.slice(0, 5);
 
-            if (metadata.limit && limitedResults.length < metadata.limit) {
-                response += `I found ${limitedResults.length} relevant competitor${limitedResults.length > 1 ? 's' : ''}:\n\n`;
-            } else if (!isFollowUp) {
-                response += `I found information about companies in this space:\n\n`;
-            }
+        // Use LLM to generate enhanced response with citations
+        return await generateEnhancedResponse(idea, userMessage, limitedResults, 'competitors');
 
-            // Format results with numbering
-            limitedResults.forEach((result, index) => {
-                response += `**${index + 1}. ${result.title}**\n`;
-                response += `${result.content?.substring(0, 200)}...\n`;
-                response += `🔗 [Source](${result.url})\n\n`;
-            });
-
-            // Add strategic insight based on constraints
-            if (metadata.constraints.includes('biggest') || metadata.constraints.includes('largest')) {
-                response += `\n🎯 **Strategic Insight**: These are the major players. Consider how you can differentiate through niche focus, better UX, or underserved segments.`;
-            } else if (metadata.constraints.includes('newest')) {
-                response += `\n🎯 **Strategic Insight**: These newer entrants show market validation. Study their approach and identify gaps you can fill.`;
-            } else {
-                response += `\n🎯 **Strategic Insight**: Analyze these competitors' strengths and weaknesses to identify your differentiation opportunities.`;
-            }
-        } else {
-            response += `I couldn't find direct competitors for "${idea.title}". This could mean:\n\n`;
-            response += `• You're in a blue ocean market (great opportunity!)\n`;
-            response += `• Competitors use different terminology\n`;
-            response += `• The problem is being solved differently\n\n`;
-            response += `**Suggestion**: Search for companies solving the same underlying problem, even if their approach differs.`;
-        }
-
-        return response;
     } catch (error) {
         console.error('[MarketChat] Competitor search failed:', error.message);
         return `I encountered an issue searching for competitors. Please try again.`;
@@ -476,10 +535,10 @@ export async function generateChatResponse(idea, userMessage, conversationHistor
     try {
         switch (intent) {
             case INTENTS.PATENT_RISK:
-                return await handlePatentRiskQuery(idea, metadata);
+                return await handlePatentRiskQuery(idea, metadata, userMessage);
 
             case INTENTS.MARKET_TRENDS:
-                return await handleMarketTrendsQuery(idea, metadata);
+                return await handleMarketTrendsQuery(idea, metadata, userMessage);
 
             case INTENTS.COMPETITORS:
                 return await handleCompetitorsQuery(idea, userMessage, metadata, conversationHistory);
