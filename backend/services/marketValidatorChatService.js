@@ -46,6 +46,13 @@ function beautifyResponse(text) {
     // Remove markdown headers (##, ###, ####) - keep content but remove header markers
     text = text.replace(/^#{1,6}\s+/gm, '');
     
+    // Fix repeated source citations like "(Source 1)" appearing multiple times
+    // Keep only the [Source X](url) format
+    text = text.replace(/\(Source \d+\)/g, '');
+    
+    // Remove "Description:" labels that might appear
+    text = text.replace(/^Description:\s*/gm, '');
+    
     // Fix double asterisks to proper bold (keep them for frontend to render)
     // Frontend should handle ** as bold
     
@@ -106,26 +113,54 @@ User asked: ${userMessage}
             });
             
             prompt += `\nInstructions:
-1. Provide a comprehensive answer using the external data above
-2. Cite sources using [Source 1], [Source 2] format after each point
-3. Structure your response with clear headers and bullet points
-4. Do NOT use *** (triple asterisks) - use ** for bold only
-5. Include a strategic insight at the end
-6. Format links as: [Source Name](URL)
-7. Be specific and actionable
+1. Write a clear, professional response about the ${dataType}
+2. For EACH competitor/item, write ONE paragraph with:
+   - Company name in bold: **Company Name**
+   - Brief description (1-2 sentences)
+   - Cite the source at the end: [Source X](URL)
+3. After listing all items, add a section called "Strategic Insight:" (use bold: **Strategic Insight:**)
+4. Do NOT repeat source numbers multiple times
+5. Do NOT use headers with ## or ###
+6. Do NOT use *** (triple asterisks)
+7. Keep it concise and actionable
+8. Number each item: 1., 2., 3., etc.
 
-Generate your response:`;
+Example format:
+1. **Company Name** - Brief description of what they do and their strengths. [Source 1](url)
+
+2. **Another Company** - Brief description. [Source 2](url)
+
+**Strategic Insight:** Your analysis and recommendation here.
+
+Generate your response now:`;
         } else {
-            prompt += `No external data available. Provide guidance based on general market validation principles for the ${idea.theme || idea.domain} domain.
+            // No external data - for summaries or general queries
+            if (dataType === 'idea summary') {
+                prompt += `\nInstructions:
+1. Write a clear, concise summary of this idea
+2. Structure it as:
+   - Brief overview (2-3 sentences)
+   - Key features or capabilities
+   - Target market or use case
+   - Value proposition
+3. Do NOT use headers with ## or ###
+4. Do NOT use *** (triple asterisks) - use ** for bold only
+5. Keep it professional and actionable
+6. End with **Key Opportunity:** highlighting the main market opportunity
+
+Generate your response now:`;
+            } else {
+                prompt += `No external data available. Provide guidance based on general market validation principles for the ${idea.theme || idea.domain} domain.
 
 Instructions:
 1. Provide helpful, actionable advice
-2. Structure with clear headers and bullet points
+2. Do NOT use headers with ## or ###
 3. Do NOT use *** (triple asterisks) - use ** for bold only
 4. Be specific to the domain
-5. Include a strategic recommendation
+5. End with **Strategic Recommendation:** (in bold)
 
 Generate your response:`;
+            }
         }
 
         const userMessageObj = {
@@ -481,17 +516,25 @@ async function handleCompetitorRiskQuery(idea, competitorName) {
 
 /**
  * Handle summarize queries using internal data only
+ * Enhanced to use LLM for better formatting
  */
-function handleSummarizeQuery(idea) {
+async function handleSummarizeQuery(idea, userMessage) {
     console.log('[MarketChat] Handling SUMMARIZE query with internal data only');
 
-    const technologies = Array.isArray(idea.technologies)
-        ? idea.technologies.join(', ')
-        : idea.technologies || 'Not specified';
+    try {
+        // Use LLM to generate a nice summary from internal data
+        // No external data needed
+        return await generateEnhancedResponse(idea, userMessage || 'Summarize this idea', null, 'idea summary');
+    } catch (error) {
+        console.error('[MarketChat] Error generating summary:', error);
+        
+        // Fallback to simple summary
+        const technologies = Array.isArray(idea.technologies)
+            ? idea.technologies.join(', ')
+            : idea.technologies || 'Not specified';
 
-    return `## Summary: "${idea.title}"
+        return `**${idea.title}**
 
-**Description:**
 ${idea.description || idea.summary || 'No description available'}
 
 **Domain:** ${idea.theme || idea.domain || 'Not specified'}
@@ -499,10 +542,8 @@ ${idea.description || idea.summary || 'No description available'}
 **Technologies:** ${technologies}
 
 **Key Value Proposition:**
-This idea aims to leverage ${idea.theme || 'innovative technology'} to deliver value in the ${idea.domain || 'target'} space.
-
----
-*This summary is based entirely on the idea's internal data. Would you like me to search for external market insights?*`;
+This idea leverages ${idea.theme || 'innovative technology'} to deliver value in the ${idea.domain || 'target'} space.`;
+    }
 }
 
 /**
@@ -547,7 +588,7 @@ export async function generateChatResponse(idea, userMessage, conversationHistor
                 return await handleCompetitorRiskQuery(idea, metadata.competitor);
 
             case INTENTS.SUMMARIZE:
-                return handleSummarizeQuery(idea);
+                return await handleSummarizeQuery(idea, userMessage);
 
             case INTENTS.OFF_TOPIC:
                 return handleOffTopicQuery(idea);

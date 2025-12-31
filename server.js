@@ -623,8 +623,12 @@ app.post('/api/auth/refresh', async (req, res) => {
 
     // Issue new Access Token
     const accessToken = jwt.sign(payload, JWT_SECRET, { expiresIn: '15m' });
+    
+    console.log(`[Auth] Token refreshed successfully for user: ${decoded.user?.emp_id || 'unknown'}`);
+    
     res.json({ accessToken });
   } catch (err) {
+    console.error('[Auth] Refresh token invalid or expired');
     return res.status(403).json({ msg: 'Invalid refresh token' });
   }
 });

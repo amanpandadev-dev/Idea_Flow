@@ -19,10 +19,14 @@ export const auth = (req, res, next) => {
         req.user = decoded;
         next();
     } catch (err) {
-        console.error(`[Auth] Token verification failed: ${err.name}`);
+        // Token expired is normal - frontend will refresh automatically
         if (err.name === 'TokenExpiredError') {
+            // Don't log as error - this is expected behavior
+            // Frontend will catch this and refresh the token
             return res.status(401).json({ msg: 'Token expired', code: 'TOKEN_EXPIRED' });
         }
+        // Only log actual errors (invalid tokens, etc.)
+        console.error(`[Auth] Token verification failed: ${err.name}`);
         res.status(401).json({ msg: 'Token is not valid' });
     }
 };
