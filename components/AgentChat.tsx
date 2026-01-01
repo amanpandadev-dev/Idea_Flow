@@ -952,8 +952,8 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                         </button>
                     </div>
 
-                    {/* Search Form */}
-                    {(searchMode === 'agent' || searchMode === 'semantic') && (
+                    {/* Search Form - Only show in Agent Q&A mode */}
+                    {searchMode === 'agent' && (
                         <form onSubmit={handleSubmit}>
                             <div className="flex flex-wrap sm:flex-nowrap gap-3">
                                 <div className="relative flex-1">
@@ -962,11 +962,8 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                                         value={query}
                                         onChange={(e) => setQuery(e.target.value)}
                                         placeholder={getPlaceholder()}
-                                        className={`w-full px-4 py-3 pr-10 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent ${searchMode === 'semantic' && semanticResults.length > 0
-                                            ? 'opacity-50 cursor-not-allowed bg-slate-50'
-                                            : ''
-                                            }`}
-                                        disabled={isRunning || isSearching || (searchMode === 'semantic' && semanticResults.length > 0)}
+                                        className="w-full px-4 py-3 pr-10 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                        disabled={isRunning || isSearching}
                                     />
                                     {query && (
                                         <button
@@ -979,14 +976,13 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                                     )}
                                 </div>
                                 <div className="flex gap-3">
-                                    {/* Hidden: Embedding provider selection - always uses Llama */}
                                     <button
                                         type="submit"
                                         disabled={isRunning || isSearching || !query.trim()}
                                         className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors font-medium flex items-center gap-2"
                                     >
-                                        {searchMode === 'semantic' ? <Search className="h-5 w-5" /> : <Send className="h-5 w-5" />}
-                                        {searchMode === 'semantic' ? 'Search' : 'Ask Agent'}
+                                        <Send className="h-5 w-5" />
+                                        Ask Agent
                                     </button>
                                     {isRunning && (
                                         <button
