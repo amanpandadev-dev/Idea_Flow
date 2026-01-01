@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Send, Loader2, Bot, ChevronDown, ChevronUp, Sparkles, StopCircle, RefreshCcw, History, Trash2, X, Search, MessageSquare } from 'lucide-react';
-import { startAgentSession, getAgentSessionStatus, stopAgentSession, semanticSearchIdeas, fetchAgentHistory, clearAgentHistory, type AgentSession, type SemanticSearchResult, type AgentHistoryItem } from '../services';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Bot, Send, Loader2, AlertCircle, ChevronDown, ChevronUp, Sparkles, Search, X, FileText, MessageSquare, StopCircle, RefreshCcw, History, Trash2 } from 'lucide-react';
+import { startAgentSession, getAgentSessionStatus, stopAgentSession, fetchAgentHistory, clearAgentHistory, deleteAgentSession, semanticSearchIdeas, findMatchingIdeas, type AgentSession, type AgentHistoryItem, type SemanticSearchResult } from '../services';
 import CitationDisplay from './CitationDisplay';
 import DocumentUpload from './DocumentUpload';
+import Fuse from 'fuse.js';
 
 const SESSION_STORAGE_KEY = 'agent_session_job_id';
 const SEMANTIC_RESULTS_KEY_PREFIX = 'agent_semantic_results_';
@@ -51,6 +52,18 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     // Pagination constants
     const PAGE_SIZE = 20;
 
+    // Fuse.js configuration for Similar Ideas fuzzy search
+    const SIMILAR_IDEAS_FUSE_OPTIONS = {
+        threshold: 0.5, // Increased from 0.4 for better typo tolerance
+        ignoreLocation: true, // Search entire string
+        minMatchCharLength: 2, // Minimum characters to match
+        keys: [
+            { name: 'title', weight: 0.5 },
+            { name: 'description', weight: 0.3 },
+            { name: 'tags', weight: 0.2 }
+        ]
+    };
+
     // Helper functions to get user-specific storage keys
     const getSemanticResultsKey = () => currentUserId ? `${SEMANTIC_RESULTS_KEY_PREFIX}${currentUserId}` : null;
     const getSemanticPaginationKey = () => currentUserId ? `${SEMANTIC_PAGINATION_KEY_PREFIX}${currentUserId}` : null;
@@ -59,6 +72,18 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
     const pollingInterval = useRef<NodeJS.Timeout | null>(null);
 
     const isRunning = session?.status === 'running' || session?.status === 'queued' || session?.status === 'starting';
+
+    // MOVED: Filter results at component level to avoid Hooks violation
+    const filteredResults = useMemo(() => {
+        if (!localSearchQuery.trim()) return allSemanticResults;
+
+        // Use Fuse.js for fuzzy search
+        const fuse = new Fuse(allSemanticResults, SIMILAR_IDEAS_FUSE_OPTIONS);
+        const results = fuse.search(localSearchQuery);
+
+        // Extract items from Fuse results
+        return results.map(result => result.item);
+    }, [allSemanticResults, localSearchQuery]);
 
     // Load search history from database and detect user changes
     useEffect(() => {
@@ -549,17 +574,8 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
             );
         }
 
-        // Filter results based on local search query
-        const filteredResults = allSemanticResults.filter(idea => {
-            if (!localSearchQuery.trim()) return true;
-
-            const searchLower = localSearchQuery.toLowerCase();
-            const matchesTitle = idea.title?.toLowerCase().includes(searchLower);
-            const matchesDesc = idea.description?.toLowerCase().includes(searchLower);
-            const matchesTags = idea.tags?.some(tag => tag.toLowerCase().includes(searchLower));
-
-            return matchesTitle || matchesDesc || matchesTags;
-        });
+        // Filter results based on local search query using Fuse.js
+        // NOTE: filteredResults is now computed at component level (see above)
 
         // Apply client-side pagination to filtered results
         const start = (currentPage - 1) * PAGE_SIZE;

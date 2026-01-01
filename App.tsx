@@ -359,8 +359,6 @@ const App: React.FC = () => {
               onOpenExplore={() => setIsExploreOpen(true)}
               isGlobalFilterActive={activeFiltersCount > 0}
               onLikeToggle={handleLikeToggle}
-              onSearch={handleSearch}
-              isSearching={isSearching}
             />
           )}
 

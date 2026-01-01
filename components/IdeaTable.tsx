@@ -3,6 +3,7 @@ import { Idea, Status } from '../types';
 import { DOMAIN_COLORS } from '../constants';
 import { ChevronDown, ChevronUp, User, Filter, Compass, Search, ChevronLeft, ChevronRight, Heart, Trophy, Zap, X } from 'lucide-react';
 import { toggleLikeIdea } from '../services';
+import Fuse from 'fuse.js';
 
 interface IdeaTableProps {
   data: Idea[];
@@ -22,6 +23,20 @@ type SortField = 'date' | 'status' | 'domain' | 'score' | 'likes' | 'match';
 type SortOrder = 'asc' | 'desc';
 
 const ITEMS_PER_PAGE = 15;
+
+// Fuse.js configuration for fuzzy search
+const FUSE_OPTIONS = {
+  threshold: 0.5, // Increased from 0.4 for better typo tolerance
+  ignoreLocation: true, // Search entire string, not just beginning
+  minMatchCharLength: 2, // Minimum characters to match
+  keys: [
+    { name: 'title', weight: 0.4 },
+    { name: 'domain', weight: 0.2 },
+    { name: 'summary', weight: 0.2 },
+    { name: 'businessGroup', weight: 0.1 },
+    { name: 'codePreference', weight: 0.1 }
+  ]
+};
 
 const IdeaTable: React.FC<IdeaTableProps> = ({
   data,
@@ -76,15 +91,17 @@ const IdeaTable: React.FC<IdeaTableProps> = ({
   const hasExternalSearch = !!onSearch && data.length > 0 && data[0].matchScore !== undefined && data[0].matchScore > 0;
   const isRestrictedView = !isGlobalFilterActive && !searchQuery.trim() && !hasExternalSearch;
 
-  // 1. Filter Logic (Local Search Fallback)
+  // 1. Filter Logic (Fuzzy Search with Fuse.js)
   const filteredData = useMemo(() => {
     if (onSearch) return localIdeas; // If external search managed by parent
     if (!searchQuery.trim()) return localIdeas;
-    const query = searchQuery.toLowerCase();
-    return localIdeas.filter(idea =>
-      idea.title.toLowerCase().includes(query) ||
-      idea.domain.toLowerCase().includes(query)
-    );
+
+    // Use Fuse.js for fuzzy search
+    const fuse = new Fuse(localIdeas, FUSE_OPTIONS);
+    const results = fuse.search(searchQuery);
+
+    // Extract items from Fuse results
+    return results.map(result => result.item);
   }, [localIdeas, searchQuery, onSearch]);
 
   // 2. Sort Logic
