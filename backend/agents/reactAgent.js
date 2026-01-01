@@ -54,16 +54,60 @@ export async function executeAgent(jobId, userQuery, pool, httpSessionId = null,
         // --- Step 2: Synthesize results with Llama (Ollama) ---
         console.log(`[Agent Job ${jobId}] Using Llama for synthesis`);
         const { reasoning: modelName } = getModelNames();
-        const messages = [
-            {
-                role: 'system',
-                content: `You are an AI assistant helping analyze innovation ideas. Cite ideas as IDEA-XXX and include URLs for external sources.`
-            },
-            {
-                role: 'user',
-                content: `Question: ${userQuery}\n\nInternal: ${internalData}\n\nExternal: ${externalData}\n\nSynthesize both sources.`
-            }
-        ];
+
+        // Detect if this is a document summarization request
+        const isDocumentSummarization = internalData.includes('DOCUMENT_CONTENT:');
+        const isDocumentUnavailable = internalData.includes('DOCUMENT_UNAVAILABLE:');
+
+        let messages;
+
+        if (isDocumentUnavailable) {
+            // Document summarization requested but no document uploaded
+            messages = [
+                {
+                    role: 'system',
+                    content: 'You are a helpful assistant. The user asked to summarize a document, but no document has been uploaded.'
+                },
+                {
+                    role: 'user',
+                    content: `Question: ${userQuery}\n\n${internalData}\n\nRespond clearly that no document is available to summarize.`
+                }
+            ];
+        } else if (isDocumentSummarization) {
+            // Document summarization mode - strict grounding
+            messages = [
+                {
+                    role: 'system',
+                    content: `You are an AI assistant that summarizes uploaded documents.
+
+CRITICAL RULES:
+1. Summarize ONLY the document content provided below
+2. Do NOT add external knowledge or information
+3. Do NOT explain what summarization is or mention AI tools
+4. Do NOT mention technical details about the system
+5. Focus on the actual content: main topics, key points, technologies, and outcomes mentioned in the document
+
+Your summary should be concise (2-4 paragraphs) and directly describe what the document contains.`
+                },
+                {
+                    role: 'user',
+                    content: `${internalData}\n\nProvide a clear, concise summary of the document content above.`
+                }
+            ];
+        } else {
+            // Normal Q&A mode
+            messages = [
+                {
+                    role: 'system',
+                    content: `You are an AI assistant helping analyze innovation ideas. Cite ideas as IDEA-XXX and include URLs for external sources.`
+                },
+                {
+                    role: 'user',
+                    content: `Question: ${userQuery}\n\nInternal: ${internalData}\n\nExternal: ${externalData}\n\nSynthesize both sources.`
+                }
+            ];
+        }
+
         const completion = await generateChatCompletion(messages, modelName, { temperature: 0.7, max_tokens: 1000 });
         const synthesizedAnswer = completion.message.content;
 
