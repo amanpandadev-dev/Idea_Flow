@@ -17,11 +17,121 @@ import { createConversation, loadConversation, updateConversation } from './conv
 import { extractFilters } from './filterExtractor.js';
 import { applyFilters, getEffectiveFilters } from './filterApplicator.js';
 import { hydrateResults } from './resultHydrator.js';
+import pg from 'pg';
+const { Pool } = pg;
+
+// Database pool for lexical search
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL
+});
 
 // Configuration
 const CHROMA_COLLECTION = 'ideas_semantic_index';
 const MAX_RESULTS = 300; // Increased from 100 to 300
 const DEFAULT_EMBEDDING_PROVIDER = process.env.EMBEDDING_PROVIDER || 'gemini';
+
+/**
+ * Detect if query is keyword-style (short, exact terms)
+ * @param {string} query - User query
+ * @returns {boolean} True if keyword-style query
+ */
+function isKeywordStyleQuery(query) {
+    const trimmed = query.trim();
+    const wordCount = trimmed.split(/\s+/).length;
+
+    return (
+        wordCount <= 2 ||
+        /^[a-zA-Z]+$/.test(trimmed) ||
+        trimmed === trimmed.toLowerCase()
+    );
+}
+
+/**
+ * Perform lexical search against ideas database
+ * @param {string} query - Search query
+ * @returns {Promise<Array>} Array of {ideaId, lexicalScore}
+ */
+async function lexicalSearch(query) {
+    const q = query.toLowerCase();
+
+    try {
+        const result = await pool.query(`
+            SELECT 
+                idea_id,
+                title,
+                summary,
+                theme,
+                benefits,
+                CASE
+                    WHEN LOWER(title) LIKE $1 THEN 1.0
+                    WHEN LOWER(summary) LIKE $1 THEN 0.6
+                    WHEN LOWER(theme) LIKE $1 THEN 0.4
+                    WHEN LOWER(benefits) LIKE $1 THEN 0.3
+                    ELSE 0
+                END as lexical_score
+            FROM ideas
+            WHERE 
+                LOWER(title) LIKE $1 OR
+                LOWER(summary) LIKE $1 OR
+                LOWER(theme) LIKE $1 OR
+                LOWER(benefits) LIKE $1
+            ORDER BY lexical_score DESC
+            LIMIT 100
+        `, [`%${q}%`]);
+
+        return result.rows.map(row => ({
+            ideaId: row.idea_id,
+            lexicalScore: parseFloat(row.lexical_score)
+        }));
+    } catch (error) {
+        console.error('[lexicalSearch] Error:', error);
+        return []; // Return empty array on error, don't break semantic search
+    }
+}
+
+/**
+ * Merge semantic and lexical search results
+ * @param {number[]} semanticIds - IDs from ChromaDB (ordered by relevance)
+ * @param {Array} lexicalResults - Array of {ideaId, lexicalScore}
+ * @returns {number[]} Merged and ranked idea IDs
+ */
+function mergeResults(semanticIds, lexicalResults) {
+    const merged = new Map();
+
+    // Add semantic results (normalized score based on rank)
+    semanticIds.forEach((id, index) => {
+        const semanticScore = 1.0 - (index / Math.max(semanticIds.length, 1));
+        merged.set(id, {
+            ideaId: id,
+            semanticScore,
+            lexicalScore: 0,
+            finalScore: semanticScore * 0.5
+        });
+    });
+
+    // Add/merge lexical results
+    lexicalResults.forEach(({ ideaId, lexicalScore }) => {
+        if (merged.has(ideaId)) {
+            // Idea exists in both - combine scores
+            const existing = merged.get(ideaId);
+            existing.lexicalScore = lexicalScore;
+            existing.finalScore = (existing.semanticScore * 0.5) + (lexicalScore * 0.5);
+        } else {
+            // Lexical-only match
+            merged.set(ideaId, {
+                ideaId,
+                semanticScore: 0,
+                lexicalScore,
+                finalScore: lexicalScore * 0.5
+            });
+        }
+    });
+
+    // Sort by final score and return IDs
+    return Array.from(merged.values())
+        .sort((a, b) => b.finalScore - a.finalScore)
+        .map(item => item.ideaId);
+}
 
 /**
  * Process a ProSearch chat message
@@ -68,28 +178,38 @@ export async function createNewConversation(query) {
         const embedding = await generateEmbeddingWithRetry(query, DEFAULT_EMBEDDING_PROVIDER);
         console.log('[createNewConversation] Embedding generated, dimension:', embedding.length);
 
-        // Step 2: Query ChromaDB using existing chroma.js client
+        // Step 2: Semantic search via ChromaDB (existing)
         console.log('[createNewConversation] Querying ChromaDB...');
         const chromaClient = getChromaClient();
         const collection = await chromaClient.getOrCreateCollection({ name: CHROMA_COLLECTION });
-        
+
         const searchResults = await collection.query({
             queryEmbeddings: [embedding],
             nResults: MAX_RESULTS
         });
 
         // Extract idea IDs from ChromaDB results
-        const baseResultIds = extractIdeaIds(searchResults);
-        console.log('[createNewConversation] Found', baseResultIds.length, 'results from ChromaDB');
+        const semanticIds = extractIdeaIds(searchResults);
+        console.log('[createNewConversation] Semantic results:', semanticIds.length);
 
-        // Step 3: Store conversation state using conversationStateManager
+        // Step 3: Lexical search (NEW - Hybrid Retrieval)
+        console.log('[createNewConversation] Running lexical search...');
+        const lexicalResults = await lexicalSearch(query);
+        console.log('[createNewConversation] Lexical results:', lexicalResults.length);
+
+        // Step 4: Merge results (NEW - Hybrid Retrieval)
+        console.log('[createNewConversation] Merging semantic + lexical results...');
+        const mergedIds = mergeResults(semanticIds, lexicalResults);
+        console.log('[createNewConversation] Merged results:', mergedIds.length, '(semantic:', semanticIds.length, ', lexical:', lexicalResults.length, ')');
+
+        // Step 5: Store conversation state using conversationStateManager
         console.log('[createNewConversation] Storing conversation state...');
-        const newConversationId = await createConversation(query, baseResultIds);
+        const newConversationId = await createConversation(query, mergedIds);
         console.log('[createNewConversation] Conversation created:', newConversationId);
 
-        // Step 4: Hydrate results using resultHydrator
+        // Step 6: Hydrate results using resultHydrator
         console.log('[createNewConversation] Hydrating results...');
-        const results = await hydrateResults(baseResultIds, baseResultIds);
+        const results = await hydrateResults(mergedIds, mergedIds);
 
         // Return ProSearchResponse
         return {
@@ -130,7 +250,7 @@ export async function processFollowUp(conversationId, message) {
         // Step 1: Load conversation state
         console.log('[processFollowUp] Loading conversation state...');
         const conversation = await loadConversation(conversationId);
-        
+
         if (!conversation) {
             throw new Error(`Conversation not found: ${conversationId}`);
         }
@@ -193,14 +313,14 @@ function extractIdeaIds(searchResults) {
 
     // ChromaDB returns results as [[id1, id2, ...]]
     const ids = searchResults.ids[0] || [];
-    
+
     // Extract numeric idea_id from metadata or parse from ID string
     const ideaIds = [];
     const metadatas = searchResults.metadatas?.[0] || [];
-    
+
     for (let i = 0; i < ids.length; i++) {
         const metadata = metadatas[i];
-        
+
         // Try to get idea_id from metadata first
         if (metadata && metadata.idea_id) {
             ideaIds.push(parseInt(metadata.idea_id));
