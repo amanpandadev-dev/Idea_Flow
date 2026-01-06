@@ -177,4 +177,86 @@ router.get('/health', asyncHandler(async (req, res) => {
     });
 }));
 
+/**
+ * POST /api/search/rehydrate
+ * 
+ * Rehydrate conversation results for chat history reload
+ * Ensures consistency with initial search by applying same ≥70% filter
+ * 
+ * Request Body:
+ * {
+ *   conversationId: string  // UUID of conversation to reload
+ * }
+ * 
+ * Response:
+ * {
+ *   results: IdeaCard[],     // Filtered results (≥70% matchScore)
+ *   filters: Object,         // Applied filters
+ *   baseQuery: string        // Original search query
+ * }
+ */
+router.post('/rehydrate', asyncHandler(async (req, res) => {
+    const { conversationId } = req.body;
+    
+    // Validate conversationId
+    if (!conversationId || typeof conversationId !== 'string') {
+        throw new AppError('conversationId is required', 400);
+    }
+    
+    if (!uuidValidate(conversationId)) {
+        throw new AppError('conversationId must be a valid UUID', 400);
+    }
+    
+    // Import required services
+    const { loadConversation } = await import('../services/conversationStateManager.js');
+    const { hydrateResults } = await import('../services/resultHydrator.js');
+    
+    // Load conversation state
+    const conversation = await loadConversation(conversationId);
+    
+    if (!conversation) {
+        throw new AppError('Conversation not found or expired', 404);
+    }
+    
+    // Get scores for current results from stored base scores
+    const currentScores = conversation.current_result_ids.map(id => {
+        const index = conversation.base_result_ids.indexOf(id);
+        return index !== -1 && conversation.base_result_scores?.[index] 
+            ? conversation.base_result_scores[index] 
+            : 0;
+    });
+    
+    logger.info('[ProSearch] Rehydrating conversation', {
+        conversationId,
+        totalResults: conversation.current_result_ids.length,
+        hasStoredScores: conversation.base_result_scores?.length > 0,
+        scoreRange: currentScores.length > 0 
+            ? `${Math.min(...currentScores)}-${Math.max(...currentScores)}%`
+            : 'none',
+        baseQuery: conversation.base_query
+    });
+    
+    // Rehydrate results with stored scores (already filtered to ≥70%)
+    const results = await hydrateResults(
+        conversation.current_result_ids,
+        conversation.base_result_ids,
+        { 
+            applyScoreFilter: true,
+            chromaScores: currentScores  // Use stored scores from database
+        }
+    );
+    
+    logger.info('[ProSearch] Rehydrated conversation', {
+        conversationId,
+        filteredResults: results.length,
+        baseQuery: conversation.base_query
+    });
+    
+    res.json({
+        results,
+        filters: conversation.applied_filters || {},
+        baseQuery: conversation.base_query
+    });
+}));
+
 export default router;

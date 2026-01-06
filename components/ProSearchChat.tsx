@@ -617,10 +617,35 @@ const ProSearchChat: React.FC<ProSearchChatProps> = ({
                             timestamp: msg.timestamp
                         };
 
-                        // Rehydrate results for assistant messages with resultIds
-                        if (msg.role === 'assistant' && msg.metadata?.resultIds && msg.metadata.resultIds.length > 0) {
+                        // Rehydrate results for assistant messages with conversationId
+                        if (msg.role === 'assistant' && msg.metadata?.conversationId) {
                             try {
-                                // Fetch full idea objects using resultIds
+                                // Use conversationId to get results with correct scores
+                                const rehydrateResponse = await fetch('/api/search/rehydrate', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ conversationId: msg.metadata.conversationId })
+                                });
+
+                                if (rehydrateResponse.ok) {
+                                    const rehydrateData = await rehydrateResponse.json();
+                                    message.metadata = {
+                                        results: rehydrateData.results,
+                                        searchMetadata: msg.metadata.searchMetadata,
+                                        resultsCount: rehydrateData.results.length
+                                    };
+                                    console.log(`[ProSearch] Rehydrated ${rehydrateData.results.length} results with scores for message ${msg.id}`);
+                                } else {
+                                    console.warn(`[ProSearch] Failed to rehydrate conversation ${msg.metadata.conversationId}`);
+                                }
+                            } catch (error) {
+                                console.error('[ProSearch] Failed to rehydrate results for message:', error);
+                            }
+                        }
+                        // Fallback: Rehydrate results for assistant messages with resultIds (old format)
+                        else if (msg.role === 'assistant' && msg.metadata?.resultIds && msg.metadata.resultIds.length > 0) {
+                            try {
+                                // Fetch full idea objects using resultIds (without scores)
                                 const rehydratedResults = await rehydrateIdeas(msg.metadata.resultIds);
                                 message.metadata = {
                                     results: rehydratedResults,
