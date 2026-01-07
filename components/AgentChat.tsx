@@ -735,13 +735,14 @@ const AgentChat: React.FC<AgentChatProps> = ({ onNavigateToIdea }) => {
                         {response.answer}
                     </div>
                 </div>
-                {(response.citations.internal.length > 0 || response.citations.external.length > 0) && (
-                    <div>
+                {response.citations && response.citations.internal?.length > 0 && (
+                    <div className="mb-4">
                         <h3 className="font-semibold text-slate-900 mb-2">Sources</h3>
                         <CitationDisplay citations={response.citations} onNavigateToIdea={handleNavigate} />
                     </div>
                 )}
-                {response.reasoning && (
+                {/* Only show reasoning if explicitly allowed (hide for rejected queries) */}
+                {response.reasoning && response.showReasoning !== false && response.status !== 'REJECTED' && (
                     <div className="border-t border-slate-200 pt-4">
                         <button onClick={() => setShowReasoning(!showReasoning)} className="flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-indigo-600 transition-colors">
                             {showReasoning ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
