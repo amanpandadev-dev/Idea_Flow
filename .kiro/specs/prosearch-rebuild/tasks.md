@@ -183,3 +183,196 @@
 
 - [ ] 10. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
+
+## Hybrid Search Enhancement Tasks
+
+- [ ] 11. Create full-text search database migration
+  - Create migration file add_fulltext_search_indexes.sql
+  - Add search_vector tsvector column to ideas table
+  - Create trigger function to auto-update search_vector on insert/update
+  - Create GIN index on search_vector for fast full-text search
+  - Populate search_vector for existing rows
+  - Weight title (A), summary (B), and code_preference (C) fields
+  - _Requirements: 14.1, 14.2, 14.3_
+
+- [ ] 12. Implement keyword extractor service
+- [ ] 12.1 Create keywordExtractor.js service
+  - Implement extractKeywords() function
+  - Remove stop words from query (show, me, the, in, from, etc.)
+  - Remove filter terms already extracted (technologies, business groups, years, themes)
+  - Normalize keywords to lowercase
+  - Remove duplicates and trim whitespace
+  - Filter out keywords shorter than 2 characters
+  - Limit to maximum 10 keywords
+  - Return array of extracted keywords
+  - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5_
+
+- [ ] 12.2 Write unit tests for keyword extraction
+  - Test stop word removal
+  - Test filter term removal
+  - Test normalization and deduplication
+  - Test edge cases (empty query, all stop words, no keywords)
+  - _Requirements: 13.1, 13.2, 13.3_
+
+- [ ] 13. Implement keyword search service
+- [ ] 13.1 Create keywordSearchService.js service
+  - Implement searchByKeywords() function
+  - Build PostgreSQL full-text search query using to_tsquery
+  - Search across search_vector column (title, summary, technologies)
+  - Use ts_rank for relevance scoring
+  - Apply OR logic for multiple keywords
+  - Limit results to configurable maximum (default 300)
+  - Return array of {idea_id, keyword_score}
+  - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5_
+
+- [ ] 13.2 Write unit tests for keyword search
+  - Test single keyword search
+  - Test multiple keyword search with OR logic
+  - Test fuzzy matching (stemming)
+  - Test empty keyword array handling
+  - Test result limiting
+  - _Requirements: 14.1, 14.2, 14.4_
+
+- [ ] 14. Implement hybrid search service
+- [ ] 14.1 Create hybridSearchService.js service
+  - Implement performHybridSearch() function
+  - Execute semantic and keyword searches in parallel using Promise.all()
+  - Implement mergeAndScoreResults() function
+  - Normalize semantic scores: 1 - (rank / total_results)
+  - Normalize keyword scores from PostgreSQL ts_rank
+  - Calculate final score: (0.6 × semantic_score) + (0.4 × keyword_score)
+  - Classify match type: "hybrid", "semantic", or "keyword"
+  - Deduplicate results appearing in both searches
+  - Sort by final_score descending
+  - Return HybridSearchResult with scores map
+  - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 12.1, 12.2, 12.3_
+
+- [ ] 14.2 Write unit tests for hybrid search
+  - Test score normalization for semantic results
+  - Test score normalization for keyword results
+  - Test weighted score calculation
+  - Test match type classification
+  - Test deduplication logic
+  - Test sorting by final score
+  - _Requirements: 11.2, 11.3, 11.4, 11.5, 11.6_
+
+- [ ] 15. Update ProSearch service for hybrid search
+- [ ] 15.1 Modify prosearchService.js createNewConversation()
+  - Extract keywords using keywordExtractor before search
+  - Call hybridSearchService.performHybridSearch() instead of direct ChromaDB query
+  - Store hybrid search results (with scores) in conversation state
+  - Pass scores to resultHydrator for matchType classification
+  - Update response to include matchType, semanticScore, keywordScore
+  - _Requirements: 1.1, 1.2, 1.5, 1.6, 11.1, 11.2, 13.1, 13.2, 13.3_
+
+- [ ] 15.2 Add parallel search timeout handling
+  - Wrap Promise.all() with timeout (5000ms default)
+  - Log warning if search exceeds 1000ms
+  - Handle partial failures gracefully
+  - _Requirements: 15.1, 15.5_
+
+- [ ] 16. Update result hydrator for match metadata
+- [ ] 16.1 Modify resultHydrator.js hydrateResults()
+  - Accept scores map parameter with matchType and score data
+  - Add matchType field to each IdeaCard
+  - Add semanticScore field to each IdeaCard
+  - Add keywordScore field to each IdeaCard
+  - Update matchScore to use final hybrid score
+  - Preserve all existing functionality
+  - _Requirements: 12.4, 12.5, 7.1_
+
+- [ ] 16.2 Write unit tests for updated result hydrator
+  - Test matchType field inclusion
+  - Test score field inclusion
+  - Test backward compatibility with non-hybrid results
+  - _Requirements: 12.4, 12.5_
+
+- [ ] 17. Update conversation state manager for hybrid data
+- [ ] 17.1 Modify conversationStateManager.js (if needed)
+  - Verify base_result_ids can store hybrid search results
+  - Ensure applied_filters JSONB structure supports hybrid metadata
+  - No schema changes should be needed
+  - _Requirements: 6.2, 6.3_
+
+- [ ] 18. Add configuration for hybrid search
+- [ ] 18.1 Create or update config/prosearch.js
+  - Add HYBRID_SEARCH configuration object
+  - Set SEMANTIC_WEIGHT: 0.6
+  - Set KEYWORD_WEIGHT: 0.4
+  - Set SEMANTIC_MAX_RESULTS: 300
+  - Set KEYWORD_MAX_RESULTS: 300
+  - Set PARALLEL_TIMEOUT: 5000
+  - Add KEYWORD_EXTRACTION configuration
+  - Define STOP_WORDS array
+  - Set MIN_KEYWORD_LENGTH: 2
+  - Set MAX_KEYWORDS: 10
+  - _Requirements: 11.2, 13.1, 15.3, 15.4_
+
+- [ ] 19. Write property-based tests for hybrid search
+- [ ] 19.1 Write property test for keyword extraction determinism
+  - **Property: Keyword extraction determinism**
+  - For any query, extracting keywords multiple times should return identical results
+  - **Validates: Requirements 13.1, 13.2, 13.3**
+
+- [ ] 19.2 Write property test for hybrid score bounds
+  - **Property: Hybrid score bounds**
+  - For any hybrid search result, final_score should be between 0 and 1
+  - **Validates: Requirements 11.2, 11.3, 11.4**
+
+- [ ] 19.3 Write property test for match type consistency
+  - **Property: Match type consistency**
+  - For any result, matchType should match presence in semantic/keyword results
+  - **Validates: Requirements 12.1, 12.2, 12.3**
+
+- [ ] 19.4 Write property test for score monotonicity
+  - **Property: Score monotonicity**
+  - For any result list, scores should be in descending order
+  - **Validates: Requirements 11.6**
+
+- [ ] 19.5 Write property test for deduplication correctness
+  - **Property: Deduplication correctness**
+  - For any merged results, no idea_id should appear more than once
+  - **Validates: Requirements 11.5**
+
+- [ ] 20. Integration testing for hybrid search
+- [ ] 20.1 Write integration test for end-to-end hybrid search
+  - Test new conversation with hybrid search
+  - Verify both semantic and keyword results appear
+  - Verify matchType classification
+  - Verify score fields present
+  - Test query with only keywords (no semantic matches)
+  - Test query with only semantic matches (no keywords)
+  - Test query with both types of matches
+  - _Requirements: 1.1, 1.2, 11.1, 11.2, 12.4, 12.5_
+
+- [ ] 20.2 Write integration test for parallel search performance
+  - Measure total hybrid search time
+  - Verify semantic and keyword searches run in parallel
+  - Verify total time < 800ms for typical queries
+  - _Requirements: 15.1, 15.2, 15.3_
+
+- [ ] 21. Update API response format
+- [ ] 21.1 Verify prosearchRoutes.js returns new fields
+  - Ensure matchType is included in response
+  - Ensure semanticScore is included in response
+  - Ensure keywordScore is included in response
+  - Verify backward compatibility (existing fields unchanged)
+  - _Requirements: 8.3, 12.4, 12.5_
+
+- [ ] 22. Run database migration
+- [ ] 22.1 Execute full-text search migration
+  - Run add_fulltext_search_indexes.sql migration
+  - Verify search_vector column created
+  - Verify GIN index created
+  - Verify trigger function working
+  - Test full-text search on sample data
+  - _Requirements: 14.1, 14.2_
+
+- [ ] 23. Final checkpoint - Hybrid search complete
+  - Run all tests (unit, property, integration)
+  - Verify hybrid search returns both keyword and semantic matches
+  - Test example: "KYC in Banking" returns both exact and related ideas
+  - Verify matchType classification working
+  - Verify scores are reasonable and ordered correctly
+  - Check performance benchmarks met
+  - Ensure all tests pass, ask the user if questions arise.

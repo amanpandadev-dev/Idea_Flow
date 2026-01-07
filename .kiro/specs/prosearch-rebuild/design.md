@@ -2,14 +2,15 @@
 
 ## Overview
 
-The ProSearch system is a conversational semantic search engine that enables users to discover and filter innovation ideas through natural language queries. The architecture is built on three core principles:
+The ProSearch system is a conversational hybrid search engine that enables users to discover and filter innovation ideas through natural language queries. The architecture is built on four core principles:
 
-1. **Single Vector Search**: Semantic search via ChromaDB occurs exactly once per conversation
-2. **Deterministic Filtering**: All follow-up interactions apply rule-based filters without AI guessing
-3. **State Persistence**: Conversation state is stored in PostgreSQL for instant restoration and stability
+1. **Hybrid Search**: Initial search combines semantic similarity (ChromaDB) with keyword matching (PostgreSQL) using weighted scoring
+2. **Single Search Per Conversation**: Hybrid search occurs exactly once per conversation
+3. **Deterministic Filtering**: All follow-up interactions apply rule-based filters without re-searching
+4. **State Persistence**: Conversation state is stored in PostgreSQL for instant restoration and stability
 
 The system operates in two distinct phases:
-- **Phase 1 (Initial Search)**: User query → Embedding → ChromaDB query → Store base results
+- **Phase 1 (Initial Search)**: User query → Extract keywords → Parallel (Semantic search + Keyword search) → Merge & score → Store base results
 - **Phase 2 (Refinement)**: User message → Extract filters → Apply to base results → Update state
 
 ## Architecture
@@ -51,19 +52,34 @@ The system operates in two distinct phases:
 
 ### Data Flow
 
-**New Conversation Flow:**
+**New Conversation Flow (Hybrid Search):**
 ```
 User Query
     ↓
-Generate Embedding (embeddingService.js)
+Extract Keywords (keywordExtractor.js)
     ↓
-Query ChromaDB (chroma.js)
-    ↓
+    ├─────────────────────┬─────────────────────┐
+    ▼                     ▼                     ▼
+Generate Embedding   Keyword Search      (Parallel)
+(embeddingService)   (PostgreSQL FTS)
+    ↓                     ↓
+Query ChromaDB       Get keyword matches
+(Semantic)           with ts_rank scores
+    ↓                     ↓
+    └─────────────────────┴─────────────────────┘
+                          ↓
+            Merge & Score Results
+         (hybridSearchService.js)
+         - Normalize scores (0-1)
+         - Apply weights: 0.6×semantic + 0.4×keyword
+         - Deduplicate & classify matchType
+         - Sort by final_score
+                          ↓
 Store: base_query, base_result_ids, current_result_ids
-    ↓
-Hydrate Results from PostgreSQL
-    ↓
-Return: {conversationId, results, appliedFilters, isNewBaseSearch: true}
+                          ↓
+        Hydrate Results from PostgreSQL
+                          ↓
+Return: {conversationId, results (with matchType), appliedFilters, isNewBaseSearch: true}
 ```
 
 **Follow-up Message Flow:**
@@ -289,6 +305,128 @@ WHERE idea_id = ANY($baseResultIds)
 ORDER BY array_position($baseResultIds, idea_id)
 ```
 
+### 6. Keyword Extractor (`backend/services/keywordExtractor.js`)
+
+**Responsibility**: Extract meaningful keywords from user queries for keyword search
+
+**Interface**:
+```javascript
+/**
+ * Extract keywords from user query
+ * @param {string} query - User's search query
+ * @param {object} extractedFilters - Filters already extracted from query
+ * @returns {string[]} Array of keywords for search
+ */
+function extractKeywords(query, extractedFilters)
+```
+
+**Extraction Rules**:
+
+1. **Stop Word Removal**:
+   - Remove common words: "show", "me", "the", "a", "an", "in", "from", "with", "for", "to", "of", "and", "or"
+   - Preserve technical terms and acronyms
+
+2. **Filter Term Removal**:
+   - Remove terms already identified as filters (technologies, business groups, themes, years)
+   - Avoid redundant searching
+
+3. **Normalization**:
+   - Convert to lowercase
+   - Trim whitespace
+   - Remove duplicates
+
+**Example Extractions**:
+```javascript
+// Input: "show me KYC projects in Banking from 2024"
+// Filters: {businessGroups: ["Banking"], years: [2024]}
+// Output: ["kyc", "projects"]
+
+// Input: "AI for cybersecurity"
+// Filters: {}
+// Output: ["ai", "cybersecurity"]
+
+// Input: "Kubernetes deployment automation"
+// Filters: {technologies: ["Kubernetes"]}
+// Output: ["deployment", "automation"]
+```
+
+### 7. Hybrid Search Service (`backend/services/hybridSearchService.js`)
+
+**Responsibility**: Orchestrate parallel semantic and keyword searches, merge and score results
+
+**Interface**:
+```javascript
+/**
+ * Perform hybrid search combining semantic and keyword matching
+ * @param {string} query - User's search query
+ * @param {string[]} keywords - Extracted keywords for search
+ * @returns {Promise<HybridSearchResult>}
+ */
+async function performHybridSearch(query, keywords)
+
+/**
+ * Merge and score results from semantic and keyword searches
+ * @param {SemanticResult[]} semanticResults - Results from ChromaDB
+ * @param {KeywordResult[]} keywordResults - Results from PostgreSQL
+ * @returns {MergedResult[]} Deduplicated and scored results
+ */
+function mergeAndScoreResults(semanticResults, keywordResults)
+```
+
+**Scoring Algorithm**:
+```javascript
+// Normalize semantic scores (based on rank position)
+semantic_score = 1 - (rank / total_results)
+
+// Normalize keyword scores (PostgreSQL ts_rank already 0-1)
+keyword_score = ts_rank_normalized
+
+// Calculate final score
+final_score = (0.6 × semantic_score) + (0.4 × keyword_score)
+
+// Classify match type
+if (in_semantic && in_keyword) matchType = "hybrid"
+else if (in_semantic) matchType = "semantic"
+else matchType = "keyword"
+```
+
+### 8. Keyword Search Service (`backend/services/keywordSearchService.js`)
+
+**Responsibility**: Perform PostgreSQL full-text search with fuzzy matching
+
+**Interface**:
+```javascript
+/**
+ * Search ideas using PostgreSQL full-text search
+ * @param {string[]} keywords - Keywords to search for
+ * @param {number} limit - Maximum results to return
+ * @returns {Promise<KeywordSearchResult[]>}
+ */
+async function searchByKeywords(keywords, limit)
+```
+
+**Search Implementation**:
+```sql
+-- PostgreSQL full-text search with fuzzy matching
+SELECT 
+  idea_id,
+  ts_rank(
+    to_tsvector('english', title || ' ' || summary || ' ' || COALESCE(code_preference, '')),
+    to_tsquery('english', $keywords)
+  ) as keyword_score
+FROM ideas
+WHERE to_tsvector('english', title || ' ' || summary || ' ' || COALESCE(code_preference, ''))
+  @@ to_tsquery('english', $keywords)
+ORDER BY keyword_score DESC
+LIMIT $limit;
+```
+
+**Features**:
+- Stemming: "banking" matches "bank", "banks", "banker"
+- OR logic: Multiple keywords use OR (any match counts)
+- Field weighting: Can boost title matches over summary matches
+- Fuzzy matching: Handles typos and variations
+
 ## Data Models
 
 ### PostgreSQL Schema
@@ -343,7 +481,10 @@ interface IdeaCard {
   business_group: string;
   technologies: string[];
   year: number;
-  matchScore: number;  // 0-1, derived from search rank
+  matchScore: number;      // 0-1, final hybrid score
+  matchType: "hybrid" | "semantic" | "keyword";  // How idea matched query
+  semanticScore?: number;  // 0-1, semantic similarity score
+  keywordScore?: number;   // 0-1, keyword match score
 }
 
 interface AppliedFilters {
@@ -369,6 +510,29 @@ interface FilterExtractionResult {
   themes: string[];
   years: number[];
   mode: "ADD" | "REMOVE" | "REPLACE";
+}
+
+interface HybridSearchResult {
+  ideaIds: number[];           // Ordered by final_score
+  scores: Map<number, Score>;  // idea_id → Score object
+}
+
+interface Score {
+  finalScore: number;          // 0-1, weighted combination
+  semanticScore: number;       // 0-1, from ChromaDB rank
+  keywordScore: number;        // 0-1, from PostgreSQL ts_rank
+  matchType: "hybrid" | "semantic" | "keyword";
+}
+
+interface KeywordSearchResult {
+  idea_id: number;
+  keyword_score: number;       // PostgreSQL ts_rank score
+}
+
+interface SemanticSearchResult {
+  idea_id: number;
+  distance: number;            // ChromaDB distance (lower = better)
+  rank: number;                // Position in results (0-indexed)
 }
 ```
 
@@ -712,7 +876,10 @@ VALUES
 ### Performance Testing
 
 **Benchmarks**:
-- Initial search: < 500ms (including embedding + ChromaDB query)
+- Initial hybrid search: < 800ms (including embedding + ChromaDB + PostgreSQL + merge)
+- Semantic search component: < 400ms
+- Keyword search component: < 200ms
+- Result merging & scoring: < 100ms
 - Follow-up filter: < 100ms (database query only)
 - Conversation retrieval: < 50ms (database query only)
 - Result hydration (100 ideas): < 200ms
@@ -721,6 +888,7 @@ VALUES
 - 100 concurrent conversations
 - 1000 total conversations in database
 - 10,000 ideas in database
+- Full-text search on 10,000 documents
 
 ### Test Execution
 
@@ -775,15 +943,22 @@ backend/
 │   └── prosearchRoutes.js          # API endpoint
 ├── services/
 │   ├── prosearchService.js         # Main orchestration
+│   ├── hybridSearchService.js      # NEW: Hybrid search coordination
+│   ├── keywordSearchService.js     # NEW: PostgreSQL full-text search
+│   ├── keywordExtractor.js         # NEW: Keyword extraction
 │   ├── filterExtractor.js          # Filter parsing
 │   ├── filterApplicator.js         # Filter application
 │   ├── conversationStateManager.js # DB persistence
 │   └── resultHydrator.js           # Result fetching
 ├── migrations/
-│   └── create_prosearch_conversations.sql
+│   ├── create_prosearch_conversations.sql
+│   └── add_fulltext_search_indexes.sql  # NEW: Full-text search setup
 └── tests/
     └── prosearch/
         ├── unit/
+        │   ├── keywordExtractor.test.js      # NEW
+        │   ├── keywordSearchService.test.js  # NEW
+        │   └── hybridSearchService.test.js   # NEW
         ├── property/
         └── integration/
 ```
@@ -794,10 +969,32 @@ backend/
 // config/prosearch.js
 export const PROSEARCH_CONFIG = {
   CHROMA_COLLECTION: 'ideas_semantic_index',
-  MAX_RESULTS: 100,
+  MAX_RESULTS: 300,
   DEFAULT_EMBEDDING_PROVIDER: 'gemini',
   FILTER_MODES: ['ADD', 'REMOVE', 'REPLACE'],
-  VALID_YEAR_RANGE: [2021, 2025]
+  VALID_YEAR_RANGE: [2021, 2025],
+  
+  // Hybrid search configuration
+  HYBRID_SEARCH: {
+    SEMANTIC_WEIGHT: 0.6,        // Weight for semantic similarity score
+    KEYWORD_WEIGHT: 0.4,         // Weight for keyword match score
+    SEMANTIC_MAX_RESULTS: 300,   // Max results from ChromaDB
+    KEYWORD_MAX_RESULTS: 300,    // Max results from PostgreSQL
+    PARALLEL_TIMEOUT: 5000,      // Timeout for parallel searches (ms)
+  },
+  
+  // Keyword extraction configuration
+  KEYWORD_EXTRACTION: {
+    STOP_WORDS: [
+      'show', 'me', 'the', 'a', 'an', 'in', 'from', 'with', 'for', 
+      'to', 'of', 'and', 'or', 'is', 'are', 'was', 'were', 'be',
+      'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
+      'could', 'should', 'may', 'might', 'can', 'about', 'into',
+      'through', 'during', 'before', 'after', 'above', 'below'
+    ],
+    MIN_KEYWORD_LENGTH: 2,       // Minimum characters for a keyword
+    MAX_KEYWORDS: 10             // Maximum keywords to extract
+  }
 };
 ```
 
@@ -812,32 +1009,75 @@ export const PROSEARCH_CONFIG = {
 ### Performance Optimizations
 
 1. **Database Indexes**: Index on conversation_id, created_at, updated_at
-2. **Connection Pooling**: Use pg pool for database connections
-3. **Result Caching**: Cache hydrated results for frequently accessed conversations
-4. **Batch Hydration**: Fetch all ideas in single query using WHERE idea_id = ANY($1)
-5. **Lazy Loading**: Only hydrate results when needed, not on every state update
+2. **Full-Text Search Indexes**: GIN indexes on tsvector columns for fast keyword search
+3. **Connection Pooling**: Use pg pool for database connections
+4. **Parallel Execution**: Run semantic and keyword searches simultaneously
+5. **Result Caching**: Cache hydrated results for frequently accessed conversations
+6. **Batch Hydration**: Fetch all ideas in single query using WHERE idea_id = ANY($1)
+7. **Lazy Loading**: Only hydrate results when needed, not on every state update
+8. **Score Caching**: Store computed scores in conversation state to avoid recalculation
 
 ### Migration Strategy
 
 1. Create new `prosearch_conversations` table
-2. Keep existing `prosearch_contexts` table for backward compatibility
-3. Implement new routes alongside old routes
-4. Gradually migrate frontend to use new endpoint
-5. Deprecate old endpoint after migration complete
+2. Add full-text search indexes to `ideas` table
+3. Keep existing `prosearch_contexts` table for backward compatibility
+4. Implement new routes alongside old routes
+5. Gradually migrate frontend to use new endpoint
+6. Deprecate old endpoint after migration complete
+
+**Full-Text Search Migration**:
+```sql
+-- Add tsvector column for full-text search
+ALTER TABLE ideas ADD COLUMN IF NOT EXISTS search_vector tsvector;
+
+-- Create function to update search vector
+CREATE OR REPLACE FUNCTION ideas_search_vector_update() RETURNS trigger AS $$
+BEGIN
+  NEW.search_vector := 
+    setweight(to_tsvector('english', COALESCE(NEW.title, '')), 'A') ||
+    setweight(to_tsvector('english', COALESCE(NEW.summary, '')), 'B') ||
+    setweight(to_tsvector('english', COALESCE(NEW.code_preference, '')), 'C');
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create trigger to auto-update search vector
+CREATE TRIGGER ideas_search_vector_trigger
+BEFORE INSERT OR UPDATE ON ideas
+FOR EACH ROW EXECUTE FUNCTION ideas_search_vector_update();
+
+-- Create GIN index for fast full-text search
+CREATE INDEX IF NOT EXISTS ideas_search_vector_idx ON ideas USING GIN(search_vector);
+
+-- Populate existing rows
+UPDATE ideas SET search_vector = 
+  setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
+  setweight(to_tsvector('english', COALESCE(summary, '')), 'B') ||
+  setweight(to_tsvector('english', COALESCE(code_preference, '')), 'C');
+```
 
 ### Monitoring and Observability
 
 **Metrics to Track**:
 - Conversation creation rate
-- Average filter application time
+- Average hybrid search time (total and per component)
+- Semantic search latency
+- Keyword search latency
+- Result merge & scoring time
 - ChromaDB query latency
 - Database query latency
 - Error rates by type
 - Result set sizes (base vs current)
+- Match type distribution (hybrid vs semantic vs keyword)
+- Keyword extraction success rate
 
 **Logging Requirements**:
 - All API requests with request ID
 - Conversation lifecycle events
+- Hybrid search component timings
+- Extracted keywords for each search
+- Match type distribution in results
 - Filter extraction results
 - Query execution times
 - Errors with full context

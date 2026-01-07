@@ -10,26 +10,32 @@ This document specifies the requirements for rebuilding the ProSearch backend as
 - **ChromaDB**: The vector database used for semantic similarity search
 - **PostgreSQL**: The relational database used for conversation state persistence and idea storage
 - **Conversation**: A stateful search session identified by a unique conversation_id
-- **Base Search**: The initial semantic search performed when a conversation begins
-- **Base Result Set**: The complete set of idea IDs returned from the initial semantic search
+- **Base Search**: The initial hybrid search performed when a conversation begins, combining semantic and keyword matching
+- **Base Result Set**: The complete set of idea IDs returned from the initial hybrid search
 - **Current Result Set**: The filtered subset of the base result set after applying user filters
 - **Filter**: A deterministic criterion (technology, business group, theme, year) used to narrow search results
 - **Idea Card**: A structured representation of an innovation idea with metadata
 - **Filter Extractor**: A deterministic, rule-based service that parses user messages to extract filter criteria
+- **Hybrid Search**: A search strategy that combines semantic similarity (vector search) with keyword matching (full-text search) using weighted scoring
+- **Semantic Score**: A normalized score (0-1) representing vector similarity from ChromaDB
+- **Keyword Score**: A normalized score (0-1) representing keyword match relevance from PostgreSQL full-text search
+- **Match Type**: Classification of how an idea matched the query (hybrid, semantic-only, keyword-only)
+- **Keyword Extractor**: A service that extracts meaningful content words from user queries for keyword matching
 
 ## Requirements
 
 ### Requirement 1
 
-**User Story:** As a user, I want to initiate a semantic search conversation with a natural language query, so that I can discover relevant innovation ideas based on semantic similarity.
+**User Story:** As a user, I want to initiate a hybrid search conversation with a natural language query, so that I can discover relevant innovation ideas based on both semantic similarity and keyword matching.
 
 #### Acceptance Criteria
 
-1. WHEN a user sends a message with conversationId null THEN the ProSearch System SHALL perform exactly one semantic search via ChromaDB
-2. WHEN the initial semantic search completes THEN the ProSearch System SHALL store the base query text and base result IDs in PostgreSQL
-3. WHEN the initial search completes THEN the ProSearch System SHALL return a new conversation_id to the client
-4. WHEN the initial search completes THEN the ProSearch System SHALL return the complete set of matching ideas with metadata
-5. WHEN embedding the user query THEN the ProSearch System SHALL use the same embedding model configured for ChromaDB indexing
+1. WHEN a user sends a message with conversationId null THEN the ProSearch System SHALL perform exactly one hybrid search combining semantic and keyword matching
+2. WHEN performing hybrid search THEN the ProSearch System SHALL execute semantic search via ChromaDB and keyword search via PostgreSQL in parallel
+3. WHEN the initial hybrid search completes THEN the ProSearch System SHALL store the base query text and base result IDs in PostgreSQL
+4. WHEN the initial search completes THEN the ProSearch System SHALL return a new conversation_id to the client
+5. WHEN the initial search completes THEN the ProSearch System SHALL return the complete set of matching ideas with metadata including matchType
+6. WHEN embedding the user query THEN the ProSearch System SHALL use the same embedding model configured for ChromaDB indexing
 
 ### Requirement 2
 
@@ -141,3 +147,64 @@ This document specifies the requirements for rebuilding the ProSearch backend as
 3. WHEN retrieving conversation state THEN the ProSearch System SHALL use conversation_id as the sole identifier
 4. WHEN creating a new conversation THEN the ProSearch System SHALL generate a unique UUID
 5. WHEN conversations are concurrent THEN the ProSearch System SHALL maintain separate state for each conversation_id
+
+### Requirement 11
+
+**User Story:** As a user, I want search results that combine both keyword matching and semantic similarity, so that I can find ideas that contain specific terms as well as conceptually related ideas.
+
+#### Acceptance Criteria
+
+1. WHEN performing a hybrid search THEN the ProSearch System SHALL combine semantic scores and keyword scores using weighted formula
+2. WHEN calculating hybrid scores THEN the ProSearch System SHALL use the formula: final_score = (0.6 × semantic_score) + (0.4 × keyword_score)
+3. WHEN semantic search returns results THEN the ProSearch System SHALL normalize scores to 0-1 range based on ranking position
+4. WHEN keyword search returns results THEN the ProSearch System SHALL normalize PostgreSQL full-text search scores to 0-1 range
+5. WHEN merging results THEN the ProSearch System SHALL deduplicate ideas appearing in both result sets and use the combined score
+6. WHEN ordering final results THEN the ProSearch System SHALL sort by final_score in descending order
+
+### Requirement 12
+
+**User Story:** As a user, I want to know whether each result matched my query through keywords, semantic similarity, or both, so that I can understand the relevance of each idea.
+
+#### Acceptance Criteria
+
+1. WHEN an idea appears in both semantic and keyword results THEN the ProSearch System SHALL classify it as matchType "hybrid"
+2. WHEN an idea appears only in semantic results THEN the ProSearch System SHALL classify it as matchType "semantic"
+3. WHEN an idea appears only in keyword results THEN the ProSearch System SHALL classify it as matchType "keyword"
+4. WHEN returning results THEN the ProSearch System SHALL include matchType field for each idea
+5. WHEN returning results THEN the ProSearch System SHALL include semanticScore and keywordScore fields for transparency
+
+### Requirement 13
+
+**User Story:** As a developer, I want keywords automatically extracted from user queries, so that keyword search focuses on meaningful content terms without noise.
+
+#### Acceptance Criteria
+
+1. WHEN extracting keywords from a query THEN the Keyword Extractor SHALL remove common stop words
+2. WHEN extracting keywords THEN the Keyword Extractor SHALL remove terms already identified as filters
+3. WHEN extracting keywords THEN the Keyword Extractor SHALL preserve meaningful content words and technical terms
+4. WHEN no keywords remain after extraction THEN the Keyword Extractor SHALL return an empty array
+5. WHEN keywords are extracted THEN the Keyword Extractor SHALL return them as an array of lowercase strings
+
+### Requirement 14
+
+**User Story:** As a user, I want keyword matching to be flexible and forgiving, so that variations of terms still produce relevant matches.
+
+#### Acceptance Criteria
+
+1. WHEN performing keyword search THEN the ProSearch System SHALL use PostgreSQL full-text search with fuzzy matching
+2. WHEN matching keywords THEN the ProSearch System SHALL apply stemming to match word variations
+3. WHEN searching for keywords THEN the ProSearch System SHALL search across title, summary, and technologies fields
+4. WHEN multiple keywords are provided THEN the ProSearch System SHALL use OR logic for keyword matching
+5. WHEN ranking keyword matches THEN the ProSearch System SHALL use PostgreSQL ts_rank for relevance scoring
+
+### Requirement 15
+
+**User Story:** As a system architect, I want hybrid search to execute efficiently, so that the system remains performant under load.
+
+#### Acceptance Criteria
+
+1. WHEN performing hybrid search THEN the ProSearch System SHALL execute semantic and keyword searches in parallel
+2. WHEN keyword search completes THEN the ProSearch System SHALL limit results to a maximum of 300 matches
+3. WHEN semantic search completes THEN the ProSearch System SHALL limit results to a maximum of 300 matches
+4. WHEN merging results THEN the ProSearch System SHALL complete deduplication and scoring within 100ms
+5. WHEN total hybrid search time exceeds 1000ms THEN the ProSearch System SHALL log a performance warning
