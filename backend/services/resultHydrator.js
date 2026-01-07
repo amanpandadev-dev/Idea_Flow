@@ -16,9 +16,12 @@ const pool = new Pool({
  * Hydrate idea results from PostgreSQL
  * @param {number[]} ideaIds - Array of idea IDs to fetch
  * @param {number[]} baseResultIds - Original search order for scoring (optional)
+ * @param {Object} options - Optional configuration
+ * @param {boolean} options.applyScoreFilter - Whether to filter results by ≥70% matchScore (default: true)
+ * @param {number[]} options.chromaScores - ChromaDB similarity scores (0-1) for each idea (optional)
  * @returns {Promise<Object[]>} Array of IdeaCard objects
  */
-export async function hydrateResults(ideaIds, baseResultIds = null) {
+export async function hydrateResults(ideaIds, baseResultIds = null, options = {}) {
     // Validate inputs
     if (!Array.isArray(ideaIds)) {
         throw new Error('ideaIds must be an array');
@@ -31,6 +34,17 @@ export async function hydrateResults(ideaIds, baseResultIds = null) {
 
     // Use ideaIds as baseResultIds if not provided
     const scoringOrder = baseResultIds || ideaIds;
+    
+    // Default: apply score filter
+    const applyScoreFilter = options.applyScoreFilter !== false;
+    
+    // Check if we have ChromaDB scores
+    const chromaScores = options.chromaScores || null;
+    const useChromaScores = chromaScores && chromaScores.length === ideaIds.length;
+    
+    console.log(`[hydrateResults] Processing ${ideaIds.length} ideas`);
+    console.log(`[hydrateResults] ChromaScores provided: ${chromaScores ? chromaScores.length : 0}`);
+    console.log(`[hydrateResults] Using ChromaScores: ${useChromaScores}`);
 
     try {
         // Batch fetch ideas using WHERE idea_id = ANY($1) with ALL columns
@@ -78,7 +92,7 @@ export async function hydrateResults(ideaIds, baseResultIds = null) {
 
         // Hydrate results preserving order from ideaIds
         const hydratedResults = ideaIds
-            .map(ideaId => {
+            .map((ideaId, index) => {
                 const row = ideasMap.get(ideaId);
                 if (!row) {
                     return null; // Skip missing ideas
@@ -90,8 +104,20 @@ export async function hydrateResults(ideaIds, baseResultIds = null) {
                 // Extract year from created_at timestamp
                 const year = extractYear(row.created_at);
 
-                // Calculate matchScore based on position in base_result_ids
-                const matchScore = calculateMatchScore(ideaId, scoringOrder);
+                // Calculate matchScore based on ChromaDB similarity OR position
+                let matchScore;
+                if (useChromaScores) {
+                    // Use pre-normalized scores directly (already 0-100)
+                    matchScore = chromaScores[index];
+                } else {
+                    // Fallback to position-based scoring
+                    matchScore = calculateMatchScore(ideaId, scoringOrder);
+                }
+                
+                // Log first few scores for debugging
+                if (index < 3) {
+                    console.log(`[hydrateResults] Idea ${ideaId}: matchScore=${matchScore}% (useChromaScores=${useChromaScores})`);
+                }
 
                 // Return complete IdeaCard object with all required fields from database
                 return {
@@ -142,6 +168,16 @@ export async function hydrateResults(ideaIds, baseResultIds = null) {
                 };
             })
             .filter(idea => idea !== null); // Remove null entries for missing ideas
+
+        // Apply ≥70% matchScore filter if enabled
+        if (applyScoreFilter) {
+            const filteredResults = hydratedResults.filter(idea => idea.matchScore >= 70);
+            
+            console.log(`[ProSearch] >=70% results count: ${filteredResults.length}`);
+            console.log(`[hydrateResults] Filtered ${hydratedResults.length} → ${filteredResults.length} results (≥70% matchScore)`);
+            
+            return filteredResults;
+        }
 
         return hydratedResults;
     } catch (error) {

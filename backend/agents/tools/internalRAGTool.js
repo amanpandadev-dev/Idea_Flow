@@ -59,6 +59,72 @@ Input should be a search query describing what you're looking for.`
     }
 
     /**
+     * Detect if query is asking for document summarization
+     * @param {string} query - User query
+     * @returns {boolean} True if summarization intent detected
+     */
+    detectSummarizationIntent(query) {
+        const keywords = [
+            'summarize',
+            'summary',
+            'overview',
+            'brief',
+            'gist',
+            'what is this document',
+            'what does this document',
+            'what is the document about',
+            'tell me about the document',
+            'explain the document'
+        ];
+        const lowerQuery = query.toLowerCase();
+        return keywords.some(kw => lowerQuery.includes(kw));
+    }
+
+    /**
+     * Retrieve all document chunks for summarization
+     * @returns {Promise<string|null>} Concatenated document content or null
+     */
+    async retrieveDocumentChunks() {
+        if (!this.userId) {
+            console.log('[InternalRAG] No user ID - cannot retrieve document');
+            return null;
+        }
+
+        const collectionId = `user_${this.userId}`;
+
+        try {
+            // Generate a generic embedding to retrieve chunks
+            const queryEmbedding = await generateEmbedding('document', this.embeddingProvider);
+
+            if (!queryEmbedding || queryEmbedding.length === 0) {
+                console.warn('[InternalRAG] Failed to generate embedding for document retrieval');
+                return null;
+            }
+
+            // Retrieve top 15 chunks (should cover most documents)
+            const results = await queryCollection(collectionId, queryEmbedding, 15);
+
+            if (!results || !results.documents || results.documents.length === 0) {
+                console.log('[InternalRAG] No document chunks found');
+                return null;
+            }
+
+            console.log(`[InternalRAG] Retrieved ${results.documents.length} document chunks for summarization`);
+
+            // Concatenate all chunks with separators
+            const documentContent = results.documents
+                .map((chunk, idx) => `[Chunk ${idx + 1}]\n${chunk}`)
+                .join('\n\n---\n\n');
+
+            return documentContent;
+
+        } catch (error) {
+            console.warn('[InternalRAG] Failed to retrieve document chunks:', error.message);
+            return null;
+        }
+    }
+
+    /**
      * Execute internal search combining DB and ephemeral context
      * @param {string} query - Search query
      * @returns {Promise<string>} Search results as formatted string
@@ -67,7 +133,32 @@ Input should be a search query describing what you're looking for.`
         try {
             console.log(`🔍 Internal RAG search: "${query}"`);
 
-            // Check for ephemeral context
+            // SUMMARIZATION MODE: Detect and handle document summarization requests
+            if (this.detectSummarizationIntent(query)) {
+                console.log('[InternalRAG] 📄 Summarization intent detected');
+
+                const documentContent = await this.retrieveDocumentChunks();
+
+                if (!documentContent) {
+                    return 'DOCUMENT_UNAVAILABLE: No document has been uploaded. Please upload a document first to summarize it.';
+                }
+
+                // Return document content with strict instructions
+                return `DOCUMENT_CONTENT:
+The user has uploaded a document. Below is the complete content:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${documentContent}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+INSTRUCTION: Provide a concise summary of the above document content ONLY. Do not add external information or explanations about summarization. Focus on:
+- What the document is about
+- Key themes and topics
+- Main points or outcomes
+- Any specific technologies, processes, or domains mentioned`;
+            }
+
+            // NORMAL MODE: Check for ephemeral context
             const ephemeralResults = await this.searchEphemeralContext(query);
 
             // Search PostgreSQL

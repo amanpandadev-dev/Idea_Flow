@@ -17,7 +17,7 @@ import agentRoutes from './backend/routes/agentRoutes.js';
 import semanticSearchRoutes from './backend/routes/semanticSearchRoutes.js';
 import advancedSearchRoutes from './backend/routes/advancedSearchRoutes.js';
 import conversationRoutes from './backend/routes/conversationRoutes.js';
-import prosearchRoutes from './backend/routes/prosearchRoutes.js';
+import proSearchRoutes from './backend/routes/proSearchRoutes.js';
 import chatHistoryRoutes from './backend/routes/chatHistoryRoutes.js';
 const { Pool } = pg;
 const app = express();
@@ -247,10 +247,99 @@ app.get('/api/ideas/:ideaId/market-validation/download', async (req, res) => {
 app.use('/api/context', contextRoutes);
 app.use('/api/agent', agentRoutes); // Auth will be added after middleware definition
 
-app.use('/api/prosearch', prosearchRoutes); // ProSearch with ChromaDB
+app.use('/api/prosearch', proSearchRoutes); // ProSearch with ChromaDB
 app.use('/api/chat', chatHistoryRoutes); // Chat history for Pro Search
 app.use('/api/ideas', advancedSearchRoutes); // Advanced search with NLP
 app.use('/api/ideas', semanticSearchRoutes); // Legacy semantic search
+
+// ProSearch Rehydrate Endpoint (for chat history reload)
+app.post('/api/search/rehydrate', async (req, res) => {
+  try {
+    const { conversationId } = req.body;
+    
+    // Validate conversationId
+    if (!conversationId || typeof conversationId !== 'string') {
+      return res.status(400).json({ error: 'conversationId is required' });
+    }
+    
+    // Import required services dynamically
+    const { loadConversation } = await import('./backend/services/conversationStateManager.js');
+    const { hydrateResults } = await import('./backend/services/resultHydrator.js');
+    
+    // Load conversation state
+    const conversation = await loadConversation(conversationId);
+    
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found or expired' });
+    }
+    
+    // Get scores for current results from stored base scores
+    const currentScores = conversation.current_result_ids.map(id => {
+      const index = conversation.base_result_ids.indexOf(id);
+      return index !== -1 && conversation.base_result_scores?.[index] 
+        ? conversation.base_result_scores[index] 
+        : 0;
+    });
+    
+    // Check if scores are from old algorithm (range 0-99 with many below 70)
+    const hasOldScores = currentScores.length > 0 && Math.max(...currentScores) <= 99 && currentScores.filter(s => s < 70).length > currentScores.length * 0.5;
+    
+    console.log(`[ProSearch Rehydrate] Conversation ${conversationId}:`);
+    console.log(`  - Current result IDs: ${conversation.current_result_ids.length}`);
+    console.log(`  - Base result IDs: ${conversation.base_result_ids.length}`);
+    console.log(`  - Stored scores: ${conversation.base_result_scores?.length || 0}`);
+    console.log(`  - Mapped scores: ${currentScores.length}`);
+    if (currentScores.length > 0) {
+      const validScores = currentScores.filter(s => s > 0);
+      if (validScores.length > 0) {
+        const minScore = Math.min(...validScores);
+        const maxScore = Math.max(...validScores);
+        console.log(`  - Score range: ${minScore}% - ${maxScore}%`);
+        console.log(`  - Old algorithm detected: ${hasOldScores}`);
+      }
+    }
+    
+    // If old scores detected, recalculate to 70-100 range
+    let finalScores = currentScores;
+    if (hasOldScores) {
+      console.log(`  - Recalculating scores to 70-100 range...`);
+      const validScores = currentScores.filter(s => s > 0);
+      const minScore = Math.min(...validScores);
+      const maxScore = Math.max(...validScores);
+      
+      finalScores = currentScores.map(score => {
+        if (score === 0) return 0;
+        // Remap from old range to 70-100
+        const normalized = 70 + ((score - minScore) / (maxScore - minScore)) * 30;
+        return Math.round(normalized);
+      });
+      
+      console.log(`  - Recalculated score range: ${Math.min(...finalScores.filter(s => s > 0))}% - ${Math.max(...finalScores)}%`);
+    }
+    
+    // Rehydrate results with stored scores (already filtered to ≥70%)
+    const results = await hydrateResults(
+      conversation.current_result_ids,
+      conversation.base_result_ids,
+      { 
+        applyScoreFilter: true,
+        chromaScores: finalScores  // Use stored or recalculated scores
+      }
+    );
+    
+    console.log(`[ProSearch Rehydrate] Filtered results: ${results.length} (≥70%)`);
+    
+    res.json({
+      results,
+      filters: conversation.applied_filters || {},
+      baseQuery: conversation.base_query
+    });
+  } catch (error) {
+    console.error('[ProSearch Rehydrate] Error:', error);
+    res.status(500).json({ error: error.message || 'Failed to rehydrate conversation' });
+  }
+});
+
 // --- Helpers ---
 
 // --- ADVANCED SCORING ALGORITHMS ---

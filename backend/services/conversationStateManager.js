@@ -16,9 +16,10 @@ const pool = new Pool({
  * Create a new conversation record
  * @param {string} baseQuery - Initial search query
  * @param {number[]} baseResultIds - IDs from ChromaDB search
+ * @param {number[]} baseResultScores - Normalized scores (0-99) for each result (optional)
  * @returns {Promise<string>} conversationId - UUID of created conversation
  */
-export async function createConversation(baseQuery, baseResultIds) {
+export async function createConversation(baseQuery, baseResultIds, baseResultScores = null) {
     if (!baseQuery || typeof baseQuery !== 'string') {
         throw new Error('baseQuery must be a non-empty string');
     }
@@ -32,14 +33,16 @@ export async function createConversation(baseQuery, baseResultIds) {
             INSERT INTO prosearch_conversations (
                 base_query,
                 base_result_ids,
+                base_result_scores,
                 current_result_ids,
                 applied_filters
             )
-            VALUES ($1, $2, $3, $4)
+            VALUES ($1, $2, $3, $4, $5)
             RETURNING conversation_id
         `, [
             baseQuery,
             baseResultIds,
+            baseResultScores || [], // Store scores if provided
             baseResultIds, // Initially, current results = base results
             JSON.stringify({
                 technologies: [],
@@ -72,6 +75,7 @@ export async function loadConversation(conversationId) {
                 conversation_id,
                 base_query,
                 base_result_ids,
+                base_result_scores,
                 current_result_ids,
                 applied_filters,
                 created_at,
@@ -89,6 +93,7 @@ export async function loadConversation(conversationId) {
             conversation_id: row.conversation_id,
             base_query: row.base_query,
             base_result_ids: row.base_result_ids,
+            base_result_scores: row.base_result_scores || [], // Include scores
             current_result_ids: row.current_result_ids,
             applied_filters: row.applied_filters,
             created_at: row.created_at,

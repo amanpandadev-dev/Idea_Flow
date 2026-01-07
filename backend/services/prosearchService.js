@@ -78,18 +78,34 @@ export async function createNewConversation(query) {
             nResults: MAX_RESULTS
         });
 
-        // Extract idea IDs from ChromaDB results
-        const baseResultIds = extractIdeaIds(searchResults);
-        console.log('[createNewConversation] Found', baseResultIds.length, 'results from ChromaDB');
+        // Extract idea IDs AND similarity scores from ChromaDB results
+        const { ideaIds, similarities } = extractIdeaIdsWithScores(searchResults);
+        console.log('[ProSearch] Query:', query);
+        console.log('[ProSearch] Raw results from Chroma:', ideaIds.length);
+        
+        // Calculate normalized scores (direct conversion: similarity * 100)
+        const normalizedScores = calculateNormalizedScores(similarities);
+        
+        if (similarities.length > 0 && normalizedScores.length > 0) {
+            const minScore = Math.min(...normalizedScores);
+            const maxScore = Math.max(...normalizedScores);
+            console.log('[ProSearch] Similarity range: ' + (Math.min(...similarities) * 100).toFixed(2) + '% - ' + (Math.max(...similarities) * 100).toFixed(2) + '%');
+            console.log('[ProSearch] Score range: ' + minScore + '% - ' + maxScore + '%');
+        }
 
-        // Step 3: Store conversation state using conversationStateManager
-        console.log('[createNewConversation] Storing conversation state...');
-        const newConversationId = await createConversation(query, baseResultIds);
+        // Step 3: Store conversation state WITH normalized scores
+        console.log('[createNewConversation] Storing conversation state with scores...');
+        const newConversationId = await createConversation(query, ideaIds, normalizedScores);
         console.log('[createNewConversation] Conversation created:', newConversationId);
 
-        // Step 4: Hydrate results using resultHydrator
-        console.log('[createNewConversation] Hydrating results...');
-        const results = await hydrateResults(baseResultIds, baseResultIds);
+        // Step 4: Hydrate results using normalized scores
+        console.log('[createNewConversation] Hydrating results with normalized scores...');
+        const results = await hydrateResults(ideaIds, ideaIds, { 
+            applyScoreFilter: true,
+            chromaScores: normalizedScores  // Pass normalized scores
+        });
+        
+        console.log('[ProSearch] >=70% results count:', results.length);
 
         // Return ProSearchResponse
         return {
@@ -163,9 +179,21 @@ export async function processFollowUp(conversationId, message) {
         console.log('[processFollowUp] Updating conversation state...');
         await updateConversation(conversationId, filteredIds, effectiveFilters);
 
-        // Step 5: Hydrate results using resultHydrator
-        console.log('[processFollowUp] Hydrating results...');
-        const results = await hydrateResults(filteredIds, conversation.base_result_ids);
+        // Step 5: Hydrate results using resultHydrator WITH stored scores
+        console.log('[processFollowUp] Hydrating results with stored scores...');
+        
+        // Get scores for the filtered IDs from the stored base scores
+        const filteredScores = filteredIds.map(id => {
+            const index = conversation.base_result_ids.indexOf(id);
+            return index !== -1 && conversation.base_result_scores?.[index] 
+                ? conversation.base_result_scores[index] 
+                : 0;
+        });
+        
+        const results = await hydrateResults(filteredIds, conversation.base_result_ids, {
+            applyScoreFilter: true,
+            chromaScores: filteredScores  // Use stored scores
+        });
 
         // Return ProSearchResponse
         return {
@@ -181,40 +209,88 @@ export async function processFollowUp(conversationId, message) {
 }
 
 /**
- * Extract idea IDs from ChromaDB search results
+ * Calculate normalized scores based on ChromaDB similarities
+ * Maps similarity scores to percentage with better distribution
+ * @param {number[]} similarities - ChromaDB similarity scores (0-1 range, where 1 = perfect match)
+ * @returns {number[]} Array of percentage scores (0-100)
+ */
+function calculateNormalizedScores(similarities) {
+    if (similarities.length === 0) return [];
+    if (similarities.length === 1) {
+        // Single result: convert directly but ensure it's reasonable
+        const score = Math.round(similarities[0] * 100);
+        return [Math.max(70, score)]; // Ensure at least 70% for single result
+    }
+    
+    // Find min and max similarity
+    const minSim = Math.min(...similarities);
+    const maxSim = Math.max(...similarities);
+    
+    // If all similarities are the same, give them all high scores
+    if (maxSim === minSim) {
+        const score = Math.round(maxSim * 100);
+        return similarities.map(() => Math.max(70, score));
+    }
+    
+    // Normalize to 70-100 range (top result = 100%, worst = 70%)
+    // This ensures all results from ChromaDB are considered relevant
+    const scores = similarities.map(sim => {
+        // Scale from [minSim, maxSim] to [70, 100]
+        const normalized = 70 + ((sim - minSim) / (maxSim - minSim)) * 30;
+        return Math.round(normalized);
+    });
+    
+    return scores;
+}
+
+/**
+ * Extract idea IDs AND similarity scores from ChromaDB search results
  * 
  * @param {Object} searchResults - ChromaDB query results
- * @returns {number[]} Array of idea IDs
+ * @returns {Object} { ideaIds: number[], similarities: number[] }
  */
-function extractIdeaIds(searchResults) {
+function extractIdeaIdsWithScores(searchResults) {
     if (!searchResults || !searchResults.ids || searchResults.ids.length === 0) {
-        return [];
+        return { ideaIds: [], similarities: [] };
     }
 
     // ChromaDB returns results as [[id1, id2, ...]]
     const ids = searchResults.ids[0] || [];
+    const distances = searchResults.distances?.[0] || [];
+    const metadatas = searchResults.metadatas?.[0] || [];
     
     // Extract numeric idea_id from metadata or parse from ID string
     const ideaIds = [];
-    const metadatas = searchResults.metadatas?.[0] || [];
+    const similarities = [];
     
     for (let i = 0; i < ids.length; i++) {
         const metadata = metadatas[i];
         
-        // Try to get idea_id from metadata first
+        // Extract idea_id
+        let ideaId = null;
         if (metadata && metadata.idea_id) {
-            ideaIds.push(parseInt(metadata.idea_id));
+            ideaId = parseInt(metadata.idea_id);
         } else {
             // Fallback: parse from ID string (format: "idea_123")
             const idString = ids[i];
             const match = idString.match(/idea_(\d+)/);
             if (match) {
-                ideaIds.push(parseInt(match[1]));
+                ideaId = parseInt(match[1]);
             }
+        }
+        
+        if (ideaId) {
+            ideaIds.push(ideaId);
+            
+            // Convert distance to similarity (distance: 0 = best, 1 = worst)
+            // similarity = 1 - distance
+            const distance = distances[i] !== undefined ? distances[i] : 0;
+            const similarity = 1 - distance;
+            similarities.push(similarity);
         }
     }
 
-    return ideaIds;
+    return { ideaIds, similarities };
 }
 
 /**
