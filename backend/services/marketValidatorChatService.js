@@ -12,7 +12,10 @@ const INTENTS = {
     COMPETITORS: 'competitors',
     COMPETITOR_RISK: 'competitor_risk',
     SUMMARIZE: 'summarize',
+    GAP_ANALYSIS: 'gap_analysis',          // NEW: Use Case 3
+    ELABORATE_PROBLEM: 'elaborate_problem', // NEW: Use Case 4
     OFF_TOPIC: 'off_topic',
+    UNSUPPORTED: 'unsupported',
     GENERAL: 'general'
 };
 
@@ -22,7 +25,9 @@ const INTENT_KEYWORDS = {
     [INTENTS.MARKET_TRENDS]: ['market trend', 'market size', 'industry trend', 'growth rate', 'market forecast', 'market analysis', 'tam', 'sam', 'som'],
     [INTENTS.COMPETITORS]: ['competitor', 'competition', 'rival', 'alternative', 'similar product', 'market player'],
     [INTENTS.SUMMARIZE]: ['summarize', 'summary', 'overview', 'brief', 'recap', 'tldr', 'explain this idea', 'what is this idea'],
-    [INTENTS.OFF_TOPIC]: ['weather', 'joke', 'hello', 'hi', 'bye', 'how are you', 'what time', 'who are you', 'your name']
+    [INTENTS.GAP_ANALYSIS]: ['gap', 'unaddressed', 'not working on', 'missing', 'whitespace', 'opportunity', 'problem statement', 'problems', 'unique problem', 'areas to focus'],
+    [INTENTS.ELABORATE_PROBLEM]: ['elaborate', 'detail', 'explain more', 'implementation', 'how to implement', 'starting point', 'roadmap'],
+    [INTENTS.OFF_TOPIC]: ['weather', 'joke', 'hello', 'hi', 'bye', 'how are you', 'what time', 'who are you', 'your name', 'coding', 'recipe', 'poem', 'story']
 };
 
 // Analysis keywords that indicate user wants LLM analysis rather than raw search
@@ -33,35 +38,43 @@ const ANALYSIS_KEYWORDS = [
     'explain', 'breakdown', 'deep dive', 'insights', 'implications'
 ];
 
+// Follow-up/reference keywords that indicate user is asking about previous data
+const REFERENCE_KEYWORDS = [
+    'with reference to', 'based on', 'from the above', 'mentioned above', 'listed above',
+    'these competitors', 'those competitors', 'the competitors', 'the companies',
+    'usp of', 'strengths of', 'weaknesses of', 'what does', 'how does',
+    'focus on', 'recommend', 'suggestion', 'advice'
+];
+
 /**
  * Beautify and format LLM response
  * Removes markdown artifacts, formats properly for display
  */
 function beautifyResponse(text) {
     if (!text) return text;
-    
+
     // Remove triple asterisks (***) - common markdown artifact
     text = text.replace(/\*\*\*/g, '');
-    
+
     // Remove markdown headers (##, ###, ####) - keep content but remove header markers
     text = text.replace(/^#{1,6}\s+/gm, '');
-    
+
     // Fix repeated source citations like "(Source 1)" appearing multiple times
     // Keep only the [Source X](url) format
     text = text.replace(/\(Source \d+\)/g, '');
-    
+
     // Remove "Description:" labels that might appear
     text = text.replace(/^Description:\s*/gm, '');
-    
+
     // Fix double asterisks to proper bold (keep them for frontend to render)
     // Frontend should handle ** as bold
-    
+
     // Remove extra newlines (more than 2 consecutive)
     text = text.replace(/\n{3,}/g, '\n\n');
-    
+
     // Trim whitespace
     text = text.trim();
-    
+
     return text;
 }
 
@@ -74,7 +87,7 @@ function formatSourcesWithCitations(results, category) {
     }
 
     let formatted = '';
-    
+
     results.forEach((result, index) => {
         formatted += `${index + 1}. **${result.title}**\n`;
         formatted += `   ${result.content?.substring(0, 200)}...\n`;
@@ -94,7 +107,12 @@ async function generateEnhancedResponse(idea, userMessage, externalData, dataTyp
     try {
         const systemMessage = {
             role: 'system',
-            content: 'You are a Market Validation AI Assistant. You provide well-formatted, professional responses about market validation. You cite sources when using external data. You use proper markdown formatting without artifacts like ***.'
+            content: `You are a specialized Market Validation AI Assistant. 
+STRICT BOUNDARIES:
+1. ONLY answer questions related to market validation, competitors, patents, and the provided Idea.
+2. If the user asks anything outside of this scope (e.g., general knowledge, personal advice, unrelated tasks), politely decline and redirect them to market validation.
+3. Use the provided context to ground your answer. 
+4. If the provided data is insufficient, state clearly that you don't have enough specific data from the current search results, but can provide general domain guidance.`
         };
 
         let prompt = `Idea: ${idea.title}
@@ -111,24 +129,25 @@ User asked: ${userMessage}
                 prompt += `Content: ${item.content}\n`;
                 prompt += `URL: ${item.url}\n\n`;
             });
-            
+
             prompt += `\nInstructions:
-1. Write a clear, professional response about the ${dataType}
-2. For EACH competitor/item, write ONE paragraph with:
+1. **CRITICAL: Use bullet points (•) for each competitor, NOT numbered lists.**
+2. Write a clear, professional response about the ${dataType}
+3. For EACH competitor/item, write ONE paragraph with:
+   - Bullet point first (•)
    - Company name in bold: **Company Name**
    - Brief description (1-2 sentences)
-   - Cite the source at the end: [Source X](URL)
-3. After listing all items, add a section called "Strategic Insight:" (use bold: **Strategic Insight:**)
-4. Do NOT repeat source numbers multiple times
-5. Do NOT use headers with ## or ###
-6. Do NOT use *** (triple asterisks)
-7. Keep it concise and actionable
-8. Number each item: 1., 2., 3., etc.
+   - Cite the source at the end: [Source](URL)
+4. After listing all items, add a section called "Strategic Insight:" (use bold: **Strategic Insight:**)
+5. Do NOT repeat source numbers multiple times
+6. Do NOT use headers with ## or ###
+7. Do NOT use *** (triple asterisks)
+8. Keep it concise and actionable
 
 Example format:
-1. **Company Name** - Brief description of what they do and their strengths. [Source 1](url)
+• **Company Name** - Brief description of what they do and their strengths. [Source](url)
 
-2. **Another Company** - Brief description. [Source 2](url)
+• **Another Company** - Brief description of their offerings. [Source](url)
 
 **Strategic Insight:** Your analysis and recommendation here.
 
@@ -150,14 +169,15 @@ Generate your response now:`;
 
 Generate your response now:`;
             } else {
-                prompt += `No external data available. Provide guidance based on general market validation principles for the ${idea.theme || idea.domain} domain.
+                prompt += `No external data available for this specific query.
 
 Instructions:
-1. Provide helpful, actionable advice
-2. Do NOT use headers with ## or ###
-3. Do NOT use *** (triple asterisks) - use ** for bold only
-4. Be specific to the domain
-5. End with **Strategic Recommendation:** (in bold)
+1. Provide helpful, actionable guidance based EXCLUSIVELY on general market validation principles for the ${idea.theme || idea.domain} domain.
+2. If the query is not about market validation, state that you cannot assist with that topic.
+3. Do NOT invent specific companies, patents, or data points that are not in the context.
+4. Do NOT use headers with ## or ###
+5. Do NOT use *** (triple asterisks) - use ** for bold only
+6. End with **Strategic Recommendation:** (in bold)
 
 Generate your response:`;
             }
@@ -178,10 +198,10 @@ Generate your response:`;
         );
 
         let response = result.message?.content || result.response || '';
-        
+
         // Beautify the response
         response = beautifyResponse(response);
-        
+
         return response;
     } catch (error) {
         console.error('[MarketChat] Error generating enhanced response:', error);
@@ -261,13 +281,21 @@ function extractQueryParameters(message) {
 /**
  * Classify user intent from message with enhanced parameter extraction
  */
-function classifyIntent(message) {
+function classifyIntent(message, conversationHistory = []) {
     const lowerMessage = message.toLowerCase();
     const params = extractQueryParameters(message);
 
+    // Check if this is a follow-up/reference query (should use conversation history, not new search)
+    const isReferenceQuery = REFERENCE_KEYWORDS.some(keyword => lowerMessage.includes(keyword));
+    const hasConversationHistory = conversationHistory && conversationHistory.length > 0;
+
+    if (isReferenceQuery && hasConversationHistory) {
+        return { intent: INTENTS.GENERAL, metadata: { ...params, useHistoryOnly: true, isReferenceQuery: true } };
+    }
+
     // Check if this is an analysis request (should use LLM, not raw search)
     const isAnalysisRequest = ANALYSIS_KEYWORDS.some(keyword => lowerMessage.includes(keyword));
-    
+
     // If it's an analysis request, route to GENERAL for LLM processing
     if (isAnalysisRequest) {
         return { intent: INTENTS.GENERAL, metadata: { ...params, requiresAnalysis: true } };
@@ -318,6 +346,14 @@ function classifyIntent(message) {
         }
     }
 
+    // NEW: Heuristic for identifying completely unrelated queries
+    const validationKeywords = ['market', 'patent', 'competitor', 'trend', 'customer', 'business', 'strategy', 'risk', 'opportunity', 'idea', 'product', 'service', 'validation', 'industry'];
+    const hasValidationContext = validationKeywords.some(k => lowerMessage.includes(k));
+
+    if (lowerMessage.length > 30 && !hasValidationContext && !isAnalysisRequest) {
+        return { intent: INTENTS.UNSUPPORTED, metadata: params };
+    }
+
     return { intent: INTENTS.GENERAL, metadata: params };
 }
 
@@ -341,6 +377,21 @@ What would you like to know?`;
         console.error('[MarketValidatorChatService] Error generating initial message:', error);
         return `Hi! I'm your Market Validation Assistant. How can I help you understand the market for "${idea.title}"?`;
     }
+}
+
+/**
+ * Handle unsupported or irrelevant queries
+ */
+function handleUnsupportedQuery(idea) {
+    return `I'm here to focus specifically on the market validation and competitive landscape for "**${idea.title}**".
+
+To stay on track, I can help you with things like:
+• Analyzing **patent and IP risks**
+• Evaluating **market trends** and industry signals
+• Identifying **competitors** and their strategies
+• Reviewing your **idea summary** and value proposition
+
+Please ask a question related to these areas!`;
 }
 
 /**
@@ -377,7 +428,7 @@ async function handlePatentRiskQuery(idea, metadata, userMessage) {
             return await generateEnhancedResponse(idea, userMessage || 'Are there any patent risks?', null, 'patents');
         }
 
-        const limitedResults = metadata.limit 
+        const limitedResults = metadata.limit
             ? patentResults.slice(0, metadata.limit)
             : patentResults;
 
@@ -405,7 +456,7 @@ async function handleMarketTrendsQuery(idea, metadata, userMessage) {
             return await generateEnhancedResponse(idea, userMessage || 'What are the market trends?', null, 'market trends');
         }
 
-        const limitedResults = metadata.limit 
+        const limitedResults = metadata.limit
             ? trendResults.slice(0, metadata.limit)
             : trendResults.slice(0, 5);
 
@@ -428,15 +479,15 @@ async function handleCompetitorsQuery(idea, userMessage, metadata, conversationH
     try {
         // Build enhanced search query based on user parameters
         let searchQuery = `companies building ${idea.title} competitors products`;
-        
+
         if (metadata.constraints && metadata.constraints.length > 0) {
             searchQuery += ` ${metadata.constraints.join(' ')}`;
         }
-        
+
         if (metadata.region) {
             searchQuery += ` in ${metadata.region}`;
         }
-        
+
         if (metadata.timeframe) {
             searchQuery += ` ${metadata.timeframe}`;
         }
@@ -450,7 +501,7 @@ async function handleCompetitorsQuery(idea, userMessage, metadata, conversationH
         }
 
         // Apply limit if specified
-        const limitedResults = metadata.limit 
+        const limitedResults = metadata.limit
             ? competitorResults.slice(0, metadata.limit)
             : competitorResults.slice(0, 5);
 
@@ -527,7 +578,7 @@ async function handleSummarizeQuery(idea, userMessage) {
         return await generateEnhancedResponse(idea, userMessage || 'Summarize this idea', null, 'idea summary');
     } catch (error) {
         console.error('[MarketChat] Error generating summary:', error);
-        
+
         // Fallback to simple summary
         const technologies = Array.isArray(idea.technologies)
             ? idea.technologies.join(', ')
@@ -547,6 +598,194 @@ This idea leverages ${idea.theme || 'innovative technology'} to deliver value in
 }
 
 /**
+ * Handle gap analysis queries (Use Case 3)
+ * Identifies problem statements and opportunities not addressed by competitors
+ */
+async function handleGapAnalysisQuery(idea, userMessage, conversationHistory, metadata) {
+    console.log('[MarketChat] Handling GAP_ANALYSIS query');
+
+    try {
+        // Extract competitors from conversation history
+        let competitorContext = '';
+        if (conversationHistory && conversationHistory.length > 0) {
+            // Find the most recent competitor list
+            for (let i = conversationHistory.length - 1; i >= 0; i--) {
+                const msg = conversationHistory[i];
+                if (msg.role === 'assistant' && msg.content.includes('competitor')) {
+                    competitorContext = msg.content;
+                    break;
+                }
+            }
+        }
+
+        const systemMessage = {
+            role: 'system',
+            content: `You are a Market Validation AI Specialist. You identify market gaps and unaddressed problem statements.
+
+GUARDRAILS:
+1. Analyze the competitive landscape from the conversation history
+2. Identify specific problem statements, niches, or use cases that competitors are NOT addressing
+3. For each gap, provide BOTH pros (why it's an opportunity) and cons (why it might be challenging)
+4. Do NOT invent competitor capabilities - only use information from the conversation
+5. Focus on actionable, specific opportunities`
+        };
+
+        const userPrompt = `Idea: ${idea.title}
+Description: ${idea.description || idea.summary}
+Domain: ${idea.theme || idea.domain}
+
+${competitorContext ? `Competitive Landscape from previous analysis:\n${competitorContext}\n` : 'No competitor data available yet. Base your analysis on the idea domain and general market knowledge.'}
+
+User's question: ${userMessage}
+
+TASK: Identify 3-5 unique problem statements or market gaps that are either:
+1. Not being addressed by the competitors mentioned above
+2. Underserved areas in the ${idea.theme || idea.domain} space
+3. Emerging opportunities due to new technologies or market shifts
+
+For EACH problem statement, provide:
+- **Problem Title** (concise, bold)
+- Brief description (2-3 sentences)
+- **Pros:** (2-3 bullet points on why this is an opportunity)
+- **Cons:** (2-3 bullet points on potential challenges)
+
+Format as a numbered list. Use markdown formatting.
+End with **Strategic Recommendation:** on which problem statement to prioritize and why.
+
+Generate your response now:`;
+
+        const userMessageObj = { role: 'user', content: userPrompt };
+
+        const result = await generateChatCompletion(
+            [systemMessage, userMessageObj],
+            process.env.OLLAMA_REASONING_MODEL || 'qwen2.5:3b',
+            {
+                temperature: 0.7,
+                num_predict: 800 // More tokens for comprehensive analysis
+            }
+        );
+
+        let response = result.message?.content || result.response || '';
+        return beautifyResponse(response);
+
+    } catch (error) {
+        console.error('[MarketChat] Gap analysis failed:', error);
+        return `I encountered an issue analyzing market gaps. Please try asking about specific areas you're interested in exploring.`;
+    }
+}
+
+/**
+ * Handle problem elaboration queries (Use Case 4)
+ * Provides detailed implementation guide for a specific problem statement
+ */
+async function handleElaborateProblemQuery(idea, userMessage, conversationHistory, metadata) {
+    console.log('[MarketChat] Handling ELABORATE_PROBLEM query');
+
+    try {
+        // Extract problem statement context from conversation history
+        let problemContext = '';
+        let problemTitle = '';
+
+        // Try to find the problem statement being referenced
+        if (conversationHistory && conversationHistory.length > 0) {
+            for (let i = conversationHistory.length - 1; i >= 0; i--) {
+                const msg = conversationHistory[i];
+                if (msg.role === 'assistant' && (msg.content.includes('Problem') || msg.content.includes('**'))) {
+                    problemContext = msg.content;
+
+                    // Try to extract specific problem title from user message
+                    const quotedText = userMessage.match(/["'](.+?)["']/) || userMessage.match(/\*\*(.+?)\*\*/);
+                    if (quotedText) {
+                        problemTitle = quotedText[1];
+                    }
+                    break;
+                }
+            }
+        }
+
+        const systemMessage = {
+            role: 'system',
+            content: `You are a Market Validation and Product Strategy AI. You create detailed implementation roadmaps.
+
+GUARDRAILS:
+1. Provide a comprehensive, step-by-step implementation guide
+2. Include starting point, execution phases, and end state
+3. Be specific and actionable - no generic advice
+4. Ground recommendations in the idea's domain and technologies
+5. Address technical, business, and go-to-market aspects`
+        };
+
+        const userPrompt = `Idea: ${idea.title}
+Description: ${idea.description || idea.summary}
+Domain: ${idea.theme || idea.domain}
+Technologies: ${Array.isArray(idea.technologies) ? idea.technologies.join(', ') : idea.technologies}
+
+${problemContext ? `Previous analysis:\n${problemContext.substring(0, 1000)}\n` : ''}
+
+User's request: ${userMessage}
+${problemTitle ? `\nSpecific problem statement to elaborate: "${problemTitle}"` : ''}
+
+TASK: Provide a detailed implementation guide with the following structure:
+
+## Problem Statement Overview
+(2-3 sentences summarizing the opportunity)
+
+## Starting Point: Prerequisites
+- What capabilities/resources are needed to begin
+- Required team skills
+- Initial market research needed
+
+## Implementation Roadmap
+
+### Phase 1: Foundation (Months 1-3)
+- Specific steps to take
+- Key deliverables
+- Success metrics
+
+### Phase 2: Development (Months 4-6)
+- Technical development tasks
+- Customer validation approach
+- Milestone checklist
+
+### Phase 3: Launch & Scale (Months 7-12)
+- Go-to-market strategy
+- Key partnerships or integrations
+- Scaling considerations
+
+## End State: Success Criteria
+- What "done" looks like
+- Key performance indicators (KPIs)
+- Long-term competitive positioning
+
+## Critical Risks & Mitigation
+- Top 3 risks
+- Mitigation strategies for each
+
+**Resource Estimate:** Rough estimate of team size and budget needed
+
+Generate your comprehensive implementation guide now:`;
+
+        const userMessageObj = { role: 'user', content: userPrompt };
+
+        const result = await generateChatCompletion(
+            [systemMessage, userMessageObj],
+            process.env.OLLAMA_REASONING_MODEL || 'qwen2.5:3b',
+            {
+                temperature: 0.6,
+                num_predict: 1000 // Extended output for detailed roadmap
+            }
+        );
+
+        let response = result.message?.content || result.response || '';
+        return beautifyResponse(response);
+
+    } catch (error) {
+        console.error('[MarketChat] Problem elaboration failed:', error);
+        return `I encountered an issue creating the implementation guide. Please try rephrasing your request or specify which problem statement you'd like elaborated.`;
+    }
+}
+
+/**
  * Handle off-topic queries
  */
 function handleOffTopicQuery(idea) {
@@ -558,6 +797,8 @@ I can help you with:
 • **"Who are the competitors?"** - Competitive landscape analysis
 • **"Summarize this idea"** - Overview based on your idea details
 • **"What risks does [Company] pose?"** - Specific competitor analysis
+• **"What gaps exist?"** - Identify unaddressed problems and opportunities
+• **"Elaborate on [Problem]"** - Detailed implementation roadmap
 
 What would you like to know about your idea's market potential?`;
 }
@@ -568,8 +809,8 @@ What would you like to know about your idea's market potential?`;
 export async function generateChatResponse(idea, userMessage, conversationHistory) {
     console.log(`[MarketChat] Processing query: "${userMessage}"`);
 
-    // Step 1: Classify intent with parameter extraction
-    const { intent, metadata } = classifyIntent(userMessage);
+    // Step 1: Classify intent with parameter extraction (pass conversation history for context-aware routing)
+    const { intent, metadata } = classifyIntent(userMessage, conversationHistory);
     console.log(`[MarketChat] Classified intent: ${intent}`, metadata);
 
     // Step 2: Route to appropriate handler with conversation context
@@ -590,8 +831,17 @@ export async function generateChatResponse(idea, userMessage, conversationHistor
             case INTENTS.SUMMARIZE:
                 return await handleSummarizeQuery(idea, userMessage);
 
+            case INTENTS.GAP_ANALYSIS:
+                return await handleGapAnalysisQuery(idea, userMessage, conversationHistory, metadata);
+
+            case INTENTS.ELABORATE_PROBLEM:
+                return await handleElaborateProblemQuery(idea, userMessage, conversationHistory, metadata);
+
             case INTENTS.OFF_TOPIC:
                 return handleOffTopicQuery(idea);
+
+            case INTENTS.UNSUPPORTED:
+                return handleUnsupportedQuery(idea);
 
             case INTENTS.GENERAL:
             default:
@@ -623,7 +873,7 @@ Technologies: ${Array.isArray(idea.technologies) ? idea.technologies.join(', ') 
         let previousDataContext = '';
         if (metadata?.requiresAnalysis && conversationHistory && conversationHistory.length > 0) {
             console.log('[MarketChat] Analysis request detected - extracting previous data');
-            
+
             // Look for the most recent assistant response with substantial data
             for (let i = conversationHistory.length - 1; i >= 0; i--) {
                 const msg = conversationHistory[i];
@@ -636,7 +886,7 @@ Technologies: ${Array.isArray(idea.technologies) ? idea.technologies.join(', ') 
             }
         }
 
-        // Build conversation context with more detail
+        // Build conversation context with adaptive detail level
         let conversationContext = '';
         if (conversationHistory && conversationHistory.length > 0) {
             const recentHistory = conversationHistory.slice(-6); // Last 6 messages for better context
@@ -645,8 +895,13 @@ Technologies: ${Array.isArray(idea.technologies) ? idea.technologies.join(', ') 
                 if (msg.role === 'user') {
                     conversationContext += `User: ${msg.content}\n`;
                 } else if (msg.role === 'assistant') {
-                    // Include summary of previous response
-                    conversationContext += `Assistant: ${msg.content.substring(0, 200)}...\n`;
+                    // If this is a reference query, include FULL previous response, otherwise truncate
+                    const includeFullResponse = metadata?.isReferenceQuery || metadata?.useHistoryOnly;
+                    if (includeFullResponse) {
+                        conversationContext += `Assistant: ${msg.content}\n`;
+                    } else {
+                        conversationContext += `Assistant: ${msg.content.substring(0, 200)}...\n`;
+                    }
                 }
             });
         }
@@ -663,11 +918,20 @@ Technologies: ${Array.isArray(idea.technologies) ? idea.technologies.join(', ') 
         if (params.requiresAnalysis) {
             paramContext += `\nUser is requesting ANALYSIS/INSIGHTS, not raw data. Provide strategic analysis.`;
         }
+        if (params.useHistoryOnly || params.isReferenceQuery) {
+            paramContext += `\n\n🔒 CRITICAL: This is a FOLLOW-UP query referencing previous conversation data. You MUST answer ONLY using the information from the "Recent conversation" section above. Do NOT introduce new companies, competitors, or data points that were not mentioned in the previous assistant responses. If the previous data doesn't contain enough information to answer, say so explicitly.`;
+        }
 
         // Create system message
         const systemMessage = {
             role: 'system',
-            content: 'You are a Market Validation AI Assistant. You provide DIRECT, SPECIFIC ANSWERS about market validation topics. You analyze data, provide strategic insights, and help users understand competitive landscapes, market opportunities, and differentiation strategies.'
+            content: `You are a Market Validation AI Specialist. 
+GUARDRAILS:
+1. ONLY answer questions about market validation, competitors, trends, and the provided idea "${idea.title}".
+2. Use the provided context to ground your answer. 
+3. If the user's question is unrelated to business, market, or the idea, politely decline to answer.
+4. Do NOT hallucinate specific figures, companies, or data points if they are not in the context.
+5. You can provide general strategic advice if specific data is missing, but label it as such.`
         };
 
         // Create user message with full context
@@ -682,19 +946,16 @@ ${paramContext}
 User's question: ${userMessage}
 
 CRITICAL RULES:
-1. Provide a DIRECT, SPECIFIC answer - NEVER ask follow-up questions
-2. If the user asks for ANALYSIS (strengths, weaknesses, comparison, differentiation), provide DEEP STRATEGIC INSIGHTS
-3. If previous search results are provided, ANALYZE them thoroughly - don't just repeat them
-4. When analyzing competitors: identify their strengths, weaknesses, market positioning, and differentiation opportunities
-5. If the user asks for a specific number of items (e.g., "top 2", "3 competitors"), provide EXACTLY that many
-6. If this is a follow-up question refining a previous query, acknowledge the refinement and provide NEW information
-7. Focus on market validation: trends, opportunities, risks, competitors, and strategic insights
-8. If you don't have specific data, provide actionable general guidance based on the domain
-9. Keep response concise (under 500 words for analysis, 400 for general) and well-structured
-10. Use markdown formatting with headers, bullet points, and bold text
-11. End with ONE actionable insight or recommendation
-12. NEVER say "I don't have enough information" - always provide value based on what you know
-13. If the user is asking for fewer/more details than before, adjust accordingly
+1. Provide a DIRECT, SPECIFIC answer - NEVER ask follow-up questions.
+2. If the user asks for ANALYSIS (strengths, weaknesses, comparison, differentiation), provide STRATEGIC INSIGHTS based on the provided context.
+3. If the user's query is irrelevant to market validation or the idea "${idea.title}", state that you are only programmed to assist with market validation for this specific project.
+4. If data is provided in the conversation history or context, ANALYZE it. If no data is provided, speak generally about the industry/domain, but do NOT invent specific facts.
+5. **CRITICAL**: If the user asks "with reference to above" or similar, you are ONLY allowed to use data from the "Recent conversation" section. Do NOT add new competitor names or data.
+6. Maintain a professional, executive tone.
+7. Keep response concise (under 500 words) and well-structured.
+8. End with ONE actionable strategic recommendation.
+9. If you lack specific data to answer a technical or factual question, honestly state: "Based on the previous conversation, I don't have specific details on [X]. I recommend conducting additional research on [X] to gather this information."
+10. Do NOT make up names of people, companies, or URLs that were not in the previous conversation.
 
 Provide your response now:`;
 
