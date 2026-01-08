@@ -279,11 +279,108 @@ function extractQueryParameters(message) {
 }
 
 /**
- * Classify user intent from message with enhanced parameter extraction
+ * LLM-based intent classification for robust natural language understanding
+ * Uses Qwen to intelligently classify user intent regardless of phrasing
  */
-function classifyIntent(message, conversationHistory = []) {
+async function classifyIntentWithLLM(message, idea, conversationHistory = []) {
+    try {
+        const systemMessage = {
+            role: 'system',
+            content: `You are an intent classifier for a Market Validation chatbot. 
+Your job is to classify user queries into ONE of these intents:
+
+INTENTS:
+- PATENT_RISK: User asking about patents, IP risks, intellectual property conflicts
+- MARKET_TRENDS: User asking about market size, trends, growth, industry forecasts
+- COMPETITORS: User asking who the competitors are, market players, similar products
+- COMPETITOR_RISK: User asking about a specific competitor's threat or strategy
+- SUMMARIZE: User asking for a summary or overview of the idea
+- GAP_ANALYSIS: User asking for problem statements, opportunities, gaps, areas to work on, where to start, what to focus on
+- ELABORATE_PROBLEM: User asking for detailed implementation, roadmap, how to get started, step-by-step guide
+- OFF_TOPIC: User asking about completely unrelated topics (weather, jokes, personal questions)
+- GENERAL: General market validation questions that require analysis
+
+CRITICAL: 
+- If user asks for "problem statements", "areas to focus", "where to start", "what should I work on" → GAP_ANALYSIS
+- If user asks "how to implement", "give me steps", "roadmap", "guide me" → ELABORATE_PROBLEM
+- If user says "I get that but [wants something else]" → understand what they actually want
+
+Respond with ONLY the intent name (e.g., "GAP_ANALYSIS"). Nothing else.`
+        };
+
+        const userPrompt = `Idea: "${idea.title}"
+Domain: ${idea.theme || idea.domain || 'Not specified'}
+
+User message: "${message}"
+
+${conversationHistory && conversationHistory.length > 0 ? `Previous context: User has been discussing market validation for this idea.` : ''}
+
+Classify this query's intent:`;
+
+        const result = await generateChatCompletion(
+            [systemMessage, { role: 'user', content: userPrompt }],
+            process.env.OLLAMA_REASONING_MODEL || 'qwen2.5:3b',
+            {
+                temperature: 0.1, // Low temperature for deterministic classification
+                num_predict: 20   // Just need the intent name
+            }
+        );
+
+        const response = (result.message?.content || result.response || '').trim().toUpperCase();
+
+        // Map LLM response to our intent constants
+        const intentMapping = {
+            'PATENT_RISK': INTENTS.PATENT_RISK,
+            'PATENT': INTENTS.PATENT_RISK,
+            'IP_RISK': INTENTS.PATENT_RISK,
+            'MARKET_TRENDS': INTENTS.MARKET_TRENDS,
+            'MARKET_TREND': INTENTS.MARKET_TRENDS,
+            'TRENDS': INTENTS.MARKET_TRENDS,
+            'COMPETITORS': INTENTS.COMPETITORS,
+            'COMPETITOR': INTENTS.COMPETITORS,
+            'COMPETITION': INTENTS.COMPETITORS,
+            'COMPETITOR_RISK': INTENTS.COMPETITOR_RISK,
+            'SUMMARIZE': INTENTS.SUMMARIZE,
+            'SUMMARY': INTENTS.SUMMARIZE,
+            'GAP_ANALYSIS': INTENTS.GAP_ANALYSIS,
+            'GAP': INTENTS.GAP_ANALYSIS,
+            'GAPS': INTENTS.GAP_ANALYSIS,
+            'ELABORATE_PROBLEM': INTENTS.ELABORATE_PROBLEM,
+            'ELABORATE': INTENTS.ELABORATE_PROBLEM,
+            'IMPLEMENTATION': INTENTS.ELABORATE_PROBLEM,
+            'OFF_TOPIC': INTENTS.OFF_TOPIC,
+            'GENERAL': INTENTS.GENERAL
+        };
+
+        const detectedIntent = intentMapping[response] || INTENTS.GENERAL;
+        console.log(`[MarketChat] LLM classified intent: "${response}" → ${detectedIntent}`);
+
+        return detectedIntent;
+
+    } catch (error) {
+        console.error('[MarketChat] LLM intent classification failed:', error.message);
+        // Fallback to keyword-based classification
+        return null;
+    }
+}
+
+/**
+ * Classify user intent from message (with LLM fallback to keywords)
+ * Now uses intelligent LLM-based classification for natural language understanding
+ */
+async function classifyIntent(message, idea, conversationHistory = []) {
     const lowerMessage = message.toLowerCase();
     const params = extractQueryParameters(message);
+
+    // STEP 1: Try intelligent LLM-based classification first
+    const llmIntent = await classifyIntentWithLLM(message, idea, conversationHistory);
+    if (llmIntent) {
+        console.log(`[MarketChat] Using LLM classification: ${llmIntent}`);
+        return { intent: llmIntent, metadata: params };
+    }
+
+    // STEP 2: Fallback to keyword-based classification if LLM fails
+    console.log(`[MarketChat] LLM classification unavailable, using keyword fallback`);
 
     // Check if this is a follow-up/reference query (should use conversation history, not new search)
     const isReferenceQuery = REFERENCE_KEYWORDS.some(keyword => lowerMessage.includes(keyword));
@@ -823,8 +920,8 @@ What would you like to know about your idea's market potential?`;
 export async function generateChatResponse(idea, userMessage, conversationHistory) {
     console.log(`[MarketChat] Processing query: "${userMessage}"`);
 
-    // Step 1: Classify intent with parameter extraction (pass conversation history for context-aware routing)
-    const { intent, metadata } = classifyIntent(userMessage, conversationHistory);
+    // Step 1: Classify intent with LLM-based intelligent classification (pass idea for context)
+    const { intent, metadata } = await classifyIntent(userMessage, idea, conversationHistory);
     console.log(`[MarketChat] Classified intent: ${intent}`, metadata);
 
     // Step 2: Route to appropriate handler with conversation context
