@@ -25,8 +25,8 @@ const INTENT_KEYWORDS = {
     [INTENTS.MARKET_TRENDS]: ['market trend', 'market size', 'industry trend', 'growth rate', 'market forecast', 'market analysis', 'tam', 'sam', 'som'],
     [INTENTS.COMPETITORS]: ['competitor', 'competition', 'rival', 'alternative', 'similar product', 'market player'],
     [INTENTS.SUMMARIZE]: ['summarize', 'summary', 'overview', 'brief', 'recap', 'tldr', 'explain this idea', 'what is this idea'],
-    [INTENTS.GAP_ANALYSIS]: ['gap', 'unaddressed', 'not working on', 'missing', 'whitespace', 'opportunity', 'problem statement', 'problems', 'unique problem', 'areas to focus'],
-    [INTENTS.ELABORATE_PROBLEM]: ['elaborate', 'detail', 'explain more', 'implementation', 'how to implement', 'starting point', 'roadmap'],
+    [INTENTS.GAP_ANALYSIS]: ['gap', 'unaddressed', 'not working on', 'missing', 'whitespace', 'opportunity', 'opportunities', 'problem statement', 'problem statements', 'problems', 'unique problem', 'areas to focus', 'area to focus', 'areas to work', 'area to work', 'where to start', 'what to work on', 'focus area', 'focus areas', 'give me area', 'give me few problem'],
+    [INTENTS.ELABORATE_PROBLEM]: ['elaborate', 'detail', 'explain more', 'implementation', 'how to implement', 'starting point', 'start point', 'roadmap', 'guide', 'step by step', 'how do i', 'how to get started', 'area to start', 'where do i start'],
     [INTENTS.OFF_TOPIC]: ['weather', 'joke', 'hello', 'hi', 'bye', 'how are you', 'what time', 'who are you', 'your name', 'coding', 'recipe', 'poem', 'story']
 };
 
@@ -343,6 +343,20 @@ function classifyIntent(message, conversationHistory = []) {
     for (const keyword of INTENT_KEYWORDS[INTENTS.SUMMARIZE]) {
         if (lowerMessage.includes(keyword)) {
             return { intent: INTENTS.SUMMARIZE, metadata: params };
+        }
+    }
+
+    // Check for gap analysis (Use Case 3)
+    for (const keyword of INTENT_KEYWORDS[INTENTS.GAP_ANALYSIS]) {
+        if (lowerMessage.includes(keyword)) {
+            return { intent: INTENTS.GAP_ANALYSIS, metadata: params };
+        }
+    }
+
+    // Check for problem elaboration (Use Case 4)
+    for (const keyword of INTENT_KEYWORDS[INTENTS.ELABORATE_PROBLEM]) {
+        if (lowerMessage.includes(keyword)) {
+            return { intent: INTENTS.ELABORATE_PROBLEM, metadata: params };
         }
     }
 
