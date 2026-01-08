@@ -309,13 +309,16 @@ CRITICAL GUARDRAILS:
 ⚠️ If user asks about a DIFFERENT idea, product, or domain than "${idea.title}" → OUT_OF_SCOPE
 ⚠️ If user asks about general topics not related to validating "${idea.title}" → OUT_OF_SCOPE
 ⚠️ If user asks for help with coding, implementation of OTHER projects → OUT_OF_SCOPE
+⚠️ If user asks about celebrities, actors, movies, or random people (e.g. "Who is Prabhas?", "Who is an actor?") → OUT_OF_SCOPE
 ✅ ONLY classify as valid intent if the question is DIRECTLY about validating "${idea.title}"
 
 Examples:
 - "What are competitors for loan personalization?" [THIS idea is about loans] → COMPETITORS ✅
 - "What about competitors in healthcare domain?" [THIS idea is NOT healthcare] → OUT_OF_SCOPE ❌
 - "How do I build THIS idea?" → ELABORATE_PROBLEM ✅
-- "How do I build a chatbot?" [Not THIS idea] → OUT_OF_SCOPE ❌
+- "Who is Prabhas?" [Actor, not related] → OUT_OF_SCOPE ❌
+- "Who is the CEO of Provenir?" [Provenir is a competitor] → COMPETITORS ✅ (or GENERAL)
+- "Analyze market gaps" → GAP_ANALYSIS ✅
 
 Respond with ONLY the intent name (e.g., "GAP_ANALYSIS" or "OUT_OF_SCOPE"). Nothing else.`
         };
@@ -338,14 +341,19 @@ Classify this query's intent:`;
             }
         );
 
-        const response = (result.message?.content || result.response || '').trim().toUpperCase();
+        let response = (result.message?.content || result.response || '').trim().toUpperCase();
+
+        // Clean response (remove markdown, "Intent:", etc.)
+        response = response.replace(/\*\*/g, '').replace(/^INTENT:\s*/, '').trim();
 
         // Map LLM response to our intent constants
         const intentMapping = {
             'PATENT_RISK': INTENTS.PATENT_RISK,
+            'PATENT RISK': INTENTS.PATENT_RISK,
             'PATENT': INTENTS.PATENT_RISK,
             'IP_RISK': INTENTS.PATENT_RISK,
             'MARKET_TRENDS': INTENTS.MARKET_TRENDS,
+            'MARKET TRENDS': INTENTS.MARKET_TRENDS,
             'MARKET_TREND': INTENTS.MARKET_TRENDS,
             'TRENDS': INTENTS.MARKET_TRENDS,
             'COMPETITORS': INTENTS.COMPETITORS,
@@ -355,18 +363,39 @@ Classify this query's intent:`;
             'SUMMARIZE': INTENTS.SUMMARIZE,
             'SUMMARY': INTENTS.SUMMARIZE,
             'GAP_ANALYSIS': INTENTS.GAP_ANALYSIS,
+            'GAP ANALYSIS': INTENTS.GAP_ANALYSIS,
             'GAP': INTENTS.GAP_ANALYSIS,
             'GAPS': INTENTS.GAP_ANALYSIS,
             'ELABORATE_PROBLEM': INTENTS.ELABORATE_PROBLEM,
+            'ELABORATE PROBLEM': INTENTS.ELABORATE_PROBLEM,
             'ELABORATE': INTENTS.ELABORATE_PROBLEM,
             'IMPLEMENTATION': INTENTS.ELABORATE_PROBLEM,
             'OUT_OF_SCOPE': INTENTS.OUT_OF_SCOPE,
+            'OUT OF SCOPE': INTENTS.OUT_OF_SCOPE,
             'SCOPE': INTENTS.OUT_OF_SCOPE,
             'OFF_TOPIC': INTENTS.OFF_TOPIC,
+            'OFF TOPIC': INTENTS.OFF_TOPIC,
             'GENERAL': INTENTS.GENERAL
         };
 
-        const detectedIntent = intentMapping[response] || INTENTS.GENERAL;
+        let detectedIntent = intentMapping[response];
+
+        // If exact match failed, try to find intent in string
+        if (!detectedIntent) {
+            for (const key in intentMapping) {
+                if (response.includes(key)) {
+                    detectedIntent = intentMapping[key];
+                    break;
+                }
+            }
+        }
+
+        // Default to GENERAL if still not found, BUT check if it looks like an error
+        if (!detectedIntent) {
+            console.warn(`[MarketChat] Unknown LLM intent: "${response}", defaulting to GENERAL`);
+            detectedIntent = INTENTS.GENERAL;
+        }
+
         console.log(`[MarketChat] LLM classified intent: "${response}" → ${detectedIntent}`);
 
         return detectedIntent;
