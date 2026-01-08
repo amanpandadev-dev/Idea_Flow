@@ -107,7 +107,7 @@ Provide 3-4 bullet points covering:
 - Adoption maturity
 - Growth indicators
 
-CRITICAL: If evidence exists (as shown above), you MUST produce insights. Do NOT say "No data available".`;
+CRITICAL: Stick ONLY to the provided evidence. If the evidence is irrelevant or junk, identify that you found limited actionable market information. Do NOT hallucinate industry names or trends not in this text. If no evidence is shown above, say "No relevant market data available."`;
 
     const response = await generateChatCompletion([
         { role: 'system', content: 'You analyze market trends based only on provided evidence. Never hallucinate.' },
@@ -145,7 +145,7 @@ Provide an assessment covering:
 - Competitive intensity (Low/Medium/High)
 - Differentiation opportunities
 
-CRITICAL: You have ${competitors.length} competitors listed above. You MUST discuss them. Do NOT say "No data available".`;
+CRITICAL: Stick ONLY to the provided competitor names and descriptions. If no direct competitors are in the evidence, state that searching found no direct competitors for this specific niche. Do NOT invent competitor names.`;
 
     const response = await generateChatCompletion([
         { role: 'system', content: 'You analyze competitors based only on provided evidence. Be specific with company names.' },
