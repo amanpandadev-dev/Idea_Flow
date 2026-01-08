@@ -15,6 +15,7 @@ const INTENTS = {
     GAP_ANALYSIS: 'gap_analysis',          // NEW: Use Case 3
     ELABORATE_PROBLEM: 'elaborate_problem', // NEW: Use Case 4
     OFF_TOPIC: 'off_topic',
+    OUT_OF_SCOPE: 'out_of_scope',          // NEW: Questions unrelated to this specific idea
     UNSUPPORTED: 'unsupported',
     GENERAL: 'general'
 };
@@ -286,26 +287,37 @@ async function classifyIntentWithLLM(message, idea, conversationHistory = []) {
     try {
         const systemMessage = {
             role: 'system',
-            content: `You are an intent classifier for a Market Validation chatbot. 
+            content: `You are an intent classifier for a Market Validation chatbot focused EXCLUSIVELY on validating the idea: "${idea.title}".
+
 Your job is to classify user queries into ONE of these intents:
 
-INTENTS:
-- PATENT_RISK: User asking about patents, IP risks, intellectual property conflicts
-- MARKET_TRENDS: User asking about market size, trends, growth, industry forecasts
-- COMPETITORS: User asking who the competitors are, market players, similar products
-- COMPETITOR_RISK: User asking about a specific competitor's threat or strategy
-- SUMMARIZE: User asking for a summary or overview of the idea
-- GAP_ANALYSIS: User asking for problem statements, opportunities, gaps, areas to work on, where to start, what to focus on
-- ELABORATE_PROBLEM: User asking for detailed implementation, roadmap, how to get started, step-by-step guide
-- OFF_TOPIC: User asking about completely unrelated topics (weather, jokes, personal questions)
-- GENERAL: General market validation questions that require analysis
+VALID INTENTS (Questions about THIS specific idea):
+- PATENT_RISK: Patents, IP risks, intellectual property conflicts for THIS idea
+- MARKET_TRENDS: Market size, trends, growth forecasts for THIS idea's domain (${idea.theme || idea.domain})
+- COMPETITORS: Who the competitors are for THIS specific idea/product
+- COMPETITOR_RISK: Specific competitor's threat to THIS idea
+- SUMMARIZE: Summary or overview of THIS idea
+- GAP_ANALYSIS: Problem statements, opportunities, gaps, areas to work on for THIS idea
+- ELABORATE_PROBLEM: Detailed implementation, roadmap, how to build THIS idea
+- GENERAL: General market validation questions about THIS idea
 
-CRITICAL: 
-- If user asks for "problem statements", "areas to focus", "where to start", "what should I work on" → GAP_ANALYSIS
-- If user asks "how to implement", "give me steps", "roadmap", "guide me" → ELABORATE_PROBLEM
-- If user says "I get that but [wants something else]" → understand what they actually want
+INVALID INTENTS (Redirect user back to scope):
+- OUT_OF_SCOPE: Questions about OTHER ideas, different domains, unrelated products, personal advice, general technology questions NOT about THIS specific idea
+- OFF_TOPIC: Completely unrelated (weather, jokes, personal questions)
 
-Respond with ONLY the intent name (e.g., "GAP_ANALYSIS"). Nothing else.`
+CRITICAL GUARDRAILS:
+⚠️ If user asks about a DIFFERENT idea, product, or domain than "${idea.title}" → OUT_OF_SCOPE
+⚠️ If user asks about general topics not related to validating "${idea.title}" → OUT_OF_SCOPE
+⚠️ If user asks for help with coding, implementation of OTHER projects → OUT_OF_SCOPE
+✅ ONLY classify as valid intent if the question is DIRECTLY about validating "${idea.title}"
+
+Examples:
+- "What are competitors for loan personalization?" [THIS idea is about loans] → COMPETITORS ✅
+- "What about competitors in healthcare domain?" [THIS idea is NOT healthcare] → OUT_OF_SCOPE ❌
+- "How do I build THIS idea?" → ELABORATE_PROBLEM ✅
+- "How do I build a chatbot?" [Not THIS idea] → OUT_OF_SCOPE ❌
+
+Respond with ONLY the intent name (e.g., "GAP_ANALYSIS" or "OUT_OF_SCOPE"). Nothing else.`
         };
 
         const userPrompt = `Idea: "${idea.title}"
@@ -348,6 +360,8 @@ Classify this query's intent:`;
             'ELABORATE_PROBLEM': INTENTS.ELABORATE_PROBLEM,
             'ELABORATE': INTENTS.ELABORATE_PROBLEM,
             'IMPLEMENTATION': INTENTS.ELABORATE_PROBLEM,
+            'OUT_OF_SCOPE': INTENTS.OUT_OF_SCOPE,
+            'SCOPE': INTENTS.OUT_OF_SCOPE,
             'OFF_TOPIC': INTENTS.OFF_TOPIC,
             'GENERAL': INTENTS.GENERAL
         };
@@ -503,6 +517,31 @@ To stay on track, I can help you with things like:
 • Reviewing your **idea summary** and value proposition
 
 Please ask a question related to these areas!`;
+}
+
+/**
+ * Handle out-of-scope queries (questions about different ideas or domains)
+ */
+function handleOutOfScopeQuery(idea) {
+    return `I'm your dedicated Market Validation Assistant for "**${idea.title}**" specifically.
+
+🎯 **My Focus**: I can ONLY help you validate and analyze **this specific idea** in the **${idea.theme || idea.domain}** domain.
+
+I noticed your question seems to be about a different topic or idea. Let's keep our conversation focused on validating "**${idea.title}**".
+
+✅ **Questions I can help with:**
+• **Patent & IP Risks** - For THIS idea specifically
+• **Market Trends** - In the ${idea.theme || idea.domain} space
+• **Competitor Analysis** - Who's building similar solutions to THIS idea
+• **Gap Analysis** - What problem statements should THIS idea address?
+• **Implementation** - How to build and launch THIS specific idea
+
+❌ **Out of Scope:**
+• Questions about other ideas or products
+• Different domains or industries
+• General technology questions unrelated to THIS idea
+
+**Let's refocus**: What would you like to know about validating "**${idea.title}**" in the market?`;
 }
 
 /**
@@ -947,6 +986,9 @@ export async function generateChatResponse(idea, userMessage, conversationHistor
 
             case INTENTS.ELABORATE_PROBLEM:
                 return await handleElaborateProblemQuery(idea, userMessage, conversationHistory, metadata);
+
+            case INTENTS.OUT_OF_SCOPE:
+                return handleOutOfScopeQuery(idea);
 
             case INTENTS.OFF_TOPIC:
                 return handleOffTopicQuery(idea);
