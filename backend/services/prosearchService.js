@@ -20,7 +20,7 @@ import { hydrateResults } from './resultHydrator.js';
 
 // Configuration
 const CHROMA_COLLECTION = 'ideas_semantic_index';
-const MAX_RESULTS = 300; // Increased from 100 to 300
+const MAX_RESULTS = 250; // Reduced from 300 for better quality focus
 const DEFAULT_EMBEDDING_PROVIDER = process.env.EMBEDDING_PROVIDER || 'gemini';
 
 /**
@@ -72,7 +72,7 @@ export async function createNewConversation(query) {
         console.log('[createNewConversation] Querying ChromaDB...');
         const chromaClient = getChromaClient();
         const collection = await chromaClient.getOrCreateCollection({ name: CHROMA_COLLECTION });
-        
+
         const searchResults = await collection.query({
             queryEmbeddings: [embedding],
             nResults: MAX_RESULTS
@@ -82,10 +82,10 @@ export async function createNewConversation(query) {
         const { ideaIds, similarities } = extractIdeaIdsWithScores(searchResults);
         console.log('[ProSearch] Query:', query);
         console.log('[ProSearch] Raw results from Chroma:', ideaIds.length);
-        
+
         // Calculate normalized scores (direct conversion: similarity * 100)
         const normalizedScores = calculateNormalizedScores(similarities);
-        
+
         if (similarities.length > 0 && normalizedScores.length > 0) {
             const minScore = Math.min(...normalizedScores);
             const maxScore = Math.max(...normalizedScores);
@@ -100,12 +100,12 @@ export async function createNewConversation(query) {
 
         // Step 4: Hydrate results using normalized scores
         console.log('[createNewConversation] Hydrating results with normalized scores...');
-        const results = await hydrateResults(ideaIds, ideaIds, { 
+        const results = await hydrateResults(ideaIds, ideaIds, {
             applyScoreFilter: true,
             chromaScores: normalizedScores  // Pass normalized scores
         });
-        
-        console.log('[ProSearch] >=70% results count:', results.length);
+
+        console.log('[ProSearch] >=90% results count:', results.length);
 
         // Return ProSearchResponse
         return {
@@ -146,7 +146,7 @@ export async function processFollowUp(conversationId, message) {
         // Step 1: Load conversation state
         console.log('[processFollowUp] Loading conversation state...');
         const conversation = await loadConversation(conversationId);
-        
+
         if (!conversation) {
             throw new Error(`Conversation not found: ${conversationId}`);
         }
@@ -181,15 +181,15 @@ export async function processFollowUp(conversationId, message) {
 
         // Step 5: Hydrate results using resultHydrator WITH stored scores
         console.log('[processFollowUp] Hydrating results with stored scores...');
-        
+
         // Get scores for the filtered IDs from the stored base scores
         const filteredScores = filteredIds.map(id => {
             const index = conversation.base_result_ids.indexOf(id);
-            return index !== -1 && conversation.base_result_scores?.[index] 
-                ? conversation.base_result_scores[index] 
+            return index !== -1 && conversation.base_result_scores?.[index]
+                ? conversation.base_result_scores[index]
                 : 0;
         });
-        
+
         const results = await hydrateResults(filteredIds, conversation.base_result_ids, {
             applyScoreFilter: true,
             chromaScores: filteredScores  // Use stored scores
@@ -209,37 +209,38 @@ export async function processFollowUp(conversationId, message) {
 }
 
 /**
- * Calculate normalized scores based on ChromaDB similarities
- * Maps similarity scores to percentage with better distribution
+ * Calculate scores relative to TOP result
+ * Top match = 100%, others scaled proportionally
+ * Filter at 70% means: show results down to 70% of the top score
+ * 
  * @param {number[]} similarities - ChromaDB similarity scores (0-1 range, where 1 = perfect match)
- * @returns {number[]} Array of percentage scores (0-100)
+ * @returns {number[]} Array of percentage scores (0-100) relative to top result
  */
 function calculateNormalizedScores(similarities) {
     if (similarities.length === 0) return [];
-    if (similarities.length === 1) {
-        // Single result: convert directly but ensure it's reasonable
-        const score = Math.round(similarities[0] * 100);
-        return [Math.max(70, score)]; // Ensure at least 70% for single result
-    }
-    
-    // Find min and max similarity
-    const minSim = Math.min(...similarities);
-    const maxSim = Math.max(...similarities);
-    
-    // If all similarities are the same, give them all high scores
-    if (maxSim === minSim) {
-        const score = Math.round(maxSim * 100);
-        return similarities.map(() => Math.max(70, score));
-    }
-    
-    // Normalize to 70-100 range (top result = 100%, worst = 70%)
-    // This ensures all results from ChromaDB are considered relevant
+
+    // LOG: Raw Chroma distance stats for debugging
+    const rawDistances = similarities.map(sim => 1 - sim);
+    console.log('[ProSearch] Raw Chroma distances: min=' + Math.min(...rawDistances).toFixed(3) + ', max=' + Math.max(...rawDistances).toFixed(3));
+
+    // Find the BEST similarity (top result)
+    const maxSimilarity = Math.max(...similarities);
+
+    // RELATIVE SCORING TO TOP RESULT
+    // Top result gets 100%, others scaled proportionally
+    // If top = 0.57, and current = 0.40 → (0.40 / 0.57) * 100 = 70%
     const scores = similarities.map(sim => {
-        // Scale from [minSim, maxSim] to [70, 100]
-        const normalized = 70 + ((sim - minSim) / (maxSim - minSim)) * 30;
-        return Math.round(normalized);
+        if (maxSimilarity === 0) return 0; // Avoid division by zero
+        const scorePercent = Math.round((sim / maxSimilarity) * 100);
+        return scorePercent;
     });
-    
+
+    // LOG: Score distribution for debugging
+    const above90 = scores.filter(s => s >= 90).length;
+    console.log('[ProSearch] Top similarity: ' + (maxSimilarity * 100).toFixed(2) + '% (absolute)');
+    console.log('[ProSearch] Score distribution: ' + scores.length + ' total, ' + above90 + ' >=90% of top');
+    console.log('[ProSearch] Display score range: ' + Math.min(...scores) + '% - ' + Math.max(...scores) + '%');
+
     return scores;
 }
 
@@ -258,14 +259,14 @@ function extractIdeaIdsWithScores(searchResults) {
     const ids = searchResults.ids[0] || [];
     const distances = searchResults.distances?.[0] || [];
     const metadatas = searchResults.metadatas?.[0] || [];
-    
+
     // Extract numeric idea_id from metadata or parse from ID string
     const ideaIds = [];
     const similarities = [];
-    
+
     for (let i = 0; i < ids.length; i++) {
         const metadata = metadatas[i];
-        
+
         // Extract idea_id
         let ideaId = null;
         if (metadata && metadata.idea_id) {
@@ -278,10 +279,10 @@ function extractIdeaIdsWithScores(searchResults) {
                 ideaId = parseInt(match[1]);
             }
         }
-        
+
         if (ideaId) {
             ideaIds.push(ideaId);
-            
+
             // Convert distance to similarity (distance: 0 = best, 1 = worst)
             // similarity = 1 - distance
             const distance = distances[i] !== undefined ? distances[i] : 0;

@@ -188,9 +188,7 @@ export interface AgentResponse {
     internal: Array<{
       ideaId: string;
       title: string;
-      snippet: string;
-      domain?: string;
-      relevance: number;
+      score: number;
     }>;
     external: Array<{
       title: string;
@@ -199,8 +197,9 @@ export interface AgentResponse {
     }>;
   };
   reasoning?: string;
-  usedEphemeralContext: boolean;
-  processingTime: number;
+  showReasoning?: boolean; // Controls if reasoning UI should be shown
+  status?: string; // e.g., "REJECTED" for out-of-scope queries
+  processingTime?: number;
 }
 
 export interface AgentSession {

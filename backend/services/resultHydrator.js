@@ -34,14 +34,14 @@ export async function hydrateResults(ideaIds, baseResultIds = null, options = {}
 
     // Use ideaIds as baseResultIds if not provided
     const scoringOrder = baseResultIds || ideaIds;
-    
+
     // Default: apply score filter
     const applyScoreFilter = options.applyScoreFilter !== false;
-    
+
     // Check if we have ChromaDB scores
     const chromaScores = options.chromaScores || null;
     const useChromaScores = chromaScores && chromaScores.length === ideaIds.length;
-    
+
     console.log(`[hydrateResults] Processing ${ideaIds.length} ideas`);
     console.log(`[hydrateResults] ChromaScores provided: ${chromaScores ? chromaScores.length : 0}`);
     console.log(`[hydrateResults] Using ChromaScores: ${useChromaScores}`);
@@ -113,7 +113,7 @@ export async function hydrateResults(ideaIds, baseResultIds = null, options = {}
                     // Fallback to position-based scoring
                     matchScore = calculateMatchScore(ideaId, scoringOrder);
                 }
-                
+
                 // Log first few scores for debugging
                 if (index < 3) {
                     console.log(`[hydrateResults] Idea ${ideaId}: matchScore=${matchScore}% (useChromaScores=${useChromaScores})`);
@@ -169,13 +169,14 @@ export async function hydrateResults(ideaIds, baseResultIds = null, options = {}
             })
             .filter(idea => idea !== null); // Remove null entries for missing ideas
 
-        // Apply ≥70% matchScore filter if enabled
+        // Apply ≥90% matchScore filter if enabled
         if (applyScoreFilter) {
-            const filteredResults = hydratedResults.filter(idea => idea.matchScore >= 70);
-            
-            console.log(`[ProSearch] >=70% results count: ${filteredResults.length}`);
-            console.log(`[hydrateResults] Filtered ${hydratedResults.length} → ${filteredResults.length} results (≥70% matchScore)`);
-            
+            // Filter results by match score threshold
+            // Set to 90% for high-quality, manageable result sets (typically 50-200 results)
+            const filteredResults = hydratedResults.filter(idea => idea.matchScore >= 90);
+
+            console.log(`[hydrateResults] Filtered ${hydratedResults.length} → ${filteredResults.length} results (≥90% matchScore)`);
+
             return filteredResults;
         }
 
@@ -230,13 +231,13 @@ function extractYear(createdAt) {
  */
 function calculateMatchScore(ideaId, baseResultIds) {
     const position = baseResultIds.indexOf(ideaId);
-    
+
     if (position === -1) {
         return 0; // Not found in base results
     }
 
     const totalResults = baseResultIds.length;
-    
+
     if (totalResults === 1) {
         return 100; // Single result gets perfect score
     }
@@ -244,7 +245,7 @@ function calculateMatchScore(ideaId, baseResultIds) {
     // Linear decay: first result = 100, last result approaches 0
     // Formula: 100 * (1 - (position / (totalResults - 1)))
     const score = 100 * (1 - (position / (totalResults - 1)));
-    
+
     // Round to nearest integer
     return Math.round(score);
 }

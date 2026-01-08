@@ -112,15 +112,41 @@ Input should be a search query describing what you're looking for.`
             console.log(`[InternalRAG] Retrieved ${results.documents.length} document chunks for summarization`);
 
             // Concatenate all chunks with separators
-            const documentContent = results.documents
-                .map((chunk, idx) => `[Chunk ${idx + 1}]\n${chunk}`)
+            const combinedChunks = results.documents
+                .map((chunk, idx) => `[Segment ${idx + 1}]\n${chunk}`)
                 .join('\n\n---\n\n');
 
-            return documentContent;
-
+            return `DOCUMENT_CONTENT:\n${combinedChunks}\n`;
         } catch (error) {
             console.warn('[InternalRAG] Failed to retrieve document chunks:', error.message);
             return null;
+        }
+    }
+
+    /**
+     * Quick check if user has uploaded documents
+     * Used for scope validation before executing agent
+     * @returns {Promise<boolean>} True if documents exist
+     */
+    async hasDocuments() {
+        try {
+            if (!this.userId) {
+                return false; // No user context
+            }
+
+            // Try to get ephemeral collection
+            const collection = await getEphemeralCollection(this.userId);
+            if (!collection) {
+                return false;
+            }
+
+            // Quick query to check if any documents exist
+            const result = await collection.get({ limit: 1 });
+
+            return result && result.ids && result.ids.length > 0;
+        } catch (error) {
+            console.error(`[InternalRAGTool] Error checking documents:`, error.message);
+            return false;
         }
     }
 
