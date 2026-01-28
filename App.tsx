@@ -122,7 +122,19 @@ const App: React.FC = () => {
         setLikedIdeas(likedData);
         setUsingMockData(false);
       }
-    } catch (err) {
+    } catch (err: any) {
+      // Handle authentication errors - redirect to login
+      if (err?.message === 'Session Expired' || err?.message?.includes('401')) {
+        console.warn('[App] Session expired, redirecting to login');
+        localStorage.removeItem('token');
+        localStorage.removeItem('refreshToken');
+        localStorage.removeItem('user');
+        setIsAuthenticated(false);
+        setUser(null);
+        setAuthView('login');
+        return;
+      }
+      // For other errors (network issues, etc.), fallback to mock data
       setIdeas(INITIAL_DATA);
       const mockBGs = new Set<string>();
       INITIAL_DATA.forEach(i => mockBGs.add(i.businessGroup));

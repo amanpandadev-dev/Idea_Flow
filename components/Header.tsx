@@ -1,5 +1,6 @@
 import React from 'react';
-import { Lightbulb, Bell, UserCircle, LogOut, Heart, Sparkles, Bot, LayoutDashboard, FolderKanban } from 'lucide-react';
+import { Bell, UserCircle, LogOut, Heart, Sparkles, Bot, LayoutDashboard, FolderKanban } from 'lucide-react';
+import logo from './img/logo2.png';
 
 interface HeaderProps {
   user?: { name: string; role: string } | null;
@@ -41,11 +42,11 @@ const Header: React.FC<HeaderProps> = ({
               className="flex items-center gap-3 cursor-pointer"
               onClick={() => onTabChange && onTabChange('dashboard')}
             >
-              <div className="bg-indigo-600 p-2 rounded-lg">
-                <Lightbulb className="h-6 w-6 text-white" />
-              </div>
+
+              <img src={logo} alt="IdeaFlow" className="h-8 w-15" />
+
               <div>
-                <h1 className="text-xl font-bold text-slate-800">IdeaFlow</h1>
+                <h1 className="text-xl font-bold bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 bg-clip-text text-transparent">IdeaFlow</h1>
               </div>
             </div>
 

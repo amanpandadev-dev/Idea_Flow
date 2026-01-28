@@ -31,6 +31,103 @@ const INTENT_KEYWORDS = {
     [INTENTS.OFF_TOPIC]: ['weather', 'joke', 'hello', 'hi', 'bye', 'how are you', 'what time', 'who are you', 'your name', 'coding', 'recipe', 'poem', 'story']
 };
 
+// ============================================================================
+// GUARDRAILS: Expanded banned topics for fast pre-filtering before LLM
+// ============================================================================
+const BANNED_TOPICS = {
+    // Entertainment & Pop Culture - celebrities, movies, music
+    entertainment: [
+        'movie', 'actor', 'actress', 'celebrity', 'film', 'singer', 'song', 'album',
+        'tv show', 'netflix', 'series', 'bollywood', 'hollywood', 'oscar', 'grammy',
+        'cricket', 'football', 'sports', 'game of thrones', 'marvel', 'dc comics'
+    ],
+    // Personal/Casual - relationships, life advice
+    personal: [
+        'girlfriend', 'boyfriend', 'dating', 'relationship', 'love life', 'personal advice',
+        'marriage', 'divorce', 'family problem', 'friend problem', 'loneliness'
+    ],
+    // Harmful/Inappropriate content
+    harmful: [
+        'hack', 'exploit', 'steal', 'illegal', 'bypass security', 'password', 'crack',
+        'malware', 'virus', 'phishing', 'scam', 'fraud', 'pirate', 'torrent'
+    ],
+    // General knowledge trivia - not market-related
+    trivia: [
+        'capital of', 'population of', 'who invented', 'when was born', 'history of',
+        'who is the president', 'prime minister', 'how tall is', 'how old is',
+        'what is the meaning of', 'translate', 'spell', 'grammar'
+    ],
+    // Unrelated technical help
+    unrelated_tech: [
+        'write code', 'python script', 'javascript code', 'fix my code', 'debug my',
+        'sql query', 'html page', 'css style', 'react component', 'api endpoint',
+        'machine learning model', 'train a model', 'neural network'
+    ],
+    // Food & Lifestyle
+    lifestyle: [
+        'recipe', 'cook', 'food', 'restaurant', 'diet', 'workout', 'exercise',
+        'yoga', 'meditation', 'weight loss', 'fitness'
+    ],
+    // Casual conversation
+    casual: [
+        'weather', 'joke', 'tell me a joke', 'sing a song', 'poem', 'story',
+        'how are you', 'what time', 'who are you', 'your name', 'tell me about yourself',
+        'good morning', 'good night', 'thank you', 'thanks', 'bye', 'goodbye'
+    ]
+};
+
+/**
+ * Quick reject check - Fast pre-filter for obviously off-topic queries
+ * Runs BEFORE LLM to save processing resources
+ * @param {string} message - User message
+ * @returns {{ rejected: boolean, reason?: string }}
+ */
+function quickRejectCheck(message) {
+    const lower = message.toLowerCase().trim();
+
+    // Check against all banned topic categories
+    for (const [category, keywords] of Object.entries(BANNED_TOPICS)) {
+        for (const keyword of keywords) {
+            if (lower.includes(keyword)) {
+                console.log(`[MarketChat:GUARDRAIL] Fast-rejected: "${message.substring(0, 50)}..." - Category: ${category}`);
+                return { rejected: true, reason: category };
+            }
+        }
+    }
+
+    // Special check: "Who is [Name]?" pattern for non-business inquiries
+    // Allow: "Who is the CEO of X?", "Who is behind this company?"
+    // Block: "Who is Prabhas?", "Who is Taylor Swift?"
+    const whoIsPattern = /^who is (\w+(\s+\w+)?)\??$/i;
+    const match = message.match(whoIsPattern);
+    if (match) {
+        const name = match[1].toLowerCase();
+        // Allow if it's a business-related inquiry
+        const businessTerms = ['ceo', 'founder', 'cto', 'cfo', 'president', 'director', 'owner', 'competitor', 'leader'];
+        const isBusinessQuery = businessTerms.some(term => lower.includes(term));
+
+        if (!isBusinessQuery) {
+            console.log(`[MarketChat:GUARDRAIL] Fast-rejected celebrity inquiry: "${message}"`);
+            return { rejected: true, reason: 'celebrity_inquiry' };
+        }
+    }
+
+    // Check for very short greetings (less than 4 words, no market keywords)
+    const wordCount = lower.split(/\s+/).length;
+    const marketKeywords = ['market', 'competitor', 'patent', 'trend', 'business', 'idea', 'product', 'customer', 'risk'];
+    const hasMarketContext = marketKeywords.some(k => lower.includes(k));
+
+    if (wordCount <= 3 && !hasMarketContext) {
+        const greetings = ['hi', 'hello', 'hey', 'yo', 'sup', 'bye', 'thanks', 'ok', 'okay', 'cool', 'nice'];
+        if (greetings.some(g => lower === g || lower.startsWith(g + ' '))) {
+            console.log(`[MarketChat:GUARDRAIL] Fast-rejected greeting: "${message}"`);
+            return { rejected: true, reason: 'greeting' };
+        }
+    }
+
+    return { rejected: false };
+}
+
 // Analysis keywords that indicate user wants LLM analysis rather than raw search
 const ANALYSIS_KEYWORDS = [
     'analyze', 'analysis', 'compare', 'comparison', 'evaluate', 'assessment',
@@ -414,6 +511,17 @@ Classify this query's intent:`;
 async function classifyIntent(message, idea, conversationHistory = []) {
     const lowerMessage = message.toLowerCase();
     const params = extractQueryParameters(message);
+
+    // STEP 0: Fast pre-filter for obviously off-topic queries (saves LLM resources)
+    const quickCheck = quickRejectCheck(message);
+    if (quickCheck.rejected) {
+        console.log(`[MarketChat] Quick-rejected query (reason: ${quickCheck.reason}): "${message.substring(0, 50)}"`);
+        // Route greeting/casual to OFF_TOPIC, everything else to OUT_OF_SCOPE
+        const intent = ['greeting', 'casual'].includes(quickCheck.reason)
+            ? INTENTS.OFF_TOPIC
+            : INTENTS.OUT_OF_SCOPE;
+        return { intent, metadata: { ...params, rejectionReason: quickCheck.reason } };
+    }
 
     // STEP 1: Try intelligent LLM-based classification first
     const llmIntent = await classifyIntentWithLLM(message, idea, conversationHistory);
