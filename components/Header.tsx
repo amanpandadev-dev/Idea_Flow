@@ -39,14 +39,20 @@ const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center gap-8">
             {/* Logo */}
             <div
-              className="flex items-center gap-3 cursor-pointer"
+              className="flex items-center gap-4 cursor-pointer"
               onClick={() => onTabChange && onTabChange('dashboard')}
             >
+              {/* TCS Logo */}
+              <img src={logo} alt="TCS Logo" className="h-8 w-auto" />
 
-              <img src={logo} alt="IdeaFlow" className="h-8 w-15" />
+              {/* Vertical Divider */}
+              <div className="h-8 w-px bg-gradient-to-b from-slate-200 via-slate-300 to-slate-200"></div>
 
-              <div>
-                <h1 className="text-xl font-bold bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 bg-clip-text text-transparent">IdeaFlow</h1>
+              {/* App Title */}
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 bg-clip-text text-transparent tracking-tight">
+                  IdeaFlow
+                </h1>
               </div>
             </div>
 
